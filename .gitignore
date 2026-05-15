@@ -1,1 +1,111 @@
+# Project-local generated docs
 REQUIREMENTS.md
+
+# macOS and system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100/
+.Trashes/
+
+# Editor and IDE workspace state
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+*.secrets
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs and diagnostics
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+debug.log
+
+# Dependency directories
+node_modules/
+.pnp/
+.pnp.*
+.yarn/*
+!.yarn/patches/
+!.yarn/plugins/
+!.yarn/releases/
+!.yarn/sdks/
+!.yarn/versions/
+vendor/
+
+# Build, cache, and test output
+dist/
+build/
+out/
+coverage/
+.cache/
+.parcel-cache/
+.turbo/
+.next/
+.nuxt/
+.svelte-kit/
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# BMAD generated files and agent adapter outputs
+_bmad/
+_bmad-output/
+_bmad-*/
+.bmad/
+.bmad-*/
+.bmad-core/
+bmad-core/
+.agent/
+.agents/
+.claude/
+.junie/
+.qwen/
+
+# BMAD generated artifacts, reports, and archives
+**/_bmad/
+**/_bmad-output/
+**/.bmad/
+**/.bmad-core/
+**/bmad-output/
+**/bmad-outputs/
+**/bmad-generated/
+**/bmad-artifacts/
+*.bmad.log
+bmad-*.log
+bmad-*.zip
+bmad-*.tar.gz

@@ -16,7 +16,7 @@ Early-stage. Phase 1 of the roadmap is underway: two backend services are built 
 * **task-goal-service** — goal CRUD plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
 * Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis isn't used by any service yet.
 
-No authentication, no other services, no clients (web/desktop/mobile), no event bus, no observability stack. See [CONTRIBUTING.md](CONTRIBUTING.md) to build and run this yourself.
+No authentication, no other services, no clients (web/desktop/mobile), no event bus, no observability stack. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
 
 ## Target Feature Set
 
@@ -61,7 +61,7 @@ The full product vision (not all built yet — see Status above):
 
 ## Documentation
 
-* `REQUIREMENTS.md` — product vision, architecture, technology decisions, and roadmap (source of truth for all development). Intentionally gitignored — a fresh clone won't have it, and it isn't needed to build/run/test the code; ask the maintainer if you need the current product requirements.
+* `REQUIREMENTS.md` — product vision, architecture, technology decisions, and roadmap (source of truth for all development). Intentionally gitignored — a fresh clone won't have it, and it isn't needed to build/run/test the code. Its substance is mirrored across the tracked docs below (ADRs, interview docs, architecture doc) and this README; the source document itself requires the project owner.
 * [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) — engineering standards and required workflow for contributors and AI coding agents
 * `docs/adr/` — 18 architecture decision records covering the major technology/architecture choices
 * `docs/algorithms/`, `docs/api/`, `docs/architecture/`, `docs/concurrency/`, `docs/diagrams/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, API docs, current-state architecture, and interview-prep docs for what's actually built so far (each one explicitly distinguishes built vs. planned); `docs/benchmarks/` is a plan only — no numbers until something's actually been measured

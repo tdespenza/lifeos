@@ -68,4 +68,4 @@ The full product vision (not all built yet — see Status above):
 
 ## Roadmap
 
-See `REQUIREMENTS.md`'s "Suggested MVP Roadmap" section for the full 8-phase roadmap, from foundation and core algorithms through microservices, AI, video streaming, blockchain, desktop/mobile clients, and production readiness.
+The full 8-phase roadmap — from foundation and core algorithms through microservices, AI, video streaming, blockchain, desktop/mobile clients, and production readiness — lives in `REQUIREMENTS.md`'s "Suggested MVP Roadmap" section (see the Documentation section above for why that file isn't linked directly).

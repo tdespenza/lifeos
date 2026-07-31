@@ -32,11 +32,26 @@ See [README.md](README.md) for the project overview. The full product vision, ar
 * **Architecture Decision Records** live in `docs/adr/`. Per [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md), create or update an ADR whenever a decision affects architecture, data models, scaling strategy, security model, deployment model, external dependencies, API contracts, messaging, persistence, AI providers, or blockchain assumptions.
 * Each `docs/` subdirectory (`algorithms/`, `api/`, `architecture/`, `benchmarks/`, `concurrency/`, `diagrams/`, `interview/`) should describe what's *actually built*, not the aspirational target — call out explicitly what's planned-but-not-implemented rather than blending the two. `docs/benchmarks/` in particular must never contain invented numbers; log a benchmark there only once it's actually been run.
 
+## Branching model
+
+This repo follows [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/), using two long-lived branches and three supporting branch types:
+
+* **`main`** — production-ready code only; every commit here should correspond to a release. Protected: PR required, no force-pushes, no deletion.
+* **`dev`** — the integration branch (Git Flow's "develop"). This is the repo's default branch — day-to-day work targets `dev`, not `main`. Protected the same way as `main`.
+* **`feature/*`** — new work. Branch from `dev`, PR back into `dev`.
+* **`release/*`** — release preparation. Branch from `dev`, PR into `main`. As part of this PR, drop the `-SNAPSHOT` suffix from `version` in the root `build.gradle.kts` (e.g. `0.1.0-SNAPSHOT` → `0.1.0`) — the [Release workflow](.github/workflows/release.yml) uses that as the signal to cut a release, so an unbumped version merging into `main` is a no-op, not a broken release.
+* **`hotfix/*`** — urgent fixes to production. Branch from `main`, PR into `main`, same version-bump convention as `release/*`.
+
+Both `main` and `dev` require 0 approvals to merge (so a solo maintainer isn't locked out), but every PR still goes through review — see below.
+
+### Release automation
+
+Merging a `release/*` or `hotfix/*` PR into `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml) once the [CI workflow](.github/workflows/ci.yml) finishes on that commit — release automation never runs off an unverified build. It reads `version` from `build.gradle.kts`; if that version is a real release (no `-SNAPSHOT`) and hasn't been tagged yet, it tags the commit `vX.Y.Z`, publishes a GitHub Release with auto-generated notes, and opens a PR (base `dev`, head `main`) to bring the release commit back into `dev` — this repo squash-merges every PR (see below), so there's no literal fast-forward between the two, and that PR is how `dev` stays in sync with what shipped. That sync-back PR is not auto-merged; it still goes through normal review like any other PR.
+
 ## Branching and pull requests
 
-* Branch off the latest `dev`, not off an old already-merged branch — this repo squash-merges every PR, which rewrites history on `dev`. Reusing a stale local branch after a squash-merge causes already-merged files to reappear as "new" in a later PR's diff (a real issue hit during development here). Fetch first, then branch: `git fetch origin dev && git checkout -b your-branch origin/dev` — skipping the fetch can silently branch off a stale local copy of `origin/dev`.
+* Branch off the latest `dev` (or `main`, for a `hotfix/*`), not off an old already-merged branch — this repo squash-merges every PR, which rewrites history on the target branch. Reusing a stale local branch after a squash-merge causes already-merged files to reappear as "new" in a later PR's diff (a real issue hit during development here). Fetch first, then branch: `git fetch origin dev && git checkout -b feature/your-branch origin/dev` — skipping the fetch can silently branch off a stale local copy.
 * PRs are squash-merged only (`allow_merge_commit` and `allow_rebase_merge` are disabled repo-wide); branches are auto-deleted on merge.
-* `dev` is a protected branch: a PR is required to merge (direct pushes are blocked), but 0 approvals are required, so a solo maintainer isn't locked out.
 * Run a code review pass (CodeRabbit reviews automatically; the `code-review` Claude Code skill is also expected to run) before merging a PR, and address real findings before merge rather than after.
 
 ## Testing

@@ -1,0 +1,86 @@
+name: Release
+
+# Runs after CI succeeds on main, not on every push to main directly — a release
+# must never ship off an unverified build. See CONTRIBUTING.md § Branching model.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Read project version
+        id: version
+        run: |
+          VERSION=$(grep -m1 -E '^\s*version = "' build.gradle.kts | sed -E 's/.*version = "([^"]+)".*/\1/')
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::could not parse version from build.gradle.kts"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this is a release
+        id: gate
+        run: |
+          if [[ "${{ steps.version.outputs.version }}" == *-SNAPSHOT ]]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: version ${{ steps.version.outputs.version }} is a SNAPSHOT, not a release."
+          elif git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: tag v${{ steps.version.outputs.version }} already exists."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag release
+        if: steps.gate.outputs.release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --target "${{ github.event.workflow_run.head_sha }}" \
+            --generate-notes
+
+      - name: Open dev sync-back PR
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch origin dev main
+          if git merge-base --is-ancestor origin/main origin/dev; then
+            echo "dev already contains this release commit; nothing to sync."
+            exit 0
+          fi
+          gh pr create \
+            --base dev \
+            --head main \
+            --title "Sync dev with v${{ steps.version.outputs.version }} release" \
+            --body "Automated sync-back after the v${{ steps.version.outputs.version }} release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward)." \
+          || echo "A sync PR may already be open for this; not failing the release over it."

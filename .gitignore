@@ -97,6 +97,9 @@ bmad-core/
 .claude/
 .junie/
 .qwen/
+.github/agents/bmad-*.agent.md
+.github/agents/gds-*.agent.md
+.github/agents/wds-*.agent.md
 
 # BMAD generated artifacts, reports, and archives
 **/_bmad/

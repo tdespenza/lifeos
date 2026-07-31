@@ -20,6 +20,7 @@ jobs:
   release:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout release commit
         uses: actions/checkout@v4
@@ -68,6 +69,16 @@ jobs:
             --target "${{ github.event.workflow_run.head_sha }}" \
             --generate-notes
 
+      # Requires the repo's "Allow GitHub Actions to create and approve pull
+      # requests" setting (Settings > Actions > General) to be enabled — the
+      # `permissions: pull-requests: write` block above scopes what the token
+      # is *allowed* to do, but that separate repo-level toggle gates whether
+      # GITHUB_TOKEN can call the PR-creation API at all. This PR also gets no
+      # independent CI run of its own: GitHub Actions does not trigger
+      # pull_request-triggered workflows for PRs opened by GITHUB_TOKEN. Its
+      # content already passed CI on main, so this is a lower-risk gap than it
+      # would be for arbitrary new code, but it means the merge decision here
+      # relies on human review, not an automated check.
       - name: Open dev sync-back PR
         if: steps.gate.outputs.release == 'true'
         env:
@@ -78,9 +89,16 @@ jobs:
             echo "dev already contains this release commit; nothing to sync."
             exit 0
           fi
-          gh pr create \
+          if ! pr_output=$(gh pr create \
             --base dev \
             --head main \
             --title "Sync dev with v${{ steps.version.outputs.version }} release" \
-            --body "Automated sync-back after the v${{ steps.version.outputs.version }} release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward)." \
-          || echo "A sync PR may already be open for this; not failing the release over it."
+            --body "Automated sync-back after the v${{ steps.version.outputs.version }} release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward). This PR carries no independent CI run of its own: GitHub Actions does not trigger workflows for PRs opened by the default GITHUB_TOKEN. Its content already passed CI on main." 2>&1); then
+            if echo "$pr_output" | grep -qi "already exists"; then
+              echo "A sync PR is already open for this release; nothing to do."
+              exit 0
+            fi
+            echo "::error::gh pr create failed: $pr_output"
+            exit 1
+          fi
+          echo "$pr_output"

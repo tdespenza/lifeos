@@ -57,7 +57,7 @@ Resolve a valid execution order for a set of goals given their dependencies, via
 }
 ```
 
-`goals` must be non-empty (see [`DependencyOrderRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/DependencyOrderRequest.java)); `dependencies` may be omitted or empty.
+`goals` must be non-empty (see [`DependencyOrderRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/DependencyOrderRequest.java)); `dependencies` may be omitted or empty. Any goal name that appears only inside `dependencies` (not in the `goals` list) is still accepted and included in the returned `order` — the algorithm collects every node it sees across both inputs (see [`TopologicalSortService`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortService.java)).
 
 **Responses**
 

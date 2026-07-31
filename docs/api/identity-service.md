@@ -2,7 +2,7 @@
 
 Base URL (local): `http://localhost:8081`
 
-Status: registration only. No authentication (OAuth2/OIDC/JWT/passkeys) is implemented yet — see [ADR-001](../adr/ADR-001-use-java-25.md) and the identity-service section of [REQUIREMENTS.md](../../REQUIREMENTS.md#2-identity-service) for the target scope. `UserAccount` deliberately does not store credentials, to avoid half-implementing security-sensitive password handling ahead of a real auth design.
+Status: registration only. No authentication (OAuth2/OIDC/JWT/passkeys) is implemented yet — no ADR covers auth design yet; see the identity-service section of [REQUIREMENTS.md](../../REQUIREMENTS.md#2-identity-service) for the target scope. `UserAccount` deliberately does not store credentials, to avoid half-implementing security-sensitive password handling ahead of a real auth design.
 
 ## `POST /api/v1/accounts`
 

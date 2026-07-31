@@ -1,0 +1,13 @@
+# Why gRPC for internal service-to-service calls?
+
+Worth saying up front: this isn't implemented yet. Right now there are only two services — identity-service and task-goal-service — and neither one calls the other, so there's no internal RPC traffic to speak of today. This is the plan for once services actually need to talk to each other, and I want to be upfront that it hasn't been exercised in real code.
+
+The reasoning is about what happens once the service count grows toward the ~11 planned in the roadmap — things like the AI orchestrator calling the algorithm engine per user action, or the task service asking the calendar service to resolve a scheduling conflict. Those are synchronous, request/response calls where the caller genuinely needs an answer before it can proceed, so it's a different problem from the async eventing Kafka/Pulsar will handle.
+
+I considered just reusing REST/JSON internally, since that's already the external API stack and there's zero extra ramp-up. I rejected it as the default for internal calls because the contract is only as good as the OpenAPI spec someone remembered to update — nothing stops the JSON shape from drifting between caller and callee until it breaks at runtime. gRPC's `.proto` contracts are compiled, so a breaking change to a request or response fails the build on both sides before it ships. That matters more as more services evolve independently. I also looked at doing everything over Kafka, including request/response, but that just re-invents RPC with a correlation-ID/reply-topic dance and worse latency — the wrong tool for "I need this answer now." Thrift was a real alternative to gRPC technically, but its Spring integration and hiring pool are both smaller, so it didn't earn its keep over gRPC.
+
+The other draw is HTTP/2 plus protobuf's binary encoding on what I expect to be the hottest internal path — AI orchestrator to algorithm engine, invoked repeatedly per user interaction — where JSON's parsing and payload overhead adds up. Native streaming is also a direct fit for algorithm workloads that return partial results incrementally.
+
+The honest tradeoff: gRPC isn't human-readable on the wire, so debugging needs `grpcurl` instead of just reading a network tab, and every contract change needs codegen plus backward-compatible field discipline. That's real friction I'm accepting deliberately, scoped to internal-only traffic — REST and GraphQL stay as the external surface, since gRPC doesn't work cleanly through browsers or many proxies anyway.
+
+Relevant ADRs: [ADR-007](../adr/ADR-007-use-grpc-for-internal-communication.md)

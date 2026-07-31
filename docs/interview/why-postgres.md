@@ -1,0 +1,11 @@
+# Why PostgreSQL?
+
+Today it's simple: identity-service and task-goal-service each have their own PostgreSQL database — `lifeos_identity` and `lifeos_task_goal` — accessed through Spring Data JPA/Hibernate, running locally via docker-compose. No shared database, no cross-service joins. That's the real footprint right now, but the reasoning behind it is meant to hold up as the finance, calendar, and audit domains get built out later, because those are the ones where the decision actually earns its keep.
+
+The core argument is that Postgres gives me strong consistency guarantees for free. Once there's a finance service, a transaction posting has to debit one row and credit another atomically — it can never be observed half-applied. Postgres's MVCC model with `SERIALIZABLE`/`REPEATABLE READ` isolation handles that natively, no application-level saga or compensation logic required. I'd rather lean on a database that gives me that correctness guarantee than reimplement it myself in every service that touches money or permissions.
+
+I also picked it because of what it doesn't force me into. JSONB with GIN indexes means semi-structured fields — task metadata, calendar recurrence rules — can live alongside strict foreign-key constraints on the fields that actually matter, like `user_id` or `goal_id`. So I'm not stuck choosing between "everything is a rigid column" and "everything is a schemaless blob." I considered MySQL, but its JSON support and recursive/window-function story are weaker for the kind of goal-hierarchy and permission-graph queries this platform needs. I considered CockroachDB/YugabyteDB too, but distributed SQL solves a horizontal-write-scaling problem I don't have yet — each service here is a single-writer bounded context, so consensus overhead would be premature distribution, not a benefit.
+
+The honest tradeoff, and one I'm already living with even at two services: each service owning its own schema means there's no SQL join across service boundaries. If I want a dashboard combining goals and (eventually) calendar or finance data, that has to be API composition or a read model, not a query. That's an accepted cost, not an oversight.
+
+Relevant ADRs: [ADR-008](../adr/ADR-008-use-postgresql-as-system-of-record.md)

@@ -52,7 +52,7 @@ Early-stage / planning. The product vision, architecture, and roadmap are define
 ## Documentation
 
 * [REQUIREMENTS.md](REQUIREMENTS.md) — product vision, architecture, technology decisions, and roadmap (source of truth for all development)
-* [AGENT.md](AGENT.md) / [CLAUDE.md](CLAUDE.md) — engineering standards and required workflow for contributors and AI coding agents
+* [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) — engineering standards and required workflow for contributors and AI coding agents
 * `docs/adr/` — architecture decision records (to be populated per [REQUIREMENTS.md](REQUIREMENTS.md))
 * `docs/algorithms/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, interview-prep docs, and benchmark results (to be populated per [REQUIREMENTS.md](REQUIREMENTS.md))
 

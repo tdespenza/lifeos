@@ -1,4 +1,4 @@
-# AGENT.md - Universal FAANG-Grade Engineering Agent Rules
+# AGENTS.md - Universal FAANG-Grade Engineering Agent Rules
 
 ## Purpose
 

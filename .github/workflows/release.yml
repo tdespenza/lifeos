@@ -2,6 +2,13 @@ name: Release
 
 # Runs after CI succeeds on main, not on every push to main directly — a release
 # must never ship off an unverified build. See CONTRIBUTING.md § Branching model.
+#
+# workflow_run always executes with this repo's write-scoped token and secrets,
+# regardless of what triggered the upstream CI run — including a CI run started
+# by a pull_request from a fork. The job condition below requires the
+# triggering run to be a `push` event (not `pull_request`) on this repository
+# specifically, so a fork cannot get a branch it controls (e.g. one it names
+# "main") to run this workflow with our permissions.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -18,12 +25,15 @@ concurrency:
 
 jobs:
   release:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout release commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -40,33 +50,39 @@ jobs:
 
       - name: Decide whether this is a release
         id: gate
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if [[ "${{ steps.version.outputs.version }}" == *-SNAPSHOT ]]; then
+          if [[ "$VERSION" == *-SNAPSHOT ]]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping: version ${{ steps.version.outputs.version }} is a SNAPSHOT, not a release."
-          elif git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Skipping: version $VERSION is a SNAPSHOT, not a release."
+          elif git rev-parse "v$VERSION" >/dev/null 2>&1; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping: tag v${{ steps.version.outputs.version }} already exists."
+            echo "Skipping: tag v$VERSION already exists."
           else
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Tag release
         if: steps.gate.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Create GitHub Release
         if: steps.gate.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --target "${{ github.event.workflow_run.head_sha }}" \
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --target "$HEAD_SHA" \
             --generate-notes
 
       # Requires the repo's "Allow GitHub Actions to create and approve pull
@@ -83,6 +99,7 @@ jobs:
         if: steps.gate.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git fetch origin dev main
           if git merge-base --is-ancestor origin/main origin/dev; then
@@ -92,8 +109,8 @@ jobs:
           if ! pr_output=$(gh pr create \
             --base dev \
             --head main \
-            --title "Sync dev with v${{ steps.version.outputs.version }} release" \
-            --body "Automated sync-back after the v${{ steps.version.outputs.version }} release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward). This PR carries no independent CI run of its own: GitHub Actions does not trigger workflows for PRs opened by the default GITHUB_TOKEN. Its content already passed CI on main." 2>&1); then
+            --title "Sync dev with v$VERSION release" \
+            --body "Automated sync-back after the v$VERSION release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward). This PR carries no independent CI run of its own: GitHub Actions does not trigger workflows for PRs opened by the default GITHUB_TOKEN. Its content already passed CI on main." 2>&1); then
             if echo "$pr_output" | grep -qi "already exists"; then
               echo "A sync PR is already open for this release; nothing to do."
               exit 0

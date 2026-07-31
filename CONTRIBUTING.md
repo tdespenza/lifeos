@@ -25,7 +25,7 @@ docker compose -f infrastructure/docker-compose/docker-compose.yml up -d
 ./gradlew :services:task-goal-service:bootRun
 ```
 
-See [README.md](README.md) for the project overview. The full product vision, architecture, and roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local planning document, not a build input), so a fresh clone won't have it and doesn't need it to build, run, or test the code. It's maintained by the project owner and referenced by AI coding agents per [AGENTS.md](AGENTS.md)/[CLAUDE.md](CLAUDE.md)'s "Source of Truth" section; if you need the current product requirements, ask the maintainer.
+See [README.md](README.md) for the project overview. The full product vision, architecture, and roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local planning document, not a build input), so a fresh clone won't have it and doesn't need it to build, run, or test the code. Its substance is mirrored across tracked documentation you *do* have: `docs/adr/` (18 architecture decision records), `docs/interview/`, `docs/architecture/current-state.md`, and README.md's own feature/status summary. If you need the source document itself rather than its tracked summaries, that requires the project owner.
 
 ## Documentation conventions
 

@@ -59,6 +59,8 @@ vendor/
 dist/
 build/
 out/
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
 coverage/
 .cache/
 .parcel-cache/

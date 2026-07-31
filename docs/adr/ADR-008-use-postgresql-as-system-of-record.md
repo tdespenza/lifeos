@@ -1,0 +1,42 @@
+# ADR-008: Use PostgreSQL as the relational system of record
+
+## Context
+
+LifeOS is a multi-domain personal operating system spanning identity, tasks/goals, calendar, finance, and audit/permission records. These domains share three properties: their entities have well-defined relationships (users own tasks, tasks belong to goals, transactions belong to budgets belong to users), several of them require multi-row atomic writes (a transaction posting must debit one ledger row and credit another, or not happen at all), and several are subject to regulatory or trust expectations around auditability (financial records, permission grants). At the same time, some of this data is semi-structured — task metadata, calendar recurrence rules, notification preferences — and benefits from flexible schema without abandoning relational guarantees. The platform runs as a set of independently deployable Spring Boot services, so the storage choice for this domain slice needs to work well as a single service's dedicated system of record, not as a shared cluster-wide database.
+
+## Options Considered
+
+- **PostgreSQL** — mature MVCC-based RDBMS with full ACID transactions, native JSONB with GIN indexing, rich constraint and trigger support, and a large operational/tooling ecosystem (pg_stat_statements, logical replication, PITR).
+- **MySQL/MariaDB** — comparable baseline relational feature set (ACID transactions, foreign keys, standard SQL), but a materially weaker semi-structured story: its JSON type lacks Postgres's indexable JSONB and GIN/GiST operator classes, and its query planner/CTE/window-function support has historically lagged Postgres for the kind of analytical and recursive queries this platform needs (e.g., goal hierarchies, permission graphs).
+- **CockroachDB / YugabyteDB (distributed SQL)** — offer horizontal write scaling and multi-region consensus-replicated durability out of the box, which is attractive on paper for a "scale to millions of users" portfolio narrative. Rejected for now because they trade single-node latency and operational simplicity for distributed-consensus overhead (network round-trips on writes, more complex query planning, higher operational burden for backup/restore and schema migration tooling) that this project's actual scale — a single-writer service per bounded context — does not need. Adopting them now would be premature distribution.
+- **NoSQL-only (e.g., MongoDB/DynamoDB for everything)** — rejected for the relational domains specifically because budgets, transactions, and permissions require cross-entity ACID invariants (a transfer must not partially apply) and referential integrity (a task must not reference a deleted goal) that document/key-value stores only approximate via application-level compensation logic, sagas, or eventual consistency — an unacceptable tradeoff for financial correctness and auditability.
+
+## Decision Made
+
+Use PostgreSQL as the relational system of record for the identity, task/goal, calendar, finance, and audit/permission domains, with each owning service holding its own schema/database (no shared cross-service database). MongoDB remains in use elsewhere in the platform (e.g., document vault, media metadata) where schema flexibility dominates and cross-entity transactional integrity is not required.
+
+## Why
+
+The deciding factor is that these five domains need strong, verifiable consistency more than they need horizontal write throughput. Financial transactions and permission changes must be linearizable within a service boundary and must never be observed in a partially-applied state; Postgres's MVCC transaction model gives us this for free with `SERIALIZABLE`/`REPEATABLE READ` isolation and row-level locking, without application-level compensating logic. JSONB with GIN indexes lets semi-structured fields (task metadata, calendar recurrence, notification preferences) coexist with strict relational constraints on the fields that matter (foreign keys on user_id, goal_id, account_id), so we are not forced into an all-or-nothing schema. Finally, Postgres is also a deliberate portfolio choice: demonstrating query optimization, indexing strategy, isolation-level reasoning, and migration discipline on a real RDBMS is a core FAANG interview competency this project is built to showcase.
+
+## Tradeoffs
+
+- **Single-writer ceiling**: each service's Postgres instance has one primary accepting writes; write throughput is bounded by that instance's vertical capacity (CPU, IOPS, connection count) until we introduce sharding or a distributed SQL layer.
+- **Cross-service joins are gone by design**: because each microservice owns its own Postgres schema, there is no cross-service SQL join — the finance service cannot join against the identity service's `users` table. This pushes composition to the API/GraphQL layer or to denormalized read models, which is more application code than a shared database would require.
+- **Schema migrations require coordination**: every schema change needs a migration tool (Flyway/Liquibase) run against a live service, which is more operational ceremony than a schemaless store, and backward-incompatible migrations require expand/contract discipline across deploys.
+- **JSONB is not free**: it gives schema flexibility but sacrifices the compile-time/DB-level type safety and constraint enforcement of normalized columns; overusing it reintroduces the "NoSQL inside SQL" anti-pattern we are explicitly trying to avoid for these domains.
+
+## Consequences
+
+- Each of the five services provisions and operates its own Postgres instance (or logical database), with its own connection pool (HikariCP), migration history, and backup/PITR policy — more infrastructure surface area than one shared cluster.
+- Financial and audit correctness (idempotent transaction posting, audit trail completeness) becomes provable via database-level constraints and transactions rather than distributed-saga compensation logic, simplifying reasoning about failure modes.
+- Read-heavy cross-domain views (e.g., a dashboard combining tasks, calendar, and budget data) must be built via API composition, a CQRS read model, or an analytics pipeline (Kafka → warehouse) rather than a SQL join, which is an explicit architectural cost accepted in exchange for service autonomy.
+- Connection pool sizing and query performance become a per-service operational concern that must be watched under load, particularly for the finance service where transaction volume will grow fastest.
+
+## When This Decision Would Be Wrong
+
+This decision should be revisited if any single service's write volume approaches the vertical scaling ceiling of a well-tuned Postgres primary — concretely, if the finance or task services sustain write throughput above roughly 5,000–10,000 TPS on commodity cloud hardware (e.g., 8–16 vCPU, NVMe-backed), or if p99 write latency exceeds 50ms under normal load after standard tuning (connection pooling, index review, partitioning by user_id or date). It would also be wrong if a genuine multi-region active-active requirement emerged (e.g., regulatory data residency forcing writes to be accepted in multiple regions simultaneously) — Postgres's single-primary replication model cannot satisfy that without introducing bolt-on tooling that a distributed SQL store provides natively. In either case, CockroachDB/YugabyteDB should be re-evaluated as a replacement, not a supplement.
+
+## How We Will Validate It
+
+Before the finance and task/goal services go to production load, run a benchmark using `pgbench` (or a custom JMH/Gatling load test hitting the actual transaction-posting endpoint) simulating realistic write patterns — target: sustain 1,000 TPS on the transaction-posting path with p99 commit latency under 25ms on the provisioned instance size, with connection pool utilization staying below 80% at peak. Additionally, run an isolation-level correctness test: concurrently execute 100 conflicting transfer transactions against the same account and assert zero lost updates or double-applied transfers under `SERIALIZABLE` isolation. Track these as a recurring load-test gate in CI/CD (via the test architecture pipeline) rather than a one-time check, and expose `pg_stat_statements`-derived query latency and connection-pool saturation as Prometheus metrics with an alert threshold at 70% pool utilization sustained for 5 minutes, so capacity pressure is visible well before it becomes an incident.

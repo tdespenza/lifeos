@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: task-goal-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:postgresql://localhost:5432/lifeos_task_goal
+    username: lifeos
+    password: lifeos
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+server:
+  port: 8082
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -2,7 +2,7 @@
 
 ## Real Product Use Case
 
-`task-goal-service` exposes `POST /api/v1/goals/dependency-order` (see [`GoalController`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/GoalController.java)). Given a set of goal names and a set of directed dependency edges (`{before, after}`, meaning `before` must complete before `after`), it returns a valid execution order — or a 409 Conflict if the dependencies contain a cycle. This backs the "goal dependency mapping" use case in [REQUIREMENTS.md](../../REQUIREMENTS.md): e.g. ordering "Learn DSA" → "System Design Practice" → "Apply to FAANG".
+`task-goal-service` exposes `POST /api/v1/goals/dependency-order` (see [`GoalController`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/GoalController.java)). Given a set of goal names and a set of directed dependency edges (`{before, after}`, meaning `before` must complete before `after`), it returns a valid execution order — or a 409 Conflict if the dependencies contain a cycle. This backs the "goal dependency mapping" use case in `REQUIREMENTS.md`: e.g. ordering "Learn DSA" → "System Design Practice" → "Apply to FAANG".
 
 ## Why This Algorithm Was Chosen
 
@@ -43,7 +43,7 @@ See [`TopologicalSortServiceTest`](../../services/task-goal-service/src/test/jav
 
 ## Benchmark Results
 
-None yet — the current goal graphs in this project are small (a handful of goals per user), so no throughput/latency benchmark has been run against this endpoint. Given the O(V + E) complexity, this is not expected to be a bottleneck at any realistic personal-goal-graph size; if goal graphs ever grow large enough to matter (e.g. a shared/collaborative goal graph across many users), a JMH benchmark should be added under `labs/performance-lab/` per [REQUIREMENTS.md](../../REQUIREMENTS.md#performance-and-benchmarking) before assuming this remains a non-issue.
+None yet — the current goal graphs in this project are small (a handful of goals per user), so no throughput/latency benchmark has been run against this endpoint. Given the O(V + E) complexity, this is not expected to be a bottleneck at any realistic personal-goal-graph size; if goal graphs ever grow large enough to matter (e.g. a shared/collaborative goal graph across many users), a JMH benchmark should be added under `labs/performance-lab/` per `REQUIREMENTS.md`'s "Performance and Benchmarking" section before assuming this remains a non-issue.
 
 ## Interview Explanation
 

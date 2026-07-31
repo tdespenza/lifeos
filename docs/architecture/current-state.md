@@ -1,6 +1,6 @@
 # Architecture — Current State
 
-This document describes what is actually built and running today. For the full target architecture, see [REQUIREMENTS.md § High-Level Architecture](../../REQUIREMENTS.md#high-level-architecture) and [§ Core Microservices](../../REQUIREMENTS.md#core-microservices). For a diagram, see [`docs/diagrams/current-architecture.md`](../diagrams/current-architecture.md).
+This document describes what is actually built and running today. For the full target architecture, see `REQUIREMENTS.md`'s "High-Level Architecture" and "Core Microservices" sections. For a diagram, see [`docs/diagrams/current-architecture.md`](../diagrams/current-architecture.md).
 
 ## What exists
 
@@ -25,4 +25,4 @@ Each service owns its own database rather than sharing one — this is the per-s
 
 ## Why this order
 
-This follows Phase 1 of the [Suggested MVP Roadmap](../../REQUIREMENTS.md#suggested-mvp-roadmap): establish the monorepo, a real Java 25 + Spring Boot baseline, and one or two working services against a real database before adding cross-cutting concerns (gateway, events, observability) that only pay off once there's more than one moving part to coordinate.
+This follows Phase 1 of `REQUIREMENTS.md`'s "Suggested MVP Roadmap": establish the monorepo, a real Java 25 + Spring Boot baseline, and one or two working services against a real database before adding cross-cutting concerns (gateway, events, observability) that only pay off once there's more than one moving part to coordinate.

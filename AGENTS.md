@@ -1,4 +1,4 @@
-# AGENT.md - Universal FAANG-Grade Engineering Agent Rules
+# AGENTS.md - Universal FAANG-Grade Engineering Agent Rules
 
 ## Purpose
 
@@ -10,9 +10,9 @@ Every change must move the application toward production-grade engineering quali
 
 This repository implements **LifeOS Engineering Platform** — a Java 25, AI-powered, cross-platform personal operating system built as both a real application and a FAANG-level engineering portfolio project (microservices, GraphQL/gRPC/REST, event-driven architecture, blockchain-backed document verification, video streaming, and AI orchestration).
 
-All development must stay aligned with [REQUIREMENTS.md](REQUIREMENTS.md). Before implementing, refactoring, reviewing, or documenting a feature, verify that the work supports the product vision, architecture, roadmap, technology choices, and engineering standards described there.
+All development must stay aligned with `REQUIREMENTS.md`. Before implementing, refactoring, reviewing, or documenting a feature, verify that the work supports the product vision, architecture, roadmap, technology choices, and engineering standards described there.
 
-If a requested change conflicts with [REQUIREMENTS.md](REQUIREMENTS.md), call out the conflict, explain the tradeoff, and recommend the safest path forward.
+If a requested change conflicts with `REQUIREMENTS.md`, call out the conflict, explain the tradeoff, and recommend the safest path forward.
 
 ## Non-Negotiable Engineering Standard
 
@@ -42,7 +42,7 @@ Before changing files, identify:
 - Inputs and outputs
 - Functional requirements
 - Non-functional requirements
-- Constraints from [REQUIREMENTS.md](REQUIREMENTS.md)
+- Constraints from `REQUIREMENTS.md`
 - Assumptions
 - Failure scenarios
 
@@ -181,7 +181,7 @@ For small tasks, keep these sections brief. For complex changes, provide deeper 
 
 Before calling work complete, verify:
 
-- The change aligns with [REQUIREMENTS.md](REQUIREMENTS.md).
+- The change aligns with `REQUIREMENTS.md`.
 - The problem is solved at the root cause.
 - Valid, invalid, edge, and failure cases are handled.
 - Data structures and algorithms are efficient for expected scale.

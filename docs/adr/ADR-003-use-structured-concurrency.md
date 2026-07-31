@@ -4,7 +4,7 @@
 
 LifeOS has several workflows that fan out to multiple independent sources and then need the combined result: dashboard aggregation (tasks, calendar, finances, AI recommendations, notifications, blockchain proof status), AI recommendation gathering, search fanout, video processing pipelines, blockchain verification, and smart scheduler evaluation. Each of these is a "one logical unit of work, many concurrent subtasks" shape — the caller doesn't care about individual subtask completion, it cares about the group succeeding, partially failing, or being cancelled together.
 
-Java 25 ships `StructuredTaskScope` (JEP 505, fifth preview as of this target, having iterated through JEP 428/437/453/462/480/499). It ties the lifetime of child tasks to a lexical scope: when the scope block exits — by success, exception, or cancellation — every child thread is guaranteed to be joined or cancelled before control returns. That guarantee is exactly the shape of the problems above, and it fits naturally with the virtual-threads model LifeOS already uses for I/O-bound service calls.
+Java 25 ships `StructuredTaskScope` (JEP 505, the fifth preview iteration, following incubation as JEP 428/437 and preview iterations JEP 453/462/480/499). It ties the lifetime of child tasks to a lexical scope: when the scope block exits — by success, exception, or cancellation — every child thread is guaranteed to be joined or cancelled before control returns. That guarantee is exactly the shape of the problems above, and it fits naturally with the virtual-threads model LifeOS already uses for I/O-bound service calls.
 
 ## Options Considered
 

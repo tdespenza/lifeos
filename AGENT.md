@@ -8,6 +8,8 @@ Every change must move the application toward production-grade engineering quali
 
 ## Source of Truth
 
+This repository implements **LifeOS Engineering Platform** — a Java 25, AI-powered, cross-platform personal operating system built as both a real application and a FAANG-level engineering portfolio project (microservices, GraphQL/gRPC/REST, event-driven architecture, blockchain-backed document verification, video streaming, and AI orchestration).
+
 All development must stay aligned with [REQUIREMENTS.md](REQUIREMENTS.md). Before implementing, refactoring, reviewing, or documenting a feature, verify that the work supports the product vision, architecture, roadmap, technology choices, and engineering standards described there.
 
 If a requested change conflicts with [REQUIREMENTS.md](REQUIREMENTS.md), call out the conflict, explain the tradeoff, and recommend the safest path forward.

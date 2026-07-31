@@ -8,9 +8,19 @@ The project is designed to showcase senior-level engineering ability and FAANG-s
 
 ## Status
 
-Early-stage / planning. The product vision, architecture, and roadmap are defined in [REQUIREMENTS.md](REQUIREMENTS.md); implementation has not started yet.
+Early-stage. Phase 1 of the roadmap is underway: two backend services are built and running (see below), with the rest of the target architecture still ahead. See [`docs/architecture/current-state.md`](docs/architecture/current-state.md) for a precise built-vs-planned breakdown.
 
-## What It Does
+## What's Actually Built
+
+* **identity-service** — account registration over PostgreSQL. See [`docs/api/identity-service.md`](docs/api/identity-service.md).
+* **task-goal-service** — goal CRUD plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
+* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis isn't used by any service yet.
+
+No authentication, no other services, no clients (web/desktop/mobile), no event bus, no observability stack. See [CONTRIBUTING.md](CONTRIBUTING.md) to build and run this yourself.
+
+## Target Feature Set
+
+The full product vision (not all built yet — see Status above):
 
 * Personal dashboard
 * Goal planning
@@ -51,11 +61,11 @@ Early-stage / planning. The product vision, architecture, and roadmap are define
 
 ## Documentation
 
-* [REQUIREMENTS.md](REQUIREMENTS.md) — product vision, architecture, technology decisions, and roadmap (source of truth for all development)
+* `REQUIREMENTS.md` — product vision, architecture, technology decisions, and roadmap (source of truth for all development). Intentionally gitignored — a fresh clone won't have it, and it isn't needed to build/run/test the code; ask the maintainer if you need the current product requirements.
 * [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) — engineering standards and required workflow for contributors and AI coding agents
-* `docs/adr/` — architecture decision records (to be populated per [REQUIREMENTS.md](REQUIREMENTS.md))
-* `docs/algorithms/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, interview-prep docs, and benchmark results (to be populated per [REQUIREMENTS.md](REQUIREMENTS.md))
+* `docs/adr/` — 18 architecture decision records covering the major technology/architecture choices
+* `docs/algorithms/`, `docs/api/`, `docs/architecture/`, `docs/concurrency/`, `docs/diagrams/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, API docs, current-state architecture, and interview-prep docs for what's actually built so far (each one explicitly distinguishes built vs. planned); `docs/benchmarks/` is a plan only — no numbers until something's actually been measured
 
 ## Roadmap
 
-See [REQUIREMENTS.md](REQUIREMENTS.md#suggested-mvp-roadmap) for the full 8-phase roadmap, from foundation and core algorithms through microservices, AI, video streaming, blockchain, desktop/mobile clients, and production readiness.
+See `REQUIREMENTS.md`'s "Suggested MVP Roadmap" section for the full 8-phase roadmap, from foundation and core algorithms through microservices, AI, video streaming, blockchain, desktop/mobile clients, and production readiness.

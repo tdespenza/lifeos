@@ -2,7 +2,7 @@
 
 Base URL (local): `http://localhost:8082`
 
-Status: goal CRUD (create/list) plus a real graph-algorithm endpoint for dependency ordering. Tasks, habits, routines, and milestones from the [Task and Goal Service scope](../../REQUIREMENTS.md#4-task-and-goal-service) are not modeled yet — only `Goal` exists so far.
+Status: goal CRUD (create/list) plus a real graph-algorithm endpoint for dependency ordering. Tasks, habits, routines, and milestones from the Task and Goal Service scope in `REQUIREMENTS.md` are not modeled yet — only `Goal` exists so far.
 
 ## `POST /api/v1/goals`
 

@@ -1,6 +1,6 @@
 # Concurrency — Current State
 
-The full concurrency strategy is defined in [REQUIREMENTS.md § Java 25 Concurrency Strategy](../../REQUIREMENTS.md#java-25-concurrency-strategy) and justified in [ADR-002](../adr/ADR-002-use-virtual-threads.md), [ADR-003](../adr/ADR-003-use-structured-concurrency.md), and [ADR-004](../adr/ADR-004-use-scoped-values.md). This document tracks what's actually enabled and exercised today versus what's still ahead.
+The full concurrency strategy is defined in `REQUIREMENTS.md`'s "Java 25 Concurrency Strategy" section and justified in [ADR-002](../adr/ADR-002-use-virtual-threads.md), [ADR-003](../adr/ADR-003-use-structured-concurrency.md), and [ADR-004](../adr/ADR-004-use-scoped-values.md). This document tracks what's actually enabled and exercised today versus what's still ahead.
 
 ## Virtual threads — enabled, lightly exercised
 

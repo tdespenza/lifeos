@@ -2,7 +2,7 @@
 
 **Status: no benchmarks have been run yet.** This document exists to record the plan and methodology, not to report results — there are no numbers here, and there won't be until the corresponding benchmark is actually executed. Fabricating throughput/latency figures for code that hasn't been measured would defeat the entire purpose of this section.
 
-The full target benchmark list is in [REQUIREMENTS.md § Performance and Benchmarking](../../REQUIREMENTS.md#performance-and-benchmarking). Recommended tooling per [REQUIREMENTS.md § Testing Strategy](../../REQUIREMENTS.md#testing-strategy): [k6](https://k6.io/) for load tests, [JMH](https://openjdk.org/projects/code-tools/jmh/) for micro-benchmarks (platform vs. virtual threads, `CompletableFuture` vs. structured concurrency).
+The full target benchmark list is in `REQUIREMENTS.md`'s "Performance and Benchmarking" section. Recommended tooling per `REQUIREMENTS.md`'s "Testing Strategy" section: [k6](https://k6.io/) for load tests, [JMH](https://openjdk.org/projects/code-tools/jmh/) for micro-benchmarks (platform vs. virtual threads, `CompletableFuture` vs. structured concurrency).
 
 ## Planned benchmarks and their prerequisites
 

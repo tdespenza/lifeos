@@ -25,12 +25,13 @@ docker compose -f infrastructure/docker-compose/docker-compose.yml up -d
 ./gradlew :services:task-goal-service:bootRun
 ```
 
-See [README.md](README.md) for the project overview. The full product vision, architecture, and roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local planning document, not a build input), so a fresh clone won't have it and doesn't need it to build, run, or test the code. Its substance is mirrored across tracked documentation you *do* have: `docs/adr/` (18 architecture decision records), `docs/interview/`, `docs/architecture/current-state.md`, and README.md's own feature/status summary. If you need the source document itself rather than its tracked summaries, that requires the project owner.
+See [README.md](README.md) for the project overview. The full product vision, architecture, and roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local planning document, not a build input), so a fresh clone won't have it and doesn't need it to build, run, or test the code. Its substance is mirrored across tracked documentation you *do* have: `docs/adr/` (19 architecture decision records), `docs/interview/`, `docs/architecture/current-state.md`, `docs/epics.md`, and README.md's own feature/status summary. If you need the source document itself rather than its tracked summaries, that requires the project owner.
 
 ## Documentation conventions
 
 * **Architecture Decision Records** live in `docs/adr/`. Per [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md), create or update an ADR whenever a decision affects architecture, data models, scaling strategy, security model, deployment model, external dependencies, API contracts, messaging, persistence, AI providers, or blockchain assumptions.
 * Each `docs/` subdirectory (`algorithms/`, `api/`, `architecture/`, `benchmarks/`, `concurrency/`, `diagrams/`, `interview/`) should describe what's *actually built*, not the aspirational target — call out explicitly what's planned-but-not-implemented rather than blending the two. `docs/benchmarks/` in particular must never contain invented numbers; log a benchmark there only once it's actually been run.
+* **Epics and stories** live in `docs/epics.md`, decomposing `REQUIREMENTS.md`/ADRs into FRs, NFRs, and implementable epics/stories. See [`docs/PROJECT_MANAGEMENT.md`](docs/PROJECT_MANAGEMENT.md) for how that document relates to GitHub Issues and the project board — `docs/epics.md` is the source of truth; issues/board are derived from it, not the other way around.
 
 ## Branching model
 

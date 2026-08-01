@@ -26,7 +26,7 @@ inputDocuments:
 
 ## Overview
 
-This document provides the complete epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored) and ADR-001 through ADR-018 into implementable stories. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
+This document provides the epic breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored) and ADR-001 through ADR-018 into 18 epics with full FR coverage. **Story-level detail (`Story N.M` entries with acceptance criteria, and explicit mappings for NFR1–NFR42 and the 19 Additional Requirements) has not been written yet** — that's Step 3 of the `bmad-create-epics-and-stories` workflow, still pending. Don't read this document as claiming story-level completeness; only the epic layer is done. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
 
 **Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration only, no auth yet) and `task-goal-service` (goal create/list + a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
 
@@ -357,93 +357,111 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 ## Epic List
 
 ### Epic 1: Account Identity & Access
+
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
 **Status:** Partially done — registration (FR6) exists in `identity-service`; login, OAuth2/OIDC, passkeys, JWT, RBAC/ABAC, and session management are not yet built.
 **Implementation notes:** First place to wire up OpenTelemetry (NFR13–16), scoped-value context binding (Additional Requirements, ADR-004), and rate limiting (NFR9) — every later epic inherits these patterns from here.
 
 ### Epic 2: Unified Platform Gateway
+
 Users interact with LifeOS through one coherent, reliable entry point rather than hitting fragile individual services directly — requests are authenticated, rate-limited, and traceable end-to-end.
 **FRs covered:** FR1, FR2, FR3, FR4
-**Implementation notes:** Depends on Epic 1 for the auth decisions it enforces. Covers NFR9 (rate limiting) and NFR13 (correlation IDs/tracing) at the edge.
+**Implementation notes:** Depends on Epic 1 for the auth decisions it enforces. Covers FR4 (correlation IDs), NFR9 (rate limiting), and NFR13 (OpenTelemetry distributed tracing) at the edge.
 
 ### Epic 3: Reminders & Notifications
+
 Users receive timely email, push, and real-time notifications, with reliable delivery even when a channel is temporarily unavailable.
 **FRs covered:** FR69, FR70, FR71, FR72, FR73, FR74
 **Implementation notes:** Depends on Epic 1. First natural home for the outbox pattern (NFR7), retry/backoff (NFR2), and dead-letter handling (NFR6) — later epics (Calendar, Video) call into this one rather than reimplementing delivery.
 
 ### Epic 4: Personal Profile & Preferences
+
 Users maintain a personal profile, preferences, household members, privacy settings, and AI personalization settings.
 **FRs covered:** FR13, FR14, FR15, FR16, FR17
 **Implementation notes:** Depends on Epic 1. Straightforward CRUD domain — first candidate for MongoDB usage (ADR-009) since preferences/household data is semi-structured.
 
 ### Epic 5: Task & Goal Management
+
 Users create tasks and goals, track habits and routines, express dependencies between them, and see a valid execution order.
 **FRs covered:** FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25
 **Status:** Partially done — goal create/list (FR19) and dependency-order computation (FR25, the algorithm itself is correct and complete) exist in `task-goal-service`. Not actually done despite earlier drafts of this doc claiming otherwise: there is no `Task` entity at all (FR18), goals have no update/delete (FR19 is create+list only), and dependency data isn't persisted against real goals (FR22 computes an order from submitted data but doesn't store a dependency relationship). Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built either.
 **Implementation notes:** Depends on Epic 1. The existing dependency-ordering implementation reimplements Kahn's algorithm directly rather than calling a shared Algorithm Engine — note this as a future consolidation opportunity once Epic 9 exists, not a blocker.
 
 ### Epic 6: Calendar & Scheduling
+
 Users manage calendar events, block time, get reminded before events, and get conflict/optimization help.
 **FRs covered:** FR26, FR27, FR28, FR29, FR30
 **Implementation notes:** Depends on Epic 1 and Epic 3 (FR28 reminders call the Notification epic rather than reimplementing delivery).
 
 ### Epic 7: Personal Finance & Budgeting
+
 Users manage budgets, record and categorize transactions, and get spending insights and forecasts.
 **FRs covered:** FR31, FR32, FR33, FR34, FR35, FR36
 **Implementation notes:** Depends on Epic 1. PostgreSQL system-of-record domain (ADR-008) — financial correctness (idempotent posting, NFR5) matters most here.
 
 ### Epic 8: Blockchain Trust & Verification
+
 Users can get tamper-evident proof that a document, credential, or achievement is genuine and unaltered, without exposing private data on-chain.
 **FRs covered:** FR63, FR64, FR65, FR66, FR67, FR68
 **Implementation notes:** Depends on Epic 1. Standalone utility other epics (Document Vault, Video) call into for proof requests — built once, consumed repeatedly.
 
 ### Epic 9: Algorithm Engine & Interview Readiness
+
 As an engineer using this project for FAANG-style interview preparation, reusable, benchmarked algorithm implementations exist that power real product features and double as interview-practice material — a secondary persona this project explicitly serves (see REQUIREMENTS.md "Career Goals This Project Supports").
 **FRs covered:** FR60, FR61, FR62
 **Implementation notes:** No hard dependency on other epics; can be built anytime, but delivers most value once at least one domain epic (Task/Goal, Calendar, Finance) exists to point its algorithms at as "real product use cases" rather than isolated examples.
 
 ### Epic 10: AI Life Assistant
+
 Users get an AI assistant that gives goal-planning recommendations, financial insights, and session summaries, with every AI decision logged for auditability.
 **FRs covered:** FR53, FR55, FR56, FR57, FR58, FR59
 **Implementation notes:** Depends on Epic 1, Epic 5 (FR55 needs goal data), Epic 7 (FR56 needs finance data). RAG-over-documents (originally FR54) is intentionally NOT in this epic — it's grouped into Epic 11 (Document Vault) instead, since it can't deliver value until documents exist, avoiding a circular dependency between this epic and Document Vault.
 
 ### Epic 11: Document Vault
+
 Users upload, search, and get AI summaries of their documents, with tamper-evident proof-of-existence available on request.
 **FRs covered:** FR37, FR38, FR39, FR40, FR41, FR42, FR54
 **Implementation notes:** Depends on Epic 1, Epic 8 (FR42), and Epic 10 (FR41, FR54). Upload/metadata/search (FR37–40) can ship as the epic's first stories without waiting on AI or blockchain; FR41/FR42/FR54 are later stories within this same epic once their dependencies exist.
 
 ### Epic 12: Video Coaching & Journaling
+
 Users schedule and join live coaching/journaling video sessions, with recordings, transcription, AI summaries, and automatic follow-up task creation.
 **FRs covered:** FR43, FR44, FR45, FR46, FR47, FR48, FR49, FR50, FR51, FR52
 **Implementation notes:** Depends on Epic 1, Epic 3 (scheduling reminders), Epic 5 (FR51 creates tasks), Epic 10 (FR50 summary), Epic 8 (FR52, optional). The largest single epic by FR count — consider splitting into "live session mechanics" (FR43–46) and "post-session processing" (FR47–52) stories within the epic if a single dev agent's context gets strained.
 
 ### Epic 13: Personal Analytics & Insights Dashboard
+
 Users see a unified dashboard of metrics, trends, and AI-generated recommendations drawn from across the whole platform in one aggregated view.
 **FRs covered:** FR5, FR75, FR76, FR77, FR78, FR79, FR80
 **Implementation notes:** Depends on Epic 5, Epic 6, Epic 7 (data sources) and Epic 10 (FR79). First real consumer of the GraphQL aggregation gateway (ADR-006) — FR5 belongs here rather than Epic 2 because a GraphQL aggregation layer has nothing to aggregate until data-producing epics exist.
 
 ### Epic 14: Web Dashboard Client
+
 Users access LifeOS through a web dashboard.
 **FRs covered:** FR81
 **Implementation notes:** Requires a UX design pass (visual identity, interaction patterns, mockups) before story-writing — see "UX Design Requirements" above. Depends on whichever backend epics the initial dashboard scope surfaces (at minimum Epic 1, Epic 5, Epic 13).
 
 ### Epic 15: Desktop Client
+
 Users access LifeOS through a native desktop application.
 **FRs covered:** FR82
 **Implementation notes:** Same UX-design prerequisite as Epic 14. JavaFX + GraalVM Native Image (ADR-014).
 
 ### Epic 16: Mobile Clients
+
 Users access LifeOS through native iOS and Android apps.
 **FRs covered:** FR83
 **Implementation notes:** Same UX-design prerequisite as Epic 14. Flutter (ADR-015), sharing REST/GraphQL contracts with the other clients.
 
 ### Epic 17: Engineering Labs
+
 As an engineer using this project for FAANG-style interview preparation, a dedicated playground exists to practice and demonstrate algorithms, concurrency patterns, distributed-systems patterns, performance engineering, blockchain fundamentals, AI engineering, and system design — each lab is a standalone learning/demonstration deliverable, not a dependency of the product epics.
 **FRs covered:** FR84, FR85, FR86, FR87, FR88, FR89, FR90
 **Implementation notes:** No hard dependency on other epics — can run in parallel with product epics at any time — but each lab is most valuable once it can reference a real product use case from an existing epic (e.g., the Blockchain Lab after Epic 8, the AI Lab after Epic 10), so sequencing it late is a deliberate choice, not a requirement.
 
 ### Epic 18: Interview & Portfolio Documentation
+
 As an engineer using this project for FAANG-style interview preparation, every major technology choice has a documented why/alternatives/tradeoffs/failure-mode explanation ready to use in an interview.
 **FRs covered:** FR91
 **Status:** Done — 19 documents exist under `docs/interview/`.

@@ -4,7 +4,13 @@ How epics, stories, GitHub Issues, and the project board relate to each other, s
 
 ## Source of truth
 
-`docs/epics.md` is the canonical requirements/epic/story breakdown — it's where FR/NFR numbering, epic goals, FR coverage, and acceptance criteria actually live. GitHub Issues and the **LifeOS Roadmap** project board ([github.com/users/tdespenza/projects/2](https://github.com/users/tdespenza/projects/2)) are the execution-tracking layer derived *from* `docs/epics.md`, not an independent source of truth. If they ever disagree, `docs/epics.md` wins, and the issue/board should be corrected to match it — not the other way around.
+Authority is split by concern, not duplicated:
+
+* **`docs/epics.md`** owns *what the work is* — FR/NFR numbering, epic goals, FR coverage, and (once written) acceptance criteria. This is the only place that content is authored; issues and the board never define new requirements, they reference `docs/epics.md`'s.
+* **The LifeOS Roadmap project board** ([github.com/users/tdespenza/projects/2](https://github.com/users/tdespenza/projects/2)) owns *how far along the work is* — its Status field (Todo / In Progress / Done) is the single source of truth for progress. See "Project board" below.
+* **GitHub Issue bodies** own neither — they're links and descriptive notes (goal summary, FR list, implementation notes) copied from `docs/epics.md` for convenience, plus a prose status line that's informational only. The prose status line is not authoritative; the board's Status field is. If an issue's prose ever disagrees with the board, trust the board.
+
+If `docs/epics.md` and an issue/the board ever disagree about *what the work is* (not how far along it is), `docs/epics.md` wins, and the issue/board should be corrected to match it — not the other way around.
 
 ## Issue conventions
 
@@ -35,4 +41,10 @@ Everything else uses the repo's existing default label set.
 
 ## Keeping this in sync
 
-When `docs/epics.md` changes in a way that affects tracking (a new epic, an FR added to an existing epic, an epic split or merged), update the corresponding GitHub Issue and project board entry in the *same* PR that changes the doc — don't let the doc and the tracker drift apart across separate changes.
+GitHub Issues and the project board can't literally be part of a git diff, so "same PR" doesn't mean "same commit" here — it means: don't merge a `docs/epics.md` change that affects tracking (a new epic, an FR added to an existing epic, an epic split or merged) without also updating the corresponding GitHub Issue and project board entry *before* that PR merges, in the same work session. Concretely:
+
+* The PR description should link the issue(s) it affects.
+* If the PR adds an epic, create its GitHub Issue and add it to the board (with the right Status) before merging — don't leave that for later.
+* If the PR changes an existing epic's FR coverage or status, edit that epic's issue body to match before merging.
+
+There's no automated enforcement of this yet (no CI check verifies issue/board state) — it's a discipline the PR author is responsible for, the same way the rest of this repo's documentation conventions are.

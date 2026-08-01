@@ -32,7 +32,7 @@ Same 83 FRs as documented in `docs/epics.md` (FR1–FR83, covering the 13 core m
 **Gap found — two requirement categories exist in REQUIREMENTS.md but were NOT captured as FRs in `docs/epics.md`:**
 
 - **Engineering Labs** (REQUIREMENTS.md "Engineering Labs" through "System Design Lab" sections): the PRD explicitly requires "a dedicated engineering playground" with 7 named lab directories (`algorithms-lab/`, `concurrency-lab/`, `distributed-systems-lab/`, `performance-lab/`, `blockchain-lab/`, `ai-lab/`, `system-design-lab/`), each with a specified content list. The System Design Lab alone specifies 10 named mini-systems to implement (URL shortener, notification system, search engine, distributed scheduler, recommendation engine, rate limiter, chat/messaging system, video session system, document storage system, event analytics pipeline), each requiring documented requirements/APIs/data model/scaling strategy/bottlenecks/tradeoffs/failure handling/monitoring.
-- **Interview Documentation** (REQUIREMENTS.md "Interview Documentation" section): 18 named documents under `docs/interview/` — **this one is already fully built** (19 docs exist, one more than the 18 named, from this session's earlier work), but it was never captured as a tracked requirement/epic, so there's no record in the epics document that this scope exists and is done.
+- **Interview Documentation** (REQUIREMENTS.md "Interview Documentation" section): 19 named documents under `docs/interview/` — **this one is already fully built** (19 docs exist, an exact match to the named list, from this session's earlier work), but it was never captured as a tracked requirement/epic, so there's no record in the epics document that this scope exists and is done.
 
 Total FRs after this correction: **83 product FRs + Labs/Interview-docs scope**, tracked separately below since Labs and Interview docs aren't user-facing product features in the same sense as the 13 services — they're portfolio/engineering-demonstration deliverables the PRD treats as first-class scope.
 
@@ -51,6 +51,8 @@ Confirmed against ADR-001 through ADR-018 (ADR-019 is release-process tooling, n
 `REQUIREMENTS.md` is complete and detailed for a vision/scope document — every one of the 13 services, both cross-cutting modules (AI, video, blockchain), and the labs/interview-docs scope has enough detail to derive testable stories. It is not written in formal FR/NFR-numbered format, which is why this assessment (and the epics-creation pass before it) had to derive numbering rather than extract it verbatim — this is a process note, not a PRD quality defect.
 
 ## Epic Coverage Validation
+
+> **Historical section — superseded same day.** Everything below (0% coverage, no epics designed) describes the state at the moment this step ran, *before* epic design happened later that day. `docs/epics.md` now has all 18 epics designed with 100% FR coverage (91/91 FRs, all mapped in its FR Coverage Map). Read this section as "why epic design was needed," not as current status.
 
 ### Epic FR Coverage Extracted
 
@@ -107,16 +109,18 @@ Not applicable in substance — zero epics and zero stories currently exist in `
 
 ## Summary and Recommendations
 
+> **Historical section — superseded same day.** The "NOT READY" verdict below was accurate when this assessment ran. `docs/epics.md` now has all 18 epics designed with 100% FR coverage — check that document for current status, not this one.
+
 ### Overall Readiness Status
 
-**NOT READY.**
+**NOT READY** *(at the time of this assessment — see note above)*.
 
-This is an expected, not alarming, result: the epics-creation workflow was intentionally paused after requirements extraction to run this validation, and this check correctly caught that pause rather than papering over it. The PRD (`REQUIREMENTS.md`) and architecture inputs (ADR-001–ADR-018) are themselves in good shape — the gap is entirely downstream, in epic/story design, which hasn't started.
+This is an expected, not alarming, result: the epics-creation workflow was intentionally paused after requirements extraction to run this validation, and this check correctly caught that pause rather than papering over it. The PRD (`REQUIREMENTS.md`) and architecture inputs (ADR-001–ADR-018) are themselves in good shape — the gap is entirely downstream, in epic/story design, which hadn't started yet at this point.
 
 ### Critical Issues Requiring Immediate Action
 
-1. **Zero epics and stories exist.** `docs/epics.md` has a fully populated Requirements Inventory but an empty Epic List — none of FR1–FR83, NFR1–NFR29, or the 19 Additional Requirements have a story yet. Nothing is currently implementable from this document.
-2. **Engineering Labs and Interview Documentation scope is missing from the Requirements Inventory entirely** — not just uncovered by epics, but never captured as FRs in the first place. Interview Documentation is actually already built (19 of 18 named docs exist), so this is a documentation-tracking gap, not missing work — but Engineering Labs (7 lab directories, including a 10-mini-system System Design Lab) is real, unscoped, unbuilt work that needs an explicit decision: include it in the epic breakdown, or consciously mark it out-of-scope/stretch-goal with a documented reason.
+1. **Zero epics and stories exist (at this point in the workflow).** `docs/epics.md` has a fully populated Requirements Inventory but an empty Epic List — none of FR1–FR83, NFR1–NFR29, or the 19 Additional Requirements have a story yet. Nothing is currently implementable from this document. *(Since resolved for epics — see the historical-section note above.)*
+2. **Engineering Labs and Interview Documentation scope is missing from the Requirements Inventory entirely** — not just uncovered by epics, but never captured as FRs in the first place. Interview Documentation is actually already built (19 documents exist, matching REQUIREMENTS.md's own 19-document "Interview Documentation" list exactly), so this is a documentation-tracking gap, not missing work — but Engineering Labs (7 lab directories, including a 10-mini-system System Design Lab) is real, unscoped, unbuilt work that needs an explicit decision: include it in the epic breakdown, or consciously mark it out-of-scope/stretch-goal with a documented reason. *(Since resolved — both were added to `docs/epics.md`'s Requirements Inventory.)*
 
 ### Recommended Next Steps
 

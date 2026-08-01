@@ -28,7 +28,7 @@ inputDocuments:
 
 This document provides the complete epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored) and ADR-001 through ADR-018 into implementable stories. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
 
-**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration only, no auth yet) and `task-goal-service` (goal CRUD + topological-sort dependency ordering) exist and are running against real PostgreSQL. Stories that are already implemented are marked **[DONE]** in the epic breakdown below rather than re-created as new work.
+**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration only, no auth yet) and `task-goal-service` (goal create/list + a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
 
 ## Requirements Inventory
 
@@ -62,14 +62,14 @@ FR17: Allow a user to configure AI personalization settings
 
 **Task and Goal Service**
 
-FR18: Allow a user to create, update, and complete tasks [DONE]
-FR19: Allow a user to define goals [DONE]
+FR18: Allow a user to create, update, and complete tasks [NOT DONE — no `Task` entity, controller, or service exists anywhere in the codebase; only `Goal` does]
+FR19: Allow a user to define goals [PARTIAL — `POST /api/v1/goals` (create) and `GET /api/v1/goals` (list) exist; no update or delete]
 FR20: Allow a user to track habits
 FR21: Allow a user to define routines
-FR22: Allow a user to express dependencies between tasks/goals [DONE]
+FR22: Allow a user to express dependencies between tasks/goals [PARTIAL — `POST /api/v1/goals/dependency-order` computes a topological order from free-text labels and edges submitted in the request body, but nothing is persisted: there's no foreign key to a stored `Goal` and no migration/table for dependencies, so a user cannot save a dependency against their real goals, only submit a one-off calculation]
 FR23: Allow a user to define milestones
 FR24: Support recurring activities
-FR25: Compute a valid dependency-respecting execution order for goals [DONE — topological sort, Kahn's algorithm]
+FR25: Compute a valid dependency-respecting execution order for goals [DONE — `TopologicalSortService` correctly implements Kahn's algorithm on whatever goals/edges it's given; this FR is about the algorithm's correctness, not persistence, so it's accurately DONE independent of the FR22 gap above]
 
 **Calendar Service**
 
@@ -277,11 +277,11 @@ FR14: Epic 4 - Preferences
 FR15: Epic 4 - Household/family members
 FR16: Epic 4 - Privacy settings
 FR17: Epic 4 - AI personalization settings
-FR18: Epic 5 - Task CRUD [DONE]
-FR19: Epic 5 - Goal definition [DONE]
+FR18: Epic 5 - Task CRUD [NOT DONE]
+FR19: Epic 5 - Goal definition [PARTIAL — create + list only]
 FR20: Epic 5 - Habit tracking
 FR21: Epic 5 - Routines
-FR22: Epic 5 - Task/goal dependencies [DONE]
+FR22: Epic 5 - Task/goal dependencies [PARTIAL — computed, not persisted]
 FR23: Epic 5 - Milestones
 FR24: Epic 5 - Recurring activities
 FR25: Epic 5 - Dependency-ordered execution (topological sort) [DONE]
@@ -380,7 +380,7 @@ Users maintain a personal profile, preferences, household members, privacy setti
 ### Epic 5: Task & Goal Management
 Users create tasks and goals, track habits and routines, express dependencies between them, and see a valid execution order.
 **FRs covered:** FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25
-**Status:** Mostly done — task/goal CRUD, dependencies, and topological-sort ordering (FR18, FR19, FR22, FR25) exist in `task-goal-service`. Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built.
+**Status:** Partially done — goal create/list (FR19) and dependency-order computation (FR25, the algorithm itself is correct and complete) exist in `task-goal-service`. Not actually done despite earlier drafts of this doc claiming otherwise: there is no `Task` entity at all (FR18), goals have no update/delete (FR19 is create+list only), and dependency data isn't persisted against real goals (FR22 computes an order from submitted data but doesn't store a dependency relationship). Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built either.
 **Implementation notes:** Depends on Epic 1. The existing dependency-ordering implementation reimplements Kahn's algorithm directly rather than calling a shared Algorithm Engine — note this as a future consolidation opportunity once Epic 9 exists, not a blocker.
 
 ### Epic 6: Calendar & Scheduling

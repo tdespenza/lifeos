@@ -7,6 +7,8 @@ stepsCompleted: [1, 2, 3, 4, 5, 6]
 **Date:** 2026-07-31
 **Project:** LifeOS Engineering Platform
 
+> **Update, same day:** the "NOT READY" / "0% FR coverage" findings below describe the state *at the moment this assessment ran* — after it completed, epic design (Step 2 of `bmad-create-epics-and-stories`) was carried out the same day, and `docs/epics.md` now has all 18 epics designed with 100% FR coverage. This report is kept as-written (not edited to match) since it's a point-in-time assessment, not a living document — but don't read the "NOT READY" verdict below as the project's current status. Check `docs/epics.md` for that.
+
 ## Document Discovery
 
 **PRD:** No dedicated `*prd*.md` exists under `docs/`. `REQUIREMENTS.md` (repo root, gitignored — see `CONTRIBUTING.md`) is used as the PRD-equivalent: it contains product scope, functional capability descriptions, and non-functional strategy sections.

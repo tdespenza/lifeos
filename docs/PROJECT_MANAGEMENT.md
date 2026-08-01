@@ -26,7 +26,7 @@ Everything else uses the repo's existing default label set.
 
 * One row per epic/story issue.
 * The board's **Status** field (Todo / In Progress / Done) is the single source of truth for progress. Don't duplicate progress via labels, issue titles, or emoji — one place to look, one place that can be wrong.
-* Work completed before this tracking system existed (e.g. account registration, task/goal CRUD + dependency ordering) is marked **In Progress** or **Done** on the board with a note in the issue body pointing at the real code (service, file, or PR) — not silently closed, since closing an epic issue should mean the *whole* epic (all its FRs) is done, and several partially-built epics still have real FRs remaining.
+* Work completed before this tracking system existed (e.g. account registration, goal create/list + dependency-order computation) is marked **In Progress** or **Done** on the board with a note in the issue body pointing at the real code (service, file, or PR) — not silently closed, since closing an epic issue should mean the *whole* epic (all its FRs) is done, and several partially-built epics still have real FRs remaining. Mark only the specific FRs that are actually implemented — don't let one done FR imply a sibling FR is done too (see `docs/epics.md`'s Task & Goal Management epic for what that mistake looks like once caught and fixed).
 
 ## Numbering
 

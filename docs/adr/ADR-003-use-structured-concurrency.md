@@ -43,6 +43,7 @@ Use `StructuredTaskScope` as the standard pattern for grouped concurrent workflo
 ## When This Decision Would Be Wrong
 
 This decision should be revisited if any of the following occur:
+
 - **A subsequent preview iteration (post-505) breaks the API again, or finalization keeps slipping past another LTS cycle** — the API is already confirmed still-preview through Java 25 GA, so this isn't a hypothetical; it's a question of how many more iterations we're willing to track before treating the delay itself as a signal. If finalization stalls past the next LTS, falling back to `CompletableFuture` with an explicit cancellation-token pattern for the affected services becomes the safer near-term choice rather than pinning to a moving preview API in production.
 - **A workflow's fan-out shape shifts from "small, bounded group of subtasks" to "large, dynamic, backpressure-sensitive stream"** — e.g., if search fanout grows from 5-6 fixed downstream calls to querying dozens of dynamically-discovered shards with rate limiting and partial-result streaming, that is Reactor's problem domain, not structured concurrency's, and the tradeoff calculus reverses.
 - **The team scales and most contributors are not JVM specialists** — structured concurrency is still a newer idiom with less Stack Overflow/tutorial coverage than `CompletableFuture`; if hiring shifts toward engineers without deep Java backgrounds, the maintainability advantage assumed here may not hold and the internal wrapper's documentation/training cost would need to be re-evaluated.

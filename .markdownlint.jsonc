@@ -1,0 +1,8 @@
+{
+  // Long prose lines are the house style across docs/ and the ADRs — wrapping
+  // at a fixed column would fight normal editor soft-wrap for no benefit.
+  "MD013": false,
+  // API docs (docs/api/*.md) repeat subsection headings like "Responses"
+  // once per endpoint; only flag duplicates within the same parent section.
+  "MD024": { "siblings_only": true }
+}

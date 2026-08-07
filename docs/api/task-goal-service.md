@@ -8,7 +8,7 @@ Status: goal CRUD (create/list) plus a real graph-algorithm endpoint for depende
 
 Create a goal.
 
-**Request body**
+### Request Body
 
 ```json
 { "title": "Land a Staff Engineer role" }
@@ -16,7 +16,7 @@ Create a goal.
 
 `title` must be non-blank (enforced on [`CreateGoalRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/CreateGoalRequest.java)).
 
-**Responses**
+### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ Create a goal.
 
 List all goals.
 
-**Response (`200 OK`)**
+### Response (`200 OK`)
 
 ```json
 [
@@ -43,7 +43,7 @@ List all goals.
 
 Resolve a valid execution order for a set of goals given their dependencies, via topological sort. See [`docs/algorithms/topological-sort-goal-dependencies.md`](../algorithms/topological-sort-goal-dependencies.md) for the algorithm itself.
 
-**Request body**
+### Request Body
 
 ```json
 {
@@ -59,7 +59,7 @@ Resolve a valid execution order for a set of goals given their dependencies, via
 
 `goals` must be non-empty (see [`DependencyOrderRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/DependencyOrderRequest.java)); `dependencies` may be omitted or empty. Any goal name that appears only inside `dependencies` (not in the `goals` list) is still accepted and included in the returned `order` — the algorithm collects every node it sees across both inputs (see [`TopologicalSortService`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortService.java)).
 
-**Responses**
+### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |

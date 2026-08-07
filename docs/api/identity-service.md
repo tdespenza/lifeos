@@ -8,7 +8,7 @@ Status: registration only. No authentication (OAuth2/OIDC/JWT/passkeys) is imple
 
 Register a new account.
 
-**Request body**
+### Request Body
 
 ```json
 {
@@ -19,7 +19,7 @@ Register a new account.
 
 `email` must be non-blank and a valid email address; `displayName` must be non-blank (enforced via Jakarta Bean Validation on [`RegisterAccountRequest`](../../services/identity-service/src/main/java/com/lifeos/identity/account/dto/RegisterAccountRequest.java)).
 
-**Responses**
+### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ Register a new account.
 | `400 Bad Request` | Validation failure (blank/invalid email or displayName) | Spring's default validation error body |
 | `409 Conflict` | An account already exists for that email | Plain-text message |
 
-**Example response (201)**
+### Example Response (201)
 
 ```json
 {
@@ -42,7 +42,7 @@ Register a new account.
 
 Fetch an account by id.
 
-**Responses**
+### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |

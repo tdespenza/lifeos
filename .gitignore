@@ -97,6 +97,7 @@ bmad-core/
 .claude/
 .junie/
 .qwen/
+.opencode/
 .github/agents/bmad-*.agent.md
 .github/agents/gds-*.agent.md
 .github/agents/wds-*.agent.md

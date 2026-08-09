@@ -5,9 +5,9 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:postgresql://localhost:5432/lifeos_identity
-    username: lifeos
-    password: lifeos
+    url: ${IDENTITY_DATASOURCE_URL:jdbc:postgresql://localhost:5432/lifeos_identity}
+    username: ${IDENTITY_DATASOURCE_USERNAME:lifeos}
+    password: ${IDENTITY_DATASOURCE_PASSWORD:lifeos}
   jpa:
     hibernate:
       ddl-auto: update
@@ -18,6 +18,40 @@ server:
 
 management:
   endpoints:
+    access:
+      default: unrestricted
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs

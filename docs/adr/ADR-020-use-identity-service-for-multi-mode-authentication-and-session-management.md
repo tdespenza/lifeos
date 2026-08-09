@@ -75,13 +75,18 @@ metadata.
 - The identity service issues short-lived, signed JWT access tokens containing
   the user id, session id, issuer, audience, expiry, and authorization claims.
 - Refresh tokens are opaque, high-entropy, one-time values. Raw refresh tokens
-  are never stored; the durable token-family record contains a family
-  identifier, the active token identifier/hash, and bounded consumed or
-  revoked token identifiers/hashes. A successful refresh atomically validates
-  the active identifier, records it as consumed, and advances the active token
-  to a newly issued successor. A predecessor reuse or other consumed-identifier
-  replay atomically revokes the entire token family, and concurrent requests
-  cannot mint two valid successors.
+  are never stored durably or in plaintext; the durable token-family record
+  contains a family identifier, the active token identifier/hash, and bounded
+  consumed or revoked token identifiers/hashes. A successful refresh atomically
+  validates the active identifier, records it as consumed, and advances the
+  active token to a newly issued successor. To tolerate an ambiguous network
+  outcome, exactly one retry is accepted for 30 seconds when it presents the
+  same client idempotency key and request fingerprint; a bounded TTL cache must
+  retain the KMS-encrypted successor response envelope for that retry and
+  returns it idempotently. A consumed predecessor with a different key or
+  fingerprint, a second retry, or a retry after 30 seconds atomically revokes
+  the entire token family. Row locking or an equivalent conditional update
+  ensures concurrent requests cannot mint two valid successors.
 - Durable session and revocation metadata is stored in the identity PostgreSQL
   database so users can view and revoke devices; PostgreSQL is the durable
   revocation authority. Redis stores bounded TTL state for rate limits, login
@@ -120,11 +125,13 @@ where the deployment environment requires it.
   the corresponding stories need them; no story creates unrelated tables.
 - Redis becomes part of the login hot path, so explicit timeouts, bounded
   retries, graceful degradation, and metrics are required.
-- JWT validation can remain local and fast in downstream services, while
-  revocation-sensitive operations consult PostgreSQL as the session/revocation
-  authority. Redis is only an acceleration layer: misses or outages fall back
-  to PostgreSQL, both stores unavailable fail closed, and recovered cache state
-  is repopulated from PostgreSQL.
+- Every protected-data request performs a session/revocation check against
+  PostgreSQL as the durable session/revocation authority. Local JWT validation
+  is only an early signature/claims filter, and Redis is only an acceleration
+  layer; neither can replace the durable check. Redis misses or outages fall
+  back to PostgreSQL, both stores unavailable fail closed, and recovered cache
+  state is repopulated from PostgreSQL. No cache-only acceptance window is
+  allowed for protected-data access.
 - OIDC provider and WebAuthn integration tests require contract fixtures and
   security-focused negative cases; real provider secrets are never used in CI.
 

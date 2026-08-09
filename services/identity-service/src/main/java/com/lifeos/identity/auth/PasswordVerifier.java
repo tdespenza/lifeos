@@ -61,7 +61,11 @@ public class PasswordVerifier {
             throw new AuthenticationDependencyUnavailableException();
         }
         try {
-            return passwordEncoder.matches(rawPassword, encodedPassword);
+            try {
+                return passwordEncoder.matches(rawPassword, encodedPassword);
+            } catch (RuntimeException exception) {
+                throw new AuthenticationDependencyUnavailableException(exception);
+            }
         } finally {
             permits.release();
         }

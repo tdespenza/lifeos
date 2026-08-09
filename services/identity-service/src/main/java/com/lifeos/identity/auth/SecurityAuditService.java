@@ -1,11 +1,7 @@
 package com.lifeos.identity.auth;
 
 import com.lifeos.identity.observability.RequestContext;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,14 +18,19 @@ public class SecurityAuditService {
     private static final Logger log = LoggerFactory.getLogger(SecurityAuditService.class);
 
     private final SecurityAuditEventRepository repository;
+    private final HmacSha256Digest clientFingerprint;
 
     /**
      * Creates the audit service.
      *
      * @param repository audit-event repository
+     * @param properties authentication properties containing the dedicated audit fingerprint key
      */
-    public SecurityAuditService(SecurityAuditEventRepository repository) {
+    public SecurityAuditService(SecurityAuditEventRepository repository, IdentityAuthProperties properties) {
         this.repository = repository;
+        this.clientFingerprint = new HmacSha256Digest(
+                properties.getFingerprint().getAuditClientFingerprintSecret(),
+                "IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET");
     }
 
     /**
@@ -42,14 +43,32 @@ public class SecurityAuditService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
+        persist(eventType, accountId, clientAddress);
+    }
+
+    /**
+     * Persists an outcome in the caller's transaction. This is used for successful authentication
+     * so the audit row commits or rolls back with the durable session.
+     *
+     * @param eventType security outcome
+     * @param accountId known account, or {@code null}
+     * @param clientAddress request source used only to derive a digest
+     */
+    @Transactional
+    public void recordWithinCurrentTransaction(
+            SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
+        persist(eventType, accountId, clientAddress);
+    }
+
+    private void persist(SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
         String correlationId = RequestContext.CORRELATION_ID.isBound()
                 ? RequestContext.CORRELATION_ID.get()
                 : "unbound";
-        repository.save(new SecurityAuditEvent(
+        repository.saveAndFlush(new SecurityAuditEvent(
                 eventType,
                 accountId,
                 correlationId,
-                digest(clientAddress == null ? "unknown" : clientAddress),
+                clientFingerprint.digest(clientAddress == null ? "unknown" : clientAddress),
                 Instant.now()));
         log.atInfo()
                 .addKeyValue("event", eventType.name().toLowerCase())
@@ -57,18 +76,4 @@ public class SecurityAuditService {
                 .log("Authentication security outcome recorded");
     }
 
-    /**
-     * Derives a stable non-reversible client fingerprint.
-     *
-     * @param value raw client address held only during the request
-     * @return SHA-256 client fingerprint
-     */
-    private String digest(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required by the runtime", exception);
-        }
-    }
 }

@@ -33,6 +33,9 @@ identity:
     jwt:
       issuer: ${IDENTITY_JWT_ISSUER:lifeos-identity}
       signing-secret: ${IDENTITY_JWT_SIGNING_SECRET:}
+    fingerprint:
+      audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
+      rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}
 
 server:
   port: 8081

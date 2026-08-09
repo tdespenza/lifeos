@@ -43,6 +43,10 @@ sequenceDiagram
         Redis-->>App: fail closed
         App->>DB: audit dependency-unavailable outcome
         App-->>API: 503 generic problem
+    else threshold exceeded
+        Redis-->>App: limit exceeded + window seconds
+        App->>DB: audit rate-limited outcome
+        App-->>API: 429 generic problem + Retry-After
     else attempt permitted
         App->>DB: load account and password credential
         App->>Argon: bounded Argon2id verification
@@ -96,20 +100,19 @@ classDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> RequestReceived
-    RequestReceived --> RateLimited : Redis counter increments
+    RequestReceived --> RateLimitCheck : Redis counter increments
     RequestReceived --> DependencyUnavailable : Redis timeout/error
-    RateLimited --> DependencyUnavailable : threshold exceeded
-    RateLimited --> CredentialLookup : attempt permitted
-    CredentialLookup --> GenericFailure : unknown/missing/disabled/wrong
-    CredentialLookup --> HashCapacityWait : account + credential found
+    RateLimitCheck --> RateLimitExceeded : threshold exceeded
+    RateLimitCheck --> CredentialLookup : attempt permitted
+    CredentialLookup --> HashCapacityWait : account/credential or dummy hash selected
     HashCapacityWait --> DependencyUnavailable : permit timeout/interrupted
-    HashCapacityWait --> GenericFailure : Argon2id mismatch
-    HashCapacityWait --> SessionCapacityCheck : Argon2id match
+    HashCapacityWait --> GenericFailure : unknown/missing/disabled/wrong/mismatch
+    HashCapacityWait --> SessionCapacityCheck : active account + active credential + match
     SessionCapacityCheck --> CapacityConflict : active session cap reached
-    SessionCapacityCheck --> Authenticated : account lock + session persisted
+    SessionCapacityCheck --> Authenticated : revalidated state + session persisted
     Authenticated --> AuditRecorded
     GenericFailure --> AuditRecorded
-    RateLimited --> AuditRecorded
+    RateLimitExceeded --> AuditRecorded
     DependencyUnavailable --> AuditRecorded
     CapacityConflict --> AuditRecorded
     AuditRecorded --> [*]
@@ -121,6 +124,8 @@ stateDiagram-v2
 - Raw passwords, bearer tokens, email addresses, and raw network addresses are not logged or
   persisted by the authentication path.
 - Redis and local Argon2 capacity failures fail closed; no in-process rate-limit fallback exists.
-- Session creation locks the account capacity row and stores only a SHA-256 access-token digest.
-- Every security outcome is correlated and written to the redacted audit table when persistence is
-  available.
+- Session creation locks and revalidates the account and password-credential rows before issuing a
+  token, then stores only a SHA-256 access-token digest.
+- Every security outcome that reaches `LoginService` is correlated and written to the redacted audit
+  table when persistence is available. Request-shape validation returns a generic 400 before the
+  authentication service is invoked.

@@ -15,7 +15,7 @@ import java.util.UUID;
  * Durable, redacted security audit record for authentication outcomes.
  *
  * <p>Email addresses, passwords, password hashes, bearer tokens, cookies, and raw network
- * addresses are intentionally absent. The client fingerprint is already a one-way digest.
+ * addresses are intentionally absent. The client fingerprint is a keyed one-way digest.
  */
 @Entity
 @Table(name = "security_audit_event")

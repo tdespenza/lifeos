@@ -21,6 +21,7 @@ class RedisLoginRateLimiterTest {
         IdentityAuthProperties properties = new IdentityAuthProperties();
         properties.getRateLimit().setMaxAttempts(5);
         properties.getRateLimit().setWindow(java.time.Duration.ofSeconds(60));
+        properties.getFingerprint().setRateLimitKeySecret(testRateLimitKey());
         doReturn(6L).when(template).execute(any(DefaultRedisScript.class), anyList(), anyString());
 
         RedisLoginRateLimiter limiter = new RedisLoginRateLimiter(template, properties);
@@ -34,6 +35,7 @@ class RedisLoginRateLimiterTest {
     void failsClosedWhenRedisReturnsNoDecision() {
         StringRedisTemplate template = org.mockito.Mockito.mock(StringRedisTemplate.class);
         IdentityAuthProperties properties = new IdentityAuthProperties();
+        properties.getFingerprint().setRateLimitKeySecret(testRateLimitKey());
         doReturn(null).when(template).execute(any(DefaultRedisScript.class), anyList(), anyString());
 
         RedisLoginRateLimiter limiter = new RedisLoginRateLimiter(template, properties);
@@ -47,6 +49,7 @@ class RedisLoginRateLimiterTest {
     void failsClosedWhenRedisThrows() {
         StringRedisTemplate template = org.mockito.Mockito.mock(StringRedisTemplate.class);
         IdentityAuthProperties properties = new IdentityAuthProperties();
+        properties.getFingerprint().setRateLimitKeySecret(testRateLimitKey());
         doReturn(null).when(template).execute(any(DefaultRedisScript.class), anyList(), anyString());
         org.mockito.Mockito.doThrow(new IllegalStateException("redis down"))
                 .when(template).execute(any(DefaultRedisScript.class), anyList(), anyString());
@@ -55,5 +58,9 @@ class RedisLoginRateLimiterTest {
 
         assertThatThrownBy(() -> limiter.check("ada@example.com", "127.0.0.1"))
                 .isInstanceOf(AuthenticationDependencyUnavailableException.class);
+    }
+
+    private String testRateLimitKey() {
+        return "test-only-rate-limit-key-secret-that-is-at-least-32-bytes";
     }
 }

@@ -6,6 +6,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -29,6 +30,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     private final JwtEncoder jwtEncoder;
     private final AuthSessionRepository sessionRepository;
     private final UserAccountRepository accountRepository;
+    private final PasswordCredentialRepository credentialRepository;
     private final IdentityAuthProperties properties;
     private final Clock clock;
 
@@ -38,15 +40,18 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
      * @param jwtEncoder signed-token encoder
      * @param sessionRepository durable session repository
      * @param accountRepository account repository used for capacity locking
-    * @param properties authentication properties
+     * @param credentialRepository credential repository used for state revalidation
+     * @param properties authentication properties
     */
     @Autowired
     public JwtSessionTokenAuthority(
             JwtEncoder jwtEncoder,
             AuthSessionRepository sessionRepository,
             UserAccountRepository accountRepository,
+            PasswordCredentialRepository credentialRepository,
             IdentityAuthProperties properties) {
-        this(jwtEncoder, sessionRepository, accountRepository, properties, Clock.systemUTC());
+        this(jwtEncoder, sessionRepository, accountRepository, credentialRepository, properties,
+                Clock.systemUTC());
     }
 
     /**
@@ -55,6 +60,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
      * @param jwtEncoder signed-token encoder
      * @param sessionRepository durable session repository
      * @param accountRepository account repository
+     * @param credentialRepository credential repository
      * @param properties authentication properties
      * @param clock time source
      */
@@ -62,11 +68,13 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             JwtEncoder jwtEncoder,
             AuthSessionRepository sessionRepository,
             UserAccountRepository accountRepository,
+            PasswordCredentialRepository credentialRepository,
             IdentityAuthProperties properties,
             Clock clock) {
         this.jwtEncoder = jwtEncoder;
         this.sessionRepository = sessionRepository;
         this.accountRepository = accountRepository;
+        this.credentialRepository = credentialRepository;
         this.properties = properties;
         this.clock = clock;
     }
@@ -80,36 +88,52 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     @Override
     @Transactional
     public LoginResponse createSession(UserAccount account) {
-        UserAccount lockedAccount = accountRepository.findByIdForUpdate(account.getId())
-                .orElseThrow(() -> new AuthenticationFailureException());
-        Instant issuedAt = clock.instant();
-        Instant expiresAt = issuedAt.plus(properties.getAccessTokenTtl());
-        if (sessionRepository.countActiveByAccountId(lockedAccount.getId(), issuedAt)
-                >= properties.getMaxSessionsPerAccount()) {
-            throw new SessionCapacityExceededException();
-        }
+        try {
+            UserAccount lockedAccount = accountRepository.findByIdForUpdate(account.getId())
+                    .orElseThrow(AuthenticationFailureException::new);
+            PasswordCredential lockedCredential = credentialRepository
+                    .findByAccountIdForUpdate(lockedAccount.getId())
+                    .orElseThrow(AuthenticationFailureException::new);
+            if (!lockedAccount.isActive() || !lockedCredential.isActive()) {
+                throw new AuthenticationFailureException();
+            }
 
-        UUID sessionId = UUID.randomUUID();
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-                .issuer(properties.getJwt().getIssuer())
-                .subject(lockedAccount.getId().toString())
-                .id(sessionId.toString())
-                .issuedAt(issuedAt)
-                .expiresAt(expiresAt)
-                .claim("session_id", sessionId.toString())
-                .build();
-        JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).type("JWT").build();
-        String accessToken = jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
-        sessionRepository.save(new AuthSession(
-                sessionId,
-                lockedAccount,
-                TokenDigest.sha256(accessToken),
-                issuedAt,
-                expiresAt));
-        return new LoginResponse(
-                sessionId,
-                accessToken,
-                TOKEN_TYPE,
-                properties.getAccessTokenTtl().toSeconds());
+            Instant issuedAt = clock.instant();
+            Instant expiresAt = issuedAt.plus(properties.getAccessTokenTtl());
+            if (sessionRepository.countActiveByAccountId(lockedAccount.getId(), issuedAt)
+                    >= properties.getMaxSessionsPerAccount()) {
+                throw new SessionCapacityExceededException();
+            }
+
+            UUID sessionId = UUID.randomUUID();
+            JwtClaimsSet claims = JwtClaimsSet.builder()
+                    .issuer(properties.getJwt().getIssuer())
+                    .subject(lockedAccount.getId().toString())
+                    .id(sessionId.toString())
+                    .issuedAt(issuedAt)
+                    .expiresAt(expiresAt)
+                    .claim("session_id", sessionId.toString())
+                    .build();
+            JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).type("JWT").build();
+            String accessToken = jwtEncoder.encode(JwtEncoderParameters.from(header, claims))
+                    .getTokenValue();
+            sessionRepository.saveAndFlush(new AuthSession(
+                    sessionId,
+                    lockedAccount,
+                    TokenDigest.sha256(accessToken),
+                    issuedAt,
+                    expiresAt));
+            return new LoginResponse(
+                    sessionId,
+                    accessToken,
+                    TOKEN_TYPE,
+                    properties.getAccessTokenTtl().toSeconds());
+        } catch (SessionCapacityExceededException | AuthenticationFailureException exception) {
+            throw exception;
+        } catch (DataAccessException | AuthenticationDependencyUnavailableException exception) {
+            throw new AuthenticationDependencyUnavailableException(exception);
+        } catch (RuntimeException exception) {
+            throw new AuthenticationDependencyUnavailableException(exception);
+        }
     }
 }

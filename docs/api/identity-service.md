@@ -41,7 +41,7 @@ path as unknown accounts.
 | `401 Unauthorized` | Unknown email, missing credential, wrong password, disabled account, or disabled credential | Same generic RFC 9457 problem detail for every credential failure |
 | `409 Conflict` | Account active-session capacity reached | Generic problem detail; no session is created |
 | `429 Too Many Requests` | Redis limiter threshold exceeded | Generic problem detail plus `Retry-After` seconds |
-| `503 Service Unavailable` | Redis limiter, audit persistence, or another required authentication dependency cannot complete safely | Generic temporary-failure problem detail; credentials are not evaluated when the limiter fails |
+| `503 Service Unavailable` | Redis limiter, audit persistence, session lookup/persistence, JWT encoding, or another required authentication dependency cannot complete safely | Generic temporary-failure problem detail; credentials are not evaluated when the limiter fails |
 
 ### Example Response (200)
 
@@ -62,8 +62,11 @@ through a secrets-manager-backed deployment configuration. The local/test profil
 test secret.
 
 Login attempts are limited to five attempts per 60-second Redis window by default. Limiter keys are
-SHA-256 digests of normalized email plus the request source address; raw values never enter Redis,
-logs, metrics, or audit events. The account's active-session limit is ten by default.
+HMAC-SHA-256 digests of normalized email plus the request source address, using the dedicated
+`IDENTITY_RATE_LIMIT_KEY_SECRET`; raw values never enter Redis, logs, metrics, or audit events. Audit
+client fingerprints use a separate `IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET`. Both secrets must be
+supplied by a secret manager and must not reuse the JWT signing key. The account's active-session
+limit is ten by default.
 
 ## `POST /api/v1/accounts`
 

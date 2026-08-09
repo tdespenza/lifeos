@@ -18,7 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * Unit tests for the first-party login orchestration and generic failure contract.
@@ -68,7 +70,7 @@ class LoginServiceTest {
 
     @Test
     void authenticatesActiveAccountAndCreatesSharedSession() {
-        UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
+        UserAccount account = account();
         PasswordCredential credential = new PasswordCredential(account, "argon2-hash");
         LoginResponse expected = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
         when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.of(account));
@@ -80,7 +82,9 @@ class LoginServiceTest {
 
         assertThat(actual).isEqualTo(expected);
         verify(sessionTokenAuthority).createSession(account);
-        verify(auditService).record(SecurityAuditEventType.LOGIN_SUCCEEDED, null, "127.0.0.1");
+        verify(auditService).recordWithinCurrentTransaction(
+                SecurityAuditEventType.LOGIN_SUCCEEDED, account.getId(), "127.0.0.1");
+        verify(metrics).record(SecurityAuditEventType.LOGIN_SUCCEEDED);
     }
 
     @Test
@@ -100,7 +104,7 @@ class LoginServiceTest {
 
     @Test
     void rejectsDisabledAccountEvenWhenPasswordMatches() {
-        UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
+        UserAccount account = account();
         account.disable();
         PasswordCredential credential = new PasswordCredential(account, "argon2-hash");
         when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.of(account));
@@ -113,7 +117,7 @@ class LoginServiceTest {
                 .hasMessage("The supplied credentials could not be verified.");
 
         verify(sessionTokenAuthority, never()).createSession(any());
-        verify(auditService).record(SecurityAuditEventType.LOGIN_FAILED, null, "127.0.0.1");
+        verify(auditService).record(SecurityAuditEventType.LOGIN_FAILED, account.getId(), "127.0.0.1");
     }
 
     @Test
@@ -144,7 +148,7 @@ class LoginServiceTest {
 
     @Test
     void auditsAndFailsClosedWhenLocalHashingCapacityIsUnavailable() {
-        UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
+        UserAccount account = account();
         PasswordCredential credential = new PasswordCredential(account, "argon2-hash");
         when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.of(account));
         when(credentialRepository.findByAccountId(account.getId())).thenReturn(Optional.of(credential));
@@ -157,6 +161,34 @@ class LoginServiceTest {
 
         verify(sessionTokenAuthority, never()).createSession(any());
         verify(auditService).record(SecurityAuditEventType.LOGIN_DEPENDENCY_UNAVAILABLE,
-                null, "127.0.0.1");
+                account.getId(), "127.0.0.1");
+    }
+
+    @Test
+    void mapsSessionPersistenceFailureToSanitizedDependencyFailure() {
+        UserAccount account = account();
+        PasswordCredential credential = new PasswordCredential(account, "argon2-hash");
+        when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.of(account));
+        when(credentialRepository.findByAccountId(account.getId())).thenReturn(Optional.of(credential));
+        when(passwordVerifier.matches("correct", "argon2-hash")).thenReturn(true);
+        doThrow(new DataIntegrityViolationException("session persistence failed"))
+                .when(sessionTokenAuthority).createSession(account);
+
+        assertThatThrownBy(() -> service.login(
+                new LoginRequest("ada@example.com", "correct"), "127.0.0.1"))
+                .isInstanceOf(AuthenticationDependencyUnavailableException.class)
+                .hasMessage("Authentication is temporarily unavailable.");
+
+        verify(auditService).record(SecurityAuditEventType.LOGIN_DEPENDENCY_UNAVAILABLE,
+                account.getId(), "127.0.0.1");
+        verify(auditService, never()).recordWithinCurrentTransaction(
+                SecurityAuditEventType.LOGIN_SUCCEEDED, account.getId(), "127.0.0.1");
+        verify(metrics, never()).record(SecurityAuditEventType.LOGIN_SUCCEEDED);
+    }
+
+    private UserAccount account() {
+        UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
+        ReflectionTestUtils.setField(account, "id", UUID.randomUUID());
+        return account;
     }
 }

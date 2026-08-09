@@ -1,10 +1,6 @@
 package com.lifeos.identity.auth;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.HexFormat;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +27,7 @@ public class RedisLoginRateLimiter implements LoginRateLimiter {
 
     private final StringRedisTemplate redisTemplate;
     private final IdentityAuthProperties properties;
+    private final HmacSha256Digest limiterKeyDigest;
 
     /**
      * Creates the Redis login limiter.
@@ -41,6 +38,9 @@ public class RedisLoginRateLimiter implements LoginRateLimiter {
     public RedisLoginRateLimiter(StringRedisTemplate redisTemplate, IdentityAuthProperties properties) {
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+        this.limiterKeyDigest = new HmacSha256Digest(
+                properties.getFingerprint().getRateLimitKeySecret(),
+                "IDENTITY_RATE_LIMIT_KEY_SECRET");
     }
 
     /**
@@ -70,7 +70,7 @@ public class RedisLoginRateLimiter implements LoginRateLimiter {
         } catch (RuntimeException exception) {
             log.atWarn()
                     .addKeyValue("event", "login_rate_limiter_unavailable")
-                    .log("Login rate limiter failed closed", exception);
+                    .log("Login rate limiter failed closed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }
     }
@@ -79,14 +79,9 @@ public class RedisLoginRateLimiter implements LoginRateLimiter {
      * Derives a stable non-reversible limiter key without storing raw email or address data.
      *
      * @param value key material
-     * @return lower-case SHA-256 digest
+     * @return lower-case keyed HMAC-SHA-256 digest
      */
     private String digest(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required by the runtime", exception);
-        }
+        return limiterKeyDigest.digest(value);
     }
 }

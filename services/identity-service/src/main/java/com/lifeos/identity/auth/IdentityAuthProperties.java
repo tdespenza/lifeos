@@ -1,7 +1,13 @@
 package com.lifeos.identity.auth;
 
 import java.time.Duration;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * Externalized authentication limits and cryptographic configuration.
@@ -10,11 +16,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * environment or configuration source. No usable production secret is committed to the project.
  */
 @ConfigurationProperties(prefix = "identity.auth")
+@Validated
 public class IdentityAuthProperties {
 
+    @Valid
     private final RateLimit rateLimit = new RateLimit();
     private final Password password = new Password();
     private final Jwt jwt = new Jwt();
+    @Valid
+    private final Fingerprint fingerprint = new Fingerprint();
     private Duration accessTokenTtl = Duration.ofMinutes(5);
     private int maxSessionsPerAccount = 10;
 
@@ -49,6 +59,15 @@ public class IdentityAuthProperties {
      */
     public Jwt getJwt() {
         return jwt;
+    }
+
+    /**
+     * Returns keyed fingerprint secrets used for redacted security data.
+     *
+     * @return fingerprint secrets
+     */
+    public Fingerprint getFingerprint() {
+        return fingerprint;
     }
 
     /**
@@ -92,7 +111,9 @@ public class IdentityAuthProperties {
      */
     public static class RateLimit {
 
+        @Min(value = 1, message = "maxAttempts must be positive")
         private int maxAttempts = 5;
+        @NotNull(message = "window must be configured")
         private Duration window = Duration.ofMinutes(1);
 
         /**
@@ -116,6 +137,9 @@ public class IdentityAuthProperties {
          * @param maxAttempts maximum attempts
          */
         public void setMaxAttempts(int maxAttempts) {
+            if (maxAttempts < 1) {
+                throw new IllegalArgumentException("maxAttempts must be positive");
+            }
             this.maxAttempts = maxAttempts;
         }
 
@@ -134,7 +158,73 @@ public class IdentityAuthProperties {
          * @param window window duration
          */
         public void setWindow(Duration window) {
+            if (window == null || window.isZero() || window.isNegative()) {
+                throw new IllegalArgumentException("window must be positive");
+            }
             this.window = window;
+        }
+
+        /**
+         * Confirms that the configured window is strictly positive during property validation.
+         *
+         * @return {@code true} when the window can bound attempts
+         */
+        @AssertTrue(message = "window must be positive")
+        public boolean isWindowPositive() {
+            return window != null && !window.isZero() && !window.isNegative();
+        }
+    }
+
+    /**
+     * Secret-manager-backed keys for domain-separated HMAC fingerprints.
+     */
+    public static class Fingerprint {
+
+        @NotBlank(message = "auditClientFingerprintSecret must be configured")
+        private String auditClientFingerprintSecret;
+        @NotBlank(message = "rateLimitKeySecret must be configured")
+        private String rateLimitKeySecret;
+
+        /**
+         * Creates empty fingerprint settings so deployment configuration must provide both keys.
+         */
+        public Fingerprint() {
+        }
+
+        /**
+         * Returns the dedicated audit fingerprint key.
+         *
+         * @return audit fingerprint key
+         */
+        public String getAuditClientFingerprintSecret() {
+            return auditClientFingerprintSecret;
+        }
+
+        /**
+         * Sets the dedicated audit fingerprint key from external configuration.
+         *
+         * @param auditClientFingerprintSecret audit fingerprint key
+         */
+        public void setAuditClientFingerprintSecret(String auditClientFingerprintSecret) {
+            this.auditClientFingerprintSecret = auditClientFingerprintSecret;
+        }
+
+        /**
+         * Returns the dedicated Redis limiter key secret.
+         *
+         * @return Redis limiter key secret
+         */
+        public String getRateLimitKeySecret() {
+            return rateLimitKeySecret;
+        }
+
+        /**
+         * Sets the dedicated Redis limiter key secret from external configuration.
+         *
+         * @param rateLimitKeySecret Redis limiter key secret
+         */
+        public void setRateLimitKeySecret(String rateLimitKeySecret) {
+            this.rateLimitKeySecret = rateLimitKeySecret;
         }
     }
 

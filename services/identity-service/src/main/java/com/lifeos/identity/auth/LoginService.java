@@ -10,6 +10,8 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Orchestrates first-party email/password authentication.
@@ -120,15 +122,58 @@ public class LoginService {
 
         try {
             LoginResponse response = sessionTokenAuthority.createSession(account.get());
-            recordAudit(SecurityAuditEventType.LOGIN_SUCCEEDED, account.get().getId(), clientAddress);
-            log.atInfo()
-                    .addKeyValue("event", "login_succeeded")
-                    .log("Authentication succeeded");
+            recordSuccessfulAudit(account.get().getId(), clientAddress);
             return response;
         } catch (SessionCapacityExceededException exception) {
             recordAudit(SecurityAuditEventType.LOGIN_SESSION_CAPACITY_REACHED,
                     account.get().getId(), clientAddress);
             throw exception;
+        } catch (AuthenticationFailureException exception) {
+            recordAudit(SecurityAuditEventType.LOGIN_FAILED, account.get().getId(), clientAddress);
+            throw exception;
+        } catch (AuthenticationDependencyUnavailableException exception) {
+            recordAudit(SecurityAuditEventType.LOGIN_DEPENDENCY_UNAVAILABLE,
+                    account.get().getId(), clientAddress);
+            throw exception;
+        } catch (RuntimeException exception) {
+            recordAudit(SecurityAuditEventType.LOGIN_DEPENDENCY_UNAVAILABLE,
+                    account.get().getId(), clientAddress);
+            throw new AuthenticationDependencyUnavailableException(exception);
+        }
+    }
+
+    /**
+     * Stores the success audit in the session transaction and emits operational signals only after
+     * that transaction commits.
+     *
+     * @param accountId authenticated account
+     * @param clientAddress raw address held only for digesting
+     */
+    private void recordSuccessfulAudit(java.util.UUID accountId, String clientAddress) {
+        try {
+            auditService.recordWithinCurrentTransaction(
+                    SecurityAuditEventType.LOGIN_SUCCEEDED, accountId, clientAddress);
+            Runnable committedOutcome = () -> {
+                metrics.record(SecurityAuditEventType.LOGIN_SUCCEEDED);
+                log.atInfo()
+                        .addKeyValue("event", "login_succeeded")
+                        .log("Authentication succeeded");
+            };
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        committedOutcome.run();
+                    }
+                });
+            } else {
+                committedOutcome.run();
+            }
+        } catch (RuntimeException exception) {
+            log.atError()
+                    .addKeyValue("event", "login_audit_failed")
+                    .log("Authentication audit persistence failed");
+            throw new AuthenticationDependencyUnavailableException(exception);
         }
     }
 
@@ -146,7 +191,7 @@ public class LoginService {
         } catch (RuntimeException exception) {
             log.atError()
                     .addKeyValue("event", "login_audit_failed")
-                    .log("Authentication audit persistence failed", exception);
+                    .log("Authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }
     }

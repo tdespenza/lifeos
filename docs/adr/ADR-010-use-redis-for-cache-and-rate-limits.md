@@ -2,6 +2,11 @@
 
 ## Context
 
+The target architecture described here includes Redis-backed session and
+revocation acceleration. In the current Story 1.2 implementation, PostgreSQL
+remains the durable session store and Redis is used for the distributed login
+rate limiter; later stories may add the cache paths described below.
+
 LifeOS runs as a set of independently deployable Spring Boot microservices, each scaled horizontally behind a load balancer. Several cross-cutting needs span these instances: the API Gateway must enforce rate limits consistently regardless of which instance handles a request; the Identity Service must validate and revoke sessions/tokens the instant a user logs out or is compromised, from any instance; and the Finance Service needs a fast read-through cache in front of PostgreSQL for account summaries and computed aggregates that are expensive to recompute on every request. All three needs share a common shape: high-churn, latency-sensitive state that must be visible to every service instance immediately, and that does not need to survive permanently if lost.
 
 ## Options Considered
@@ -21,7 +26,7 @@ Redis is the only option among those considered that satisfies all three require
 ## Tradeoffs
 
 - We introduce a new stateful dependency that must be operated, monitored, and kept highly available; a Redis outage degrades rate limiting, session validation, and Finance Service read paths simultaneously, since they share the same cluster.
-- Redis is primarily in-memory: data is not durable by default (AOF/RDB persistence adds latency and operational complexity we're deliberately not fully enabling for cache/session use cases), so a hard restart can drop active sessions and force re-authentication, and can momentarily reopen a rate-limit window.
+- Redis is primarily in-memory: data is not durable by default (AOF/RDB persistence adds latency and operational complexity we're deliberately not fully enabling for cache/session use cases), so a hard restart can momentarily reopen a rate-limit window. Any future refresh-token or revocation-cache state must be treated as restart-sensitive; current sessions remain durable in PostgreSQL.
 - Clustering Redis for HA adds operational surface (Sentinel or Cluster mode, failover behavior, client-side topology awareness) beyond a single-node deployment.
 - Using Redis as a cache in front of PostgreSQL in the Finance Service introduces cache-invalidation correctness risk — stale financial reads are a real hazard that requires explicit TTL and write-through/invalidation discipline, not a "cache everything" default.
 

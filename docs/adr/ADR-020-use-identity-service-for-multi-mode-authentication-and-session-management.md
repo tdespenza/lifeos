@@ -51,7 +51,13 @@ does not issue a session. An in-process fallback is not equivalent because it
 would not enforce one limit across service instances. The same fail-closed
 rule applies to Redis-backed login-challenge or callback-state records: a
 challenge read/write failure rejects the flow and creates no session. All
-security-relevant outcomes emit audit events.
+security-relevant outcomes emit audit events. Redis limiter keys and audit client
+fingerprints use separate HMAC-SHA-256 secrets supplied by the deployment secret
+manager; neither key is the JWT signing key, and raw addresses never enter Redis,
+audit rows, or logs. Successful session creation and its audit row commit in one
+PostgreSQL transaction, while success metrics/logs are emitted only after commit.
+The session authority locks and revalidates both the account and its active
+credential before issuing a token.
 
 ### OAuth2/OIDC
 

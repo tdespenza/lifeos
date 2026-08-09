@@ -24,3 +24,6 @@ identity:
     jwt:
       issuer: lifeos-identity-test
       signing-secret: test-only-secret-that-is-at-least-32-bytes-long
+    fingerprint:
+      audit-client-fingerprint-secret: test-only-audit-fingerprint-secret-that-is-at-least-32-bytes
+      rate-limit-key-secret: test-only-rate-limit-key-secret-that-is-at-least-32-bytes

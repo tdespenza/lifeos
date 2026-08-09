@@ -86,6 +86,19 @@ class LoginControllerIntegrationTest {
     }
 
     @Test
+    void whitespaceWrappedEmailIsTrimmedBeforeValidationAndNormalization() throws Exception {
+        provisionAccount("ada@example.com", "correct horse battery staple");
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"  ADA@EXAMPLE.COM  ","password":"correct horse battery staple"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"));
+    }
+
+    @Test
     void unknownAndWrongPasswordUseIdenticalGenericFailureBody() throws Exception {
         provisionAccount("ada@example.com", "correct horse battery staple");
 
@@ -127,6 +140,18 @@ class LoginControllerIntegrationTest {
                 .andExpect(content().string(containsString("The supplied credentials could not be verified.")))
                 .andExpect(content().string(not(containsString("super-secret"))))
                 .andExpect(content().string(not(containsString("not-an-email"))));
+    }
+
+    @Test
+    void missingEmailUsesGenericValidationFailureWithoutEchoingPassword() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"password":"super-secret"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("The supplied credentials could not be verified.")))
+                .andExpect(content().string(not(containsString("super-secret"))));
     }
 
     @Test

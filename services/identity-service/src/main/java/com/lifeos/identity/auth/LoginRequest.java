@@ -12,4 +12,12 @@ import jakarta.validation.constraints.NotBlank;
 public record LoginRequest(
         @NotBlank @Email String email,
         @NotBlank String password) {
+
+    /**
+     * Trims the email before Bean Validation so formatting whitespace does not cause a false
+     * {@code @Email} rejection. Null remains null for {@code @NotBlank} to reject.
+     */
+    public LoginRequest {
+        email = email == null ? null : email.strip();
+    }
 }

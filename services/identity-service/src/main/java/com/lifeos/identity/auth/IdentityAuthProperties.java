@@ -25,7 +25,9 @@ public class IdentityAuthProperties {
     private final Jwt jwt = new Jwt();
     @Valid
     private final Fingerprint fingerprint = new Fingerprint();
+    @NotNull(message = "accessTokenTtl must be configured")
     private Duration accessTokenTtl = Duration.ofMinutes(5);
+    @Min(value = 1, message = "maxSessionsPerAccount must be positive")
     private int maxSessionsPerAccount = 10;
 
     /**
@@ -85,6 +87,9 @@ public class IdentityAuthProperties {
      * @param accessTokenTtl access-token TTL
      */
     public void setAccessTokenTtl(Duration accessTokenTtl) {
+        if (accessTokenTtl == null || accessTokenTtl.isZero() || accessTokenTtl.isNegative()) {
+            throw new IllegalArgumentException("accessTokenTtl must be positive");
+        }
         this.accessTokenTtl = accessTokenTtl;
     }
 
@@ -103,6 +108,9 @@ public class IdentityAuthProperties {
      * @param maxSessionsPerAccount active-session limit
      */
     public void setMaxSessionsPerAccount(int maxSessionsPerAccount) {
+        if (maxSessionsPerAccount < 1) {
+            throw new IllegalArgumentException("maxSessionsPerAccount must be positive");
+        }
         this.maxSessionsPerAccount = maxSessionsPerAccount;
     }
 

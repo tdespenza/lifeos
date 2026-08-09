@@ -128,6 +128,9 @@ public class PasswordCredential {
         if (replacement == null || replacement.isBlank()) {
             throw new IllegalArgumentException("Encoded password must not be blank");
         }
+        if (status == PasswordCredentialStatus.REVOKED) {
+            throw new IllegalStateException("Revoked credentials cannot be reactivated");
+        }
         this.encodedPassword = replacement;
         this.status = PasswordCredentialStatus.ACTIVE;
         this.updatedAt = Instant.now();

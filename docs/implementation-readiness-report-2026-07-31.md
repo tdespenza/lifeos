@@ -9,11 +9,13 @@ stepsCompleted: [1, 2, 3, 4, 5, 6]
 
 > **Update, same day:** the "NOT READY" / "0% FR coverage" findings below describe the state *at the moment this assessment ran* — after it completed, epic design (Step 2 of `bmad-create-epics-and-stories`) was carried out the same day, and `docs/epics.md` now has all 18 epics designed with 100% FR coverage. This report is kept as-written (not edited to match) since it's a point-in-time assessment, not a living document — but don't read the "NOT READY" verdict below as the project's current status. Check `docs/epics.md` for that.
 
+> **Update, 2026-08-08:** Story design (Step 3) is now complete in `docs/epics.md`, including acceptance criteria and FR/NFR/additional-requirement traceability. ADR-020 records the authentication/session strategy, the interview documentation now covers all 20 ADRs, and a draft cross-platform UX contract exists under `docs/ux-designs/` (with the BMAD working run under ignored `_bmad-output/`). Final implementation readiness still requires UX assumption approval and the remaining CI/CD quality stages identified in NFR29–NFR42.
+
 ## Document Discovery
 
 **PRD:** No dedicated `*prd*.md` exists under `docs/`. `REQUIREMENTS.md` (repo root, gitignored — see `CONTRIBUTING.md`) is used as the PRD-equivalent: it contains product scope, functional capability descriptions, and non-functional strategy sections.
 
-**Architecture:** No single `*architecture*.md` exists under `docs/` covering the full target design. `docs/architecture/current-state.md` exists but documents only what's built today, not the target architecture. The 19 files under `docs/adr/` (ADR-001 through ADR-019) are used collectively as the architecture-equivalent input — each documents one technical decision with context, alternatives, and consequences.
+**Architecture:** No single `*architecture*.md` exists under `docs/` covering the full target design. `docs/architecture/current-state.md` exists but documents only what's built today, not the target architecture. The 20 files under `docs/adr/` (ADR-001 through ADR-020) are used collectively as the architecture-equivalent input — each documents one technical decision with context, alternatives, and consequences.
 
 **Epics & Stories:** `docs/epics.md` exists (created in this session, requirements inventory populated, epic list not yet designed).
 
@@ -56,7 +58,7 @@ Confirmed against ADR-001 through ADR-018 (ADR-019 is release-process tooling, n
 
 ### Epic FR Coverage Extracted
 
-`docs/epics.md`'s `{{requirements_coverage_map}}` and `{{epics_list}}` placeholders are both still unfilled — the epics-creation workflow was paused after Step 1 (Validate Prerequisites, requirements extraction) when this readiness check was requested instead of continuing to Step 2 (Design Epics). **No epics or stories exist yet.**
+`docs/epics.md`'s coverage-map and epic-list sections were both still unfilled — the epics-creation workflow was paused after Step 1 (Validate Prerequisites, requirements extraction) when this readiness check was requested instead of continuing to Step 2 (Design Epics). **No epics or stories existed at that historical checkpoint.**
 
 ### FR Coverage Analysis
 

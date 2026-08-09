@@ -83,10 +83,20 @@ metadata.
   outcome, exactly one retry is accepted for 30 seconds when it presents the
   same client idempotency key and request fingerprint; a bounded TTL cache must
   retain the KMS-encrypted successor response envelope for that retry and
-  returns it idempotently. A consumed predecessor with a different key or
-  fingerprint, a second retry, or a retry after 30 seconds atomically revokes
-  the entire token family. Row locking or an equivalent conditional update
-  ensures concurrent requests cannot mint two valid successors.
+  return it idempotently. Rotation registers that envelope in a pending state
+  before it commits predecessor consumption. If the replay-result store cannot
+  accept the result, rotation aborts without consuming the predecessor. The
+  PostgreSQL conditional update then consumes the predecessor and advances the
+  successor; the replay entry is marked committed only after that transaction
+  succeeds. If the transaction aborts, the predecessor remains active and the
+  pending entry expires or is removed. After commit, a replay-cache eviction or
+  miss is a recoverable ambiguous outcome and must not be classified as token
+  reuse; the service returns a bounded retryable response and reconciles the
+  idempotency record rather than revoking the family. A consumed predecessor
+  with a different key or fingerprint, a second retry, or a retry after 30
+  seconds atomically revokes the entire token family. Row locking or an
+  equivalent conditional update ensures concurrent requests cannot mint two
+  valid successors.
 - Durable session and revocation metadata is stored in the identity PostgreSQL
   database so users can view and revoke devices; PostgreSQL is the durable
   revocation authority. Redis stores bounded TTL state for rate limits, login
@@ -132,6 +142,17 @@ where the deployment environment requires it.
   back to PostgreSQL, both stores unavailable fail closed, and recovered cache
   state is repopulated from PostgreSQL. No cache-only acceptance window is
   allowed for protected-data access.
+- The initial capacity envelope for the mandatory durable check is a benchmark
+  target, not a production claim: p95 check latency at or below 50 ms and p99
+  at or below 100 ms under 200 protected-data requests per second sustained for
+  10 minutes per identity-service instance. The initial HikariCP budget is a
+  maximum of 50 connections, a bounded 100 ms acquisition timeout, and a
+  bounded request queue; pool utilization and wait time must remain observable.
+  k6 load tests must measure latency, throughput, pool saturation, and error
+  rate, while failure tests separately stop PostgreSQL, stop Redis, evict replay
+  entries, and reject replay-cache writes. PostgreSQL or Redis failure must
+  preserve fail-closed protected-data behavior and cache recovery must be
+  verified after dependencies return.
 - OIDC provider and WebAuthn integration tests require contract fixtures and
   security-focused negative cases; real provider secrets are never used in CI.
 

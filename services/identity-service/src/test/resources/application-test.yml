@@ -12,6 +12,10 @@ management:
   server:
     # Use a separate ephemeral management listener so these tests verify the production topology.
     port: 0
+  health:
+    redis:
+      # RedisLoginRateLimiter is mocked in tests; CI does not run a Redis process.
+      enabled: false
   tracing:
     enabled: false
 

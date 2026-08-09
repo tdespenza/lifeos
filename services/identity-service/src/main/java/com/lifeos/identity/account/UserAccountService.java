@@ -40,12 +40,13 @@ public class UserAccountService {
      */
     @Transactional
     public UserAccount register(String email, String displayName) {
-        if (repository.existsByEmail(email)) {
+        String normalizedEmail = EmailAddressNormalizer.normalize(email);
+        if (repository.existsByEmail(normalizedEmail)) {
             logRegistrationConflict();
             throw new EmailAlreadyRegisteredException();
         }
         try {
-            UserAccount account = repository.saveAndFlush(new UserAccount(email, displayName));
+            UserAccount account = repository.saveAndFlush(new UserAccount(normalizedEmail, displayName));
             log.atInfo()
                     .addKeyValue("event", "account_registration_succeeded")
                     .log("Account registration succeeded");
@@ -95,6 +96,19 @@ public class UserAccountService {
     @Transactional(readOnly = true)
     public UserAccount getById(UUID id) {
         return repository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("No account with id: " + id));
+    }
+
+    /**
+     * Retrieves an account while locking its row for session-capacity enforcement.
+     *
+     * @param id account UUID
+     * @return the locked account
+     * @throws NoSuchElementException when the account does not exist
+     */
+    @Transactional
+    public UserAccount getByIdForUpdate(UUID id) {
+        return repository.findByIdForUpdate(id)
                 .orElseThrow(() -> new NoSuchElementException("No account with id: " + id));
     }
 }

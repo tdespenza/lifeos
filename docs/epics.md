@@ -36,7 +36,7 @@ inputDocuments:
 
 This document provides the epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored), the current architecture, API contracts, and ADR-001 through ADR-020 into 18 epics with full FR coverage. Story-level detail is now included below: each story is sized for one implementation session, names its user value, and carries testable acceptance criteria. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
 
-**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration only, no auth yet) and `task-goal-service` (goal create/list + a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
+**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration plus first-party email/password login) and `task-goal-service` (goal create/list + a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
 
 ## Requirements Inventory
 
@@ -52,8 +52,8 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 
 #### Identity Service
 
-- FR6: Allow a user to register an account [DONE — no auth yet, registration only]
-- FR7: Allow a user to log in
+- FR6: Allow a user to register an account [DONE]
+- FR7: Allow a user to log in [DONE — first-party email/password flow]
 - FR8: Support OAuth2/OIDC login
 - FR9: Support passkey/WebAuthn login
 - FR10: Issue JWTs for authenticated sessions
@@ -257,7 +257,7 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 - Use gRPC with versioned `.proto` contracts in a shared `grpc-contracts` module for all internal service-to-service calls (ADR-007)
 - Use PostgreSQL as the system of record for identity, task/goal, calendar, finance, and audit/permission domains, one schema/database per owning service (ADR-008) [DONE — both existing services]
 - Use MongoDB for journals, notes, and AI conversation history, owned only by the profile/journal and AI orchestrator services (ADR-009)
-- Use Redis as the shared cache/session/rate-limit/lock/pub-sub layer across all services (ADR-010) [Infra provisioned via docker-compose, not yet used by any service]
+- Use Redis as the shared cache/session/rate-limit/lock/pub-sub layer across all services (ADR-010) [PARTIAL — identity login rate limiting]
 - Use Qdrant as the dedicated vector database for embeddings/RAG/semantic search (ADR-011)
 - Use WebRTC (SFU architecture) for live sessions and transcode recordings to HLS via ffmpeg for playback (ADR-012)
 - Run a private Hyperledger Besu network with Web3j as the Java client; anchor only Merkle roots and minimal metadata on-chain, never private data (ADR-013)
@@ -288,10 +288,10 @@ The baseline UX contract is in [`docs/ux-designs/DESIGN.md`](ux-designs/DESIGN.m
 - FR4: Epic 2 - API Gateway correlation IDs
 - FR5: Epic 13 - GraphQL dashboard aggregation entry point
 - FR6: Epic 1 - Account registration [DONE]
-- FR7: Epic 1 - Login
+- FR7: Epic 1 - Login [DONE — first-party email/password]
 - FR8: Epic 1 - OAuth2/OIDC login
 - FR9: Epic 1 - Passkey/WebAuthn login
-- FR10: Epic 1 - JWT issuance
+- FR10: Epic 1 - JWT issuance [PARTIAL — first-party access tokens; refresh/JWKS remain]
 - FR11: Epic 1 - RBAC/ABAC authorization
 - FR12: Epic 1 - Device/session management
 - FR13: Epic 4 - Personal profile
@@ -613,8 +613,10 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6) exists in `identity-service`; login, OAuth2/OIDC, passkeys, JWT, RBAC/ABAC, and session management are not yet built.
-- **Implementation notes:** First place to wire up OpenTelemetry (NFR13–16), scoped-value context binding (Additional Requirements, ADR-004), and rate limiting (NFR9) — every later epic inherits these patterns from here.
+- **Status:** Partially done — registration (FR6) and first-party email/password login (FR7) exist in `identity-service`; OAuth2/OIDC, passkeys, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
+- **Implementation notes:** Identity-service establishes the first authentication, structured
+  logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
+  must consume these decisions rather than reimplementing account or session policy.
 
 ### Story 1.1: Account registration foundation [PARTIAL]
 
@@ -639,7 +641,7 @@ So that I have an identity to use across the platform.
 **When** health, readiness, and liveness probes and a representative request are exercised
 **Then** the service emits correlated structured logs, metrics, and traces with secrets and personal security data redacted.
 
-### Story 1.2: First-party email/password login
+### Story 1.2: First-party email/password login [DONE]
 
 As a registered user,
 I want to log in with my email and password,
@@ -660,6 +662,14 @@ So that I can start an authenticated LifeOS session.
 **Given** repeated failures from a user or client
 **When** the configured threshold is exceeded
 **Then** Redis-backed rate limiting applies a bounded response and emits an auditable security event without logging the password.
+
+**Implementation notes:** The endpoint is `POST /api/v1/auth/login`. Active credentials are stored
+in `password_credential` as Argon2id hashes; session metadata and a SHA-256 access-token digest are
+stored durably in `auth_session`; redacted outcomes are stored in `security_audit_event`. Redis
+attempt counters use atomic `INCR`/`EXPIRE` with hashed email/address material and fail closed on
+dependency errors. Argon2id verification is also bounded per service instance with a semaphore and
+short acquisition timeout. Story 1.5 owns refresh-token rotation, asymmetric signing/JWKS,
+verification middleware, and user-facing session listing/revocation.
 
 ### Story 1.3: OAuth2/OIDC login
 

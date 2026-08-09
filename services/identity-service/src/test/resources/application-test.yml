@@ -14,3 +14,9 @@ management:
     port: 0
   tracing:
     enabled: false
+
+identity:
+  auth:
+    jwt:
+      issuer: lifeos-identity-test
+      signing-secret: test-only-secret-that-is-at-least-32-bytes-long

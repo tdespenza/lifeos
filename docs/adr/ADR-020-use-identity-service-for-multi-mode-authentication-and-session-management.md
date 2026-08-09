@@ -4,8 +4,9 @@
 
 LifeOS must support first-party login, OAuth2/OIDC login, passkeys/WebAuthn,
 JWT-based authenticated sessions, RBAC/ABAC authorization, and device/session
-revocation (FR7–FR12). The current `identity-service` only registers accounts
-and intentionally stores no credentials. Implementing one login path without a
+revocation (FR7–FR12). The `identity-service` now provides account registration
+and the Story 1.2 first-party login foundation; it intentionally keeps credentials
+separate from the account identity record. Implementing one login path without a
 shared session and identity model would create incompatible tokens, duplicate
 security policy in clients, and make later OAuth or passkey support expensive to
 retrofit.

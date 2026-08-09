@@ -9,25 +9,27 @@ graph TD
     end
 
     subgraph Services["Backend — Java 25 + Spring Boot 3.5.16"]
-        I["identity-service :8081<br/>account registration"]
+        I["identity-service :8081<br/>registration + first-party login"]
         T["task-goal-service :8082<br/>goal CRUD + dependency-order"]
     end
 
     subgraph Data["docker-compose"]
         PG[("PostgreSQL 17<br/>lifeos_identity db")]
         PG2[("PostgreSQL 17<br/>lifeos_task_goal db")]
-        R[("Redis 8<br/>not yet used by any service")]
+        R[("Redis 8<br/>login rate limiting")]
     end
 
     C -->|REST/JSON| I
     C -->|REST/JSON| T
     I --> PG
+    I -.->|atomic attempt counters| R
     T --> PG2
 
     style R fill:#eee,stroke:#999,stroke-dasharray: 5 5
 ```
 
-Redis is drawn dashed because it runs in `docker-compose` but no service code uses it yet — see [`why-redis.md`](../interview/why-redis.md).
+Redis is drawn dashed because it is a bounded login-rate-limit dependency rather than the durable
+identity store; sessions and audit records remain in PostgreSQL. See [`why-redis.md`](../interview/why-redis.md).
 
 ## Target architecture (not yet built)
 

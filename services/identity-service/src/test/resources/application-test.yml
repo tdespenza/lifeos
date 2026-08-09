@@ -9,5 +9,8 @@ spring:
       ddl-auto: create-drop
 
 management:
+  server:
+    # Use a separate ephemeral management listener so these tests verify the production topology.
+    port: 0
   tracing:
     enabled: false

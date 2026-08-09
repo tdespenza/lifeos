@@ -6,7 +6,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -21,7 +20,6 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
      * HTTP header used to carry the request correlation identifier.
      */
     public static final String HEADER_NAME = "X-Correlation-ID";
-    private static final Pattern SAFE_CORRELATION_ID = Pattern.compile("[A-Za-z0-9._-]{1,128}");
 
     /**
      * Creates a correlation-ID filter managed by Spring.
@@ -42,7 +40,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     protected void doFilterInternal(
             HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        String correlationId = resolveCorrelationId(request.getHeader(HEADER_NAME));
+        String correlationId = UUID.randomUUID().toString();
         response.setHeader(HEADER_NAME, correlationId);
 
         try (MDC.MDCCloseable ignored = MDC.putCloseable("correlationId", correlationId)) {
@@ -59,12 +57,5 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
                 throw new ServletException("Request context propagation failed", exception);
             }
         }
-    }
-
-    private String resolveCorrelationId(String requestedCorrelationId) {
-        if (requestedCorrelationId != null && SAFE_CORRELATION_ID.matcher(requestedCorrelationId).matches()) {
-            return requestedCorrelationId;
-        }
-        return UUID.randomUUID().toString();
     }
 }

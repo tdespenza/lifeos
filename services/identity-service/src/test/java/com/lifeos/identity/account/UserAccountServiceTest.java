@@ -58,7 +58,8 @@ class UserAccountServiceTest {
 
         assertThatThrownBy(() -> service.register("ada@example.com", "Ada Lovelace"))
                 .isInstanceOf(EmailAlreadyRegisteredException.class)
-                .hasMessage("An account already exists for the supplied email address.");
+                .hasMessage("An account already exists for the supplied email address.")
+                .hasCauseInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

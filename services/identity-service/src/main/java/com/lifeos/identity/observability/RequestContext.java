@@ -12,6 +12,9 @@ public final class RequestContext {
      */
     public static final ScopedValue<String> CORRELATION_ID = ScopedValue.newInstance();
 
+    /**
+     * Prevents instantiation of this holder class.
+     */
     private RequestContext() {
     }
 }

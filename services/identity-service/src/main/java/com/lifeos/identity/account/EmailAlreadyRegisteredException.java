@@ -14,4 +14,14 @@ public class EmailAlreadyRegisteredException extends RuntimeException {
     public EmailAlreadyRegisteredException() {
         super("An account already exists for the supplied email address.");
     }
+
+    /**
+     * Creates a sanitized duplicate-registration exception while preserving the persistence cause
+     * for internal diagnostics.
+     *
+     * @param cause underlying database exception
+     */
+    public EmailAlreadyRegisteredException(Throwable cause) {
+        super("An account already exists for the supplied email address.", cause);
+    }
 }

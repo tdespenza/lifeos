@@ -17,16 +17,22 @@ server:
   port: 8081
 
 management:
+  server:
+    port: ${IDENTITY_MANAGEMENT_PORT:9081}
+    address: ${IDENTITY_MANAGEMENT_ADDRESS:127.0.0.1}
   endpoints:
     access:
-      default: unrestricted
+      default: none
     web:
       exposure:
         include: health,info,prometheus
   endpoint:
+    info:
+      access: unrestricted
     prometheus:
-      enabled: true
+      access: unrestricted
     health:
+      access: unrestricted
       show-details: never
       probes:
         enabled: true

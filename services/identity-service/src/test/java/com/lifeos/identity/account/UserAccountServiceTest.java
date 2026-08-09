@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 class UserAccountServiceTest {
@@ -23,14 +25,14 @@ class UserAccountServiceTest {
     @Test
     void registerSavesNewAccountWhenEmailIsNotTaken() {
         when(repository.existsByEmail("ada@example.com")).thenReturn(false);
-        when(repository.save(any(UserAccount.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.saveAndFlush(any(UserAccount.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         UserAccountService service = new UserAccountService(repository);
         UserAccount saved = service.register("ada@example.com", "Ada Lovelace");
 
         assertThat(saved.getEmail()).isEqualTo("ada@example.com");
         assertThat(saved.getDisplayName()).isEqualTo("Ada Lovelace");
-        verify(repository).save(any(UserAccount.class));
+        verify(repository).saveAndFlush(any(UserAccount.class));
     }
 
     @Test
@@ -41,7 +43,23 @@ class UserAccountServiceTest {
 
         assertThatThrownBy(() -> service.register("ada@example.com", "Ada Lovelace"))
                 .isInstanceOf(EmailAlreadyRegisteredException.class)
-                .hasMessageContaining("ada@example.com");
+                .hasMessage("An account already exists for the supplied email address.");
+    }
+
+    @Test
+    void registerMapsConcurrentDatabaseUniquenessViolationToConflict() {
+        when(repository.existsByEmail("ada@example.com")).thenReturn(false);
+        when(repository.saveAndFlush(any(UserAccount.class)))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate email",
+                        new ConstraintViolationException("duplicate email", null, "uk_user_account_email")));
+
+        UserAccountService service = new UserAccountService(repository);
+
+        assertThatThrownBy(() -> service.register("ada@example.com", "Ada Lovelace"))
+                .isInstanceOf(EmailAlreadyRegisteredException.class)
+                .hasMessage("An account already exists for the supplied email address.")
+                .hasCauseInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

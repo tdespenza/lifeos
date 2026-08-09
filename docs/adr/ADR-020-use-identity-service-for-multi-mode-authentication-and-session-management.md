@@ -42,9 +42,15 @@ FR7 uses email plus password as the initial first-party login method. Passwords
 are hashed with Argon2id using a maintained library and an explicit work-factor
 configuration; plaintext passwords, reversible encryption, and password hashes
 in logs are prohibited. Login failures return a generic response so account
-existence is not disclosed. Login and credential-management endpoints are
-rate-limited through Redis with bounded retry behavior and audit events for
-security-relevant outcomes.
+existence is not disclosed. Login and credential-management endpoints use
+Redis-backed rate limits with bounded timeouts and a fail-closed policy: if
+Redis cannot atomically read or update the limiter, the operation returns a
+generic bounded temporary-failure response, does not evaluate credentials, and
+does not issue a session. An in-process fallback is not equivalent because it
+would not enforce one limit across service instances. The same fail-closed
+rule applies to Redis-backed login-challenge or callback-state records: a
+challenge read/write failure rejects the flow and creates no session. All
+security-relevant outcomes emit audit events.
 
 ### OAuth2/OIDC
 
@@ -66,14 +72,25 @@ Access tokens from providers are never exposed to downstream LifeOS services.
 
 WebAuthn registration and authentication use challenge records with short TTLs,
 single use, origin/RP-ID validation, user-verification requirements, and
-credential-counter checks. Private keys remain in the authenticator; the
-identity service stores only the WebAuthn credential public key and required
-metadata.
+credential-counter checks. A Redis challenge read/write timeout or outage
+rejects the flow without creating a session; challenge state is never treated
+as valid from a local or stale fallback. Private keys remain in the
+authenticator; the identity service stores only the WebAuthn credential public
+key and required metadata.
 
 ### Tokens and sessions
 
 - The identity service issues short-lived, signed JWT access tokens containing
   the user id, session id, issuer, audience, expiry, and authorization claims.
+- The token lifetime policy is concrete: access tokens expire after 5 minutes;
+  refresh tokens expire 30 days after issuance; a token family has a maximum
+  lifetime of 90 days; the idle timeout is 14 days after the last successful
+  use; and verifiers allow at most 60 seconds of clock skew. Every refresh
+  enforces both the absolute family deadline and the idle deadline, using the
+  earlier one. Consumed and revoked token identifiers or hashes are retained
+  until the family expires or is revoked, never evicted early for cache space;
+  if a configured per-family record bound is reached, further refreshes are
+  denied and the family is revoked rather than dropping replay identifiers.
 - Refresh tokens are opaque, high-entropy, one-time values. Raw refresh tokens
   are never stored durably or in plaintext; the durable token-family record
   contains a family identifier, the active token identifier/hash, and bounded
@@ -84,12 +101,22 @@ metadata.
   same client idempotency key and request fingerprint; a bounded TTL cache must
   retain the KMS-encrypted successor response envelope for that retry and
   return it idempotently. Rotation registers that envelope in a pending state
-  before it commits predecessor consumption. If the replay-result store cannot
-  accept the result, rotation aborts without consuming the predecessor. The
-  PostgreSQL conditional update then consumes the predecessor and advances the
-  successor; the replay entry is marked committed only after that transaction
-  succeeds. If the transaction aborts, the predecessor remains active and the
-  pending entry expires or is removed. After commit, a replay-cache eviction or
+  before it commits predecessor consumption. The pending replay record is
+  keyed uniquely by the token family and client idempotency key and stores the
+  family, request fingerprint, KMS-encrypted successor response envelope,
+  pending/committed state, retry count, and expiry together. An atomic
+  create-if-absent operation elects one rotation owner; concurrent requests
+  with the same key and fingerprint cannot overwrite the record or mint a
+  second successor. They wait only for a bounded interval while it is pending,
+  and after commit an atomic compare-and-set permits exactly one retry-count
+  increment from zero to one to return the stored response. A key or
+  fingerprint mismatch is rejected under the existing replay rules. If the
+  replay-result store cannot accept the result, rotation aborts without
+  consuming the predecessor. The PostgreSQL conditional update then consumes
+  the predecessor and advances the successor; the replay entry is marked
+  committed only after that transaction succeeds. If the transaction aborts,
+  the predecessor remains active and the pending entry expires or is removed.
+  After commit, a replay-cache eviction or
   miss is a recoverable ambiguous outcome and must not be classified as token
   reuse; the service returns a bounded retryable response and reconciles the
   idempotency record rather than revoking the family. A consumed predecessor
@@ -106,6 +133,15 @@ metadata.
   fail-closed. Revocation is committed to PostgreSQL before cache invalidation,
   and recovery repopulates Redis from PostgreSQL without promoting a revoked
   session from stale cache state.
+- Active-session capacity is limited to 10 sessions per account and 2 sessions
+  per registered device. When either limit is reached, new session creation is
+  rejected with a bounded capacity response and the client must obtain
+  explicit user approval before an existing session is revoked; the service
+  never silently revokes the oldest session. A PostgreSQL transaction locks
+  the account/device capacity row, checks active non-revoked sessions, and
+  inserts the new session or applies the explicitly approved revocation in the
+  same transaction, so capacity enforcement cannot race with session creation
+  or revocation.
 - Browser clients use refresh cookies with `Secure`, `HttpOnly`, `Path=/api/v1/auth`,
   no `Domain` attribute (host-only), and `SameSite=Lax`. Cookie-authenticated
   refresh, logout, session-revocation, and account-linking requests require a
@@ -134,7 +170,7 @@ where the deployment environment requires it.
   session, signing-key metadata, and security-audit records incrementally as
   the corresponding stories need them; no story creates unrelated tables.
 - Redis becomes part of the login hot path, so explicit timeouts, bounded
-  retries, graceful degradation, and metrics are required.
+  retries, fail-closed behavior, and metrics are required.
 - Every protected-data request performs a session/revocation check against
   PostgreSQL as the durable session/revocation authority. Local JWT validation
   is only an early signature/claims filter, and Redis is only an acceleration
@@ -184,8 +220,21 @@ implementation to the provider.
 
 Validate each story with unit, integration, contract, security, and end-to-end
 tests. The authentication reference flow must demonstrate: a successful
-first-party login; rejected invalid credentials without account enumeration; a
+first-party login; rejected invalid credentials without account enumeration;
+rate-limit and login-challenge rejection when Redis is unavailable; a
 successful OIDC callback with invalid state/nonce rejection; a successful
 WebAuthn assertion with replay rejection; refresh rotation under concurrent
 requests; device listing and revocation; gateway rejection of missing/expired
 tokens; and authorization denial for both missing roles and failed attributes.
+Refresh-replay tests must also verify the expected session and token-family
+state for every branch: a same-key, same-fingerprint retry returns the original
+successor exactly once with the family still active; a different-key replay
+revokes the family without minting another successor; a second retry or a
+retry after 30 seconds rejects and revokes the family; a pending replay-write
+failure leaves the predecessor active and the family unchanged; and a
+post-commit replay-cache eviction returns a bounded retryable/ambiguous result
+without revoking the family or minting a second successor. Concurrent requests
+must prove that one atomic owner creates the replay record, predecessor
+consumption occurs once, and no two valid successors are issued. Session
+capacity tests must prove the account and per-device limits are enforced
+atomically under concurrent creation and explicit revocation.

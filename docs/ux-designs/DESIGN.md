@@ -78,6 +78,7 @@ components:
     minHeight: 44px
   focus-ring:
     color: '{colors.focus}'
+    color-dark: '{colors.focus-dark}'
     width: 2px
     offset: 2px
   metric-card:
@@ -85,6 +86,8 @@ components:
     border: '{colors.border}'
     radius: '{rounded.md}'
 ---
+
+<!-- markdownlint-disable MD041 -->
 
 ## Brand & Style
 

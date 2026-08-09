@@ -18,8 +18,9 @@ items require product-owner confirmation before client implementation unblocks.
 
 LifeOS is a multi-surface product: Angular web, JavaFX desktop, and Flutter
 iOS/Android. All surfaces share terminology, API contracts, privacy behavior,
-and `{path.to.token}` references from `DESIGN.md`, while honoring native input,
-navigation, secure storage, and accessibility conventions.
+and defined design-token references such as `{colors.primary}` from `DESIGN.md`,
+while honoring native input, navigation, secure storage, and accessibility
+conventions.
 
 **[ASSUMPTION]** The first milestone is private and single-user-first; household
 sharing is explicit and permissioned. Initial client scope prioritizes

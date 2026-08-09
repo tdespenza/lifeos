@@ -1,0 +1,4 @@
+{
+  // Ignore YAML front matter before applying Markdown rules, including MD041.
+  "frontMatter": "(^---[ \\t]*\\r?\\n[^]*?\\r?\\n---[ \\t]*(?:\\r?\\n|$))"
+}

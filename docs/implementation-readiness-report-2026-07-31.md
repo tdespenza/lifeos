@@ -9,7 +9,7 @@ stepsCompleted: [1, 2, 3, 4, 5, 6]
 
 > **Update, same day:** the "NOT READY" / "0% FR coverage" findings below describe the state *at the moment this assessment ran* — after it completed, epic design (Step 2 of `bmad-create-epics-and-stories`) was carried out the same day, and `docs/epics.md` now has all 18 epics designed with 100% FR coverage. This report is kept as-written (not edited to match) since it's a point-in-time assessment, not a living document — but don't read the "NOT READY" verdict below as the project's current status. Check `docs/epics.md` for that.
 
-> **Update, 2026-08-08:** Story design (Step 3) is now complete in `docs/epics.md`, including acceptance criteria and FR/NFR/additional-requirement traceability. ADR-020 records the authentication/session strategy, the interview documentation now covers all 20 ADRs, and a draft cross-platform UX contract exists under `docs/ux-designs/` (with the BMAD working run under ignored `_bmad-output/`). Final implementation readiness still requires UX assumption approval and the remaining CI/CD quality stages identified in NFR30/NFR33–NFR42.
+> **Update, 2026-08-08:** Story design (Step 3) is now complete in `docs/epics.md`, including acceptance criteria and FR/NFR/additional-requirement traceability. ADR-020 records the authentication/session strategy, the interview documentation now covers all 20 ADRs, and a draft cross-platform UX contract exists under `docs/ux-designs/` (with the BMAD working run under ignored `_bmad-output/`). Final implementation readiness still requires UX assumption approval and the remaining CI/CD quality stages identified in NFR29–NFR42.
 
 ## Document Discovery
 

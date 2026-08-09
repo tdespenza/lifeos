@@ -51,8 +51,16 @@ security-relevant outcomes.
 OAuth2/OIDC uses the authorization-code flow with PKCE. The identity service
 owns provider callbacks, validates issuer, audience, nonce, state, and PKCE
 requirements, and links a verified provider subject to an existing or newly
-created LifeOS account according to an explicit account-linking policy. Access
-tokens from providers are never exposed to downstream LifeOS services.
+created LifeOS account according to an explicit account-linking policy. A link
+requires a provider-reported verified email (`email_verified=true`) plus an
+already authenticated LifeOS session or explicit reauthentication/step-up;
+matching email alone never authorizes linking. Provider-subject or email
+conflicts are rejected with a generic response and routed through account
+recovery or support, never automatic takeover. Unlinking requires recent
+reauthentication and at least one remaining usable recovery/authentication
+method; recovery itself must verify an existing LifeOS factor or verified
+account-recovery channel and must not trust an unverified provider claim.
+Access tokens from providers are never exposed to downstream LifeOS services.
 
 ### Passkeys
 
@@ -66,16 +74,30 @@ metadata.
 
 - The identity service issues short-lived, signed JWT access tokens containing
   the user id, session id, issuer, audience, expiry, and authorization claims.
-- Refresh tokens are opaque, high-entropy, one-time values. Only a hash of the
-  current refresh token is stored; every successful refresh rotates the token
-  and invalidates its predecessor. Reuse detection revokes the session family.
-- Durable session metadata is stored in the identity PostgreSQL database so
-  users can view and revoke devices. Redis stores bounded TTL state for rate
-  limits, login challenges, and hot-path revocation/cache lookups; Redis is not
-  the sole source of durable session history.
-- Browser clients use Secure, HttpOnly, SameSite-aware cookies for refresh
-  tokens. Mobile and desktop clients use their platform secure storage. Access
-  tokens are sent as bearer tokens only over TLS.
+- Refresh tokens are opaque, high-entropy, one-time values. Raw refresh tokens
+  are never stored; the durable token-family record contains a family
+  identifier, the active token identifier/hash, and bounded consumed or
+  revoked token identifiers/hashes. A successful refresh atomically validates
+  the active identifier, records it as consumed, and advances the active token
+  to a newly issued successor. A predecessor reuse or other consumed-identifier
+  replay atomically revokes the entire token family, and concurrent requests
+  cannot mint two valid successors.
+- Durable session and revocation metadata is stored in the identity PostgreSQL
+  database so users can view and revoke devices; PostgreSQL is the durable
+  revocation authority. Redis stores bounded TTL state for rate limits, login
+  challenges, and hot-path revocation/cache lookups. A Redis hit may accelerate
+  a revocation-sensitive decision, but a miss, timeout, or outage falls back to
+  PostgreSQL; if both stores are unavailable, the request is rejected
+  fail-closed. Revocation is committed to PostgreSQL before cache invalidation,
+  and recovery repopulates Redis from PostgreSQL without promoting a revoked
+  session from stale cache state.
+- Browser clients use refresh cookies with `Secure`, `HttpOnly`, `Path=/api/v1/auth`,
+  no `Domain` attribute (host-only), and `SameSite=Lax`. Cookie-authenticated
+  refresh, logout, session-revocation, and account-linking requests require a
+  CSRF token and an `Origin` value matching a configured LifeOS web origin;
+  missing or mismatched validation is rejected. Mobile and desktop clients use
+  their platform secure storage. Access tokens are sent as bearer tokens only
+  over TLS.
 - Key material is loaded from a secrets manager, rotated with overlapping key
   windows, and exposed through a JWKS endpoint for verifiers. Private signing
   keys are never committed or logged.
@@ -99,7 +121,10 @@ where the deployment environment requires it.
 - Redis becomes part of the login hot path, so explicit timeouts, bounded
   retries, graceful degradation, and metrics are required.
 - JWT validation can remain local and fast in downstream services, while
-  revocation-sensitive operations consult the session/revocation authority.
+  revocation-sensitive operations consult PostgreSQL as the session/revocation
+  authority. Redis is only an acceleration layer: misses or outages fall back
+  to PostgreSQL, both stores unavailable fail closed, and recovered cache state
+  is repopulated from PostgreSQL.
 - OIDC provider and WebAuthn integration tests require contract fixtures and
   security-focused negative cases; real provider secrets are never used in CI.
 
@@ -136,4 +161,3 @@ successful OIDC callback with invalid state/nonce rejection; a successful
 WebAuthn assertion with replay rejection; refresh rotation under concurrent
 requests; device listing and revocation; gateway rejection of missing/expired
 tokens; and authorization denial for both missing roles and failed attributes.
-

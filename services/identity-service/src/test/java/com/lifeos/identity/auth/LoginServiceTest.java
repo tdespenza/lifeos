@@ -186,6 +186,25 @@ class LoginServiceTest {
         verify(metrics, never()).record(SecurityAuditEventType.LOGIN_SUCCEEDED);
     }
 
+    @Test
+    void auditsLockedAccountRevalidationFailureAsGenericLoginFailure() {
+        UserAccount account = account();
+        PasswordCredential credential = new PasswordCredential(account, "argon2-hash");
+        when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.of(account));
+        when(credentialRepository.findByAccountId(account.getId())).thenReturn(Optional.of(credential));
+        when(passwordVerifier.matches("correct", "argon2-hash")).thenReturn(true);
+        doThrow(new AuthenticationFailureException()).when(sessionTokenAuthority).createSession(account);
+
+        assertThatThrownBy(() -> service.login(
+                new LoginRequest("ada@example.com", "correct"), "127.0.0.1"))
+                .isInstanceOf(AuthenticationFailureException.class)
+                .hasMessage("The supplied credentials could not be verified.");
+
+        verify(auditService).record(SecurityAuditEventType.LOGIN_FAILED,
+                account.getId(), "127.0.0.1");
+        verify(metrics, never()).record(SecurityAuditEventType.LOGIN_SUCCEEDED);
+    }
+
     private UserAccount account() {
         UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
         ReflectionTestUtils.setField(account, "id", UUID.randomUUID());

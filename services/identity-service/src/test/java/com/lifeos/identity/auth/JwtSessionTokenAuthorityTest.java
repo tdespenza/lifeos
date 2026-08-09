@@ -58,11 +58,8 @@ class JwtSessionTokenAuthorityTest {
         UserAccount requestedAccount = account();
         UserAccount lockedAccount = accountWithId(requestedAccount.getId());
         lockedAccount.disable();
-        PasswordCredential credential = new PasswordCredential(lockedAccount, "argon2-hash");
         when(accountRepository.findByIdForUpdate(requestedAccount.getId()))
                 .thenReturn(Optional.of(lockedAccount));
-        when(credentialRepository.findByAccountIdForUpdate(requestedAccount.getId()))
-                .thenReturn(Optional.of(credential));
 
         assertThatThrownBy(() -> authority.createSession(requestedAccount))
                 .isInstanceOf(AuthenticationFailureException.class);

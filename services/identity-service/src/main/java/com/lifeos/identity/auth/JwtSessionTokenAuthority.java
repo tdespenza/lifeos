@@ -91,10 +91,13 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
         try {
             UserAccount lockedAccount = accountRepository.findByIdForUpdate(account.getId())
                     .orElseThrow(AuthenticationFailureException::new);
+            if (!lockedAccount.isActive()) {
+                throw new AuthenticationFailureException();
+            }
             PasswordCredential lockedCredential = credentialRepository
                     .findByAccountIdForUpdate(lockedAccount.getId())
                     .orElseThrow(AuthenticationFailureException::new);
-            if (!lockedAccount.isActive() || !lockedCredential.isActive()) {
+            if (!lockedCredential.isActive()) {
                 throw new AuthenticationFailureException();
             }
 

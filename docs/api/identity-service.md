@@ -2,9 +2,11 @@
 
 Base URL (local): `http://localhost:8081`
 
+Management URL (local): `http://localhost:9081`
+
 Status: registration only. No authentication (OAuth2/OIDC/JWT/passkeys) is implemented yet — no ADR covers auth design yet; see the identity-service section of `REQUIREMENTS.md` for the target scope. `UserAccount` deliberately does not store credentials, to avoid half-implementing security-sensitive password handling ahead of a real auth design.
 
-All requests receive an `X-Correlation-ID` response header. A valid incoming value (`A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`, up to 128 characters) is propagated; an unsafe or missing value is replaced with a generated UUID. Registration logs include the correlation context and event outcome without logging the email address or database exception details.
+All requests receive a server-generated `X-Correlation-ID` response header. Any incoming value is ignored so caller-controlled personal data cannot enter MDC, request context, or structured logs. Registration logs include the generated correlation context and event outcome without logging the email address, account identifier, or database exception details.
 
 ## `POST /api/v1/accounts`
 
@@ -57,12 +59,12 @@ Spring Boot Actuator endpoints exposed by the service:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /actuator/health` | Overall service health; database details are not included in the response |
-| `GET /actuator/health/liveness` | Process liveness probe |
-| `GET /actuator/health/readiness` | Readiness probe, including database availability |
-| `GET /actuator/prometheus` | Prometheus-compatible request and application metrics |
+| `GET http://localhost:9081/actuator/health` | Overall service health; database details are not included in the response |
+| `GET http://localhost:9081/actuator/health/liveness` | Process liveness probe |
+| `GET http://localhost:9081/actuator/health/readiness` | Readiness probe, including database availability |
+| `GET http://localhost:9081/actuator/prometheus` | Prometheus-compatible request and application metrics |
 
-Only the endpoints above plus `info` are exposed (see [`application.yml`](../../services/identity-service/src/main/resources/application.yml)) — no `/actuator/env`, `/actuator/beans`, etc. are exposed, to avoid leaking configuration details. HTTP observations are traced through the configured Micrometer/OpenTelemetry bridge and exported to the OTLP endpoint configured by `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
+Actuator runs on a separate management listener bound to loopback by default. Set `IDENTITY_MANAGEMENT_PORT` and `IDENTITY_MANAGEMENT_ADDRESS` for a private deployment interface, and keep that listener behind the deployment network boundary. Only the endpoints above plus `info` are exposed (see [`application.yml`](../../services/identity-service/src/main/resources/application.yml)) — no `/actuator/env`, `/actuator/beans`, etc. are exposed, to avoid leaking configuration details. HTTP observations are traced through the configured Micrometer/OpenTelemetry bridge and exported to the OTLP endpoint configured by `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 
 ## Data store
 

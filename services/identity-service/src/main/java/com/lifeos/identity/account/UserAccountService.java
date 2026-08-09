@@ -48,24 +48,32 @@ public class UserAccountService {
             UserAccount account = repository.saveAndFlush(new UserAccount(email, displayName));
             log.atInfo()
                     .addKeyValue("event", "account_registration_succeeded")
-                    .addKeyValue("accountId", account.getId())
                     .log("Account registration succeeded");
             return account;
         } catch (DataIntegrityViolationException exception) {
             if (isEmailUniqueConstraintViolation(exception)) {
                 logRegistrationConflict();
-                throw new EmailAlreadyRegisteredException();
+                throw new EmailAlreadyRegisteredException(exception);
             }
             throw exception;
         }
     }
 
+    /**
+     * Records a duplicate-registration event without logging the submitted email address.
+     */
     private void logRegistrationConflict() {
         log.atInfo()
                 .addKeyValue("event", "account_registration_conflict")
                 .log("Account registration rejected because the email is already registered");
     }
 
+    /**
+     * Determines whether a data-integrity failure came from the account email constraint.
+     *
+     * @param exception persistence failure to inspect
+     * @return {@code true} when the named email uniqueness constraint was violated
+     */
     private boolean isEmailUniqueConstraintViolation(DataIntegrityViolationException exception) {
         Throwable cause = exception;
         while (cause != null) {

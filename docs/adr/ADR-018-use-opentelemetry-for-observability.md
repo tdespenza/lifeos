@@ -14,6 +14,12 @@ LifeOS is a distributed system of eleven-plus Spring Boot microservices (identit
 
 Adopt OpenTelemetry as the single instrumentation and correlation layer across all services (traces, metrics, and log context propagation via trace IDs), with Prometheus as the metrics store, Grafana as the unified visualization layer, Loki for log aggregation, and Tempo (or Jaeger as a fallback) for trace storage.
 
+Actuator management endpoints are served on a separate management listener rather than the
+application listener. The identity service binds that listener to loopback by default, exposes only
+health, info, and Prometheus endpoints, and sets the default endpoint access policy to restricted.
+Deployments that need remote scraping must explicitly place the management listener on a private
+network interface and enforce the deployment's network or mutual-TLS controls.
+
 ## Why
 
 OpenTelemetry is the CNCF-standard, vendor-neutral instrumentation API/SDK, so every service — Java, and eventually any polyglot addition — emits traces, metrics, and logs in one consistent format via the OTel Collector, with no per-vendor rewrites later. The Grafana stack (Prometheus + Loki + Tempo) gives us the "three pillars" (metrics, logs, traces) correlated by trace ID in one pane of glass, runs self-hosted at effectively zero recurring cost, and is a skill set that maps directly to what large-scale engineering orgs run internally (Prometheus/Grafana is the de facto standard at most non-Datadog shops). It also lets us track the domain-specific metrics this project cares about — AI orchestrator latency, blockchain confirmation time, event consumer lag, virtual thread pinning/queue depth — as first-class custom metrics rather than being confined to whatever a SaaS agent auto-detects.
@@ -26,10 +32,19 @@ We take on real operational burden a SaaS vendor would otherwise absorb: running
 
 Every new microservice must ship with the OTel Java agent (or manual SDK instrumentation) and a baseline dashboard/alert set before it's considered production-ready — this becomes part of the service scaffolding template, not an afterthought. Kafka/Pulsar message headers must carry trace context (W3C traceparent) so async event chains stay correlated across the event bus, which is extra plumbing REST calls get for free via propagation but async paths do not. Local development and CI need a lightweight OTel Collector + Grafana stack (e.g., docker-compose) so engineers can validate instrumentation before merging, adding to the local environment's complexity versus "just point an env var at Datadog."
 
+The separate management listener adds a deployment contract: health probes and metric scrapers must
+target the private management address, and service discovery must not publish that address as the
+public application endpoint. A misconfigured deployment can therefore fail observability checks
+without exposing operational endpoints on the application listener, which is the safer failure mode.
+
 ## When This Decision Would Be Wrong
 
 If LifeOS ever moved from a personal/portfolio project to a small commercial product with a team of 1-2 engineers who need to ship features fast and cannot spend engineering time tuning Prometheus retention, Loki compaction, or Grafana alert rules, the calculus flips: a managed SaaS APM's lower operational overhead would outweigh the cost savings and pedagogical value. Similarly, if the deployment scale grew to the point where self-hosted Prometheus/Loki/Tempo storage and query performance became a bottleneck (e.g., cardinality or ingest volume exceeding what a single-node or modestly-sized cluster can handle) without dedicated SRE capacity to operate it, migrating to a managed backend (which can still ingest OTel data, preserving the instrumentation investment) would be the right call.
 
 ## How We Will Validate It
+
+For each service, also verify that the application listener does not serve Actuator endpoints, that the
+management listener exposes only the approved health and metrics surface, and that the listener is
+reachable only from the configured private probe/scraper network.
 
 Instrument the task/goal service end-to-end first as a reference implementation, then verify: (1) a synthetic load test (k6 or Gatling, 200 req/s sustained for 10 minutes) against a request path spanning at least 3 services produces a complete Tempo trace with no missing spans and end-to-end latency breakdown visible in Grafana; (2) deliberately kill a downstream dependency (e.g., stop the Redis cache) and confirm the resulting error-rate spike and elevated p99 latency appear in a Prometheus-backed Grafana alert within 60 seconds; (3) confirm Loki log-to-trace correlation by clicking from a Tempo span directly into its corresponding log lines for a sampled request; (4) measure the observability stack's own resource footprint (CPU/memory of Collector + Prometheus + Loki + Tempo + Grafana) stays under 15% of total lab-environment capacity, confirming it's viable at personal scale before rolling instrumentation out to the remaining services.

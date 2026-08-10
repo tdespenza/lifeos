@@ -4,8 +4,9 @@
 
 LifeOS must support first-party login, OAuth2/OIDC login, passkeys/WebAuthn,
 JWT-based authenticated sessions, RBAC/ABAC authorization, and device/session
-revocation (FR7–FR12). The current `identity-service` only registers accounts
-and intentionally stores no credentials. Implementing one login path without a
+revocation (FR7–FR12). The `identity-service` now provides account registration
+and the Story 1.2 first-party login foundation; it intentionally keeps credentials
+separate from the account identity record. Implementing one login path without a
 shared session and identity model would create incompatible tokens, duplicate
 security policy in clients, and make later OAuth or passkey support expensive to
 retrofit.
@@ -50,7 +51,15 @@ does not issue a session. An in-process fallback is not equivalent because it
 would not enforce one limit across service instances. The same fail-closed
 rule applies to Redis-backed login-challenge or callback-state records: a
 challenge read/write failure rejects the flow and creates no session. All
-security-relevant outcomes emit audit events.
+authentication outcomes that reach `LoginService.login()` emit audit events;
+request-shape validation currently returns a generic 400 before that service is
+invoked. Redis limiter keys and audit client
+fingerprints use separate HMAC-SHA-256 secrets supplied by the deployment secret
+manager; neither key is the JWT signing key, and raw addresses never enter Redis,
+audit rows, or logs. Successful session creation and its audit row commit in one
+PostgreSQL transaction, while success metrics/logs are emitted only after commit.
+The session authority locks and revalidates both the account and its active
+credential before issuing a token.
 
 ### OAuth2/OIDC
 

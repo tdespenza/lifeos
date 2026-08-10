@@ -12,11 +12,11 @@ Early-stage. Phase 1 of the roadmap is underway: two backend services are built 
 
 ## What's Actually Built
 
-* **identity-service** — account registration over PostgreSQL. See [`docs/api/identity-service.md`](docs/api/identity-service.md).
+* **identity-service** — account registration and first-party email/password login over PostgreSQL, with Redis-backed login rate limiting. See [`docs/api/identity-service.md`](docs/api/identity-service.md).
 * **task-goal-service** — goal create/list (no update or delete yet) plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
-* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis isn't used by any service yet.
+* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis is used by identity-service for login rate limiting.
 
-No authentication, no other services, no clients (web/desktop/mobile), no event bus, no observability stack. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
+No OAuth2/OIDC, passkeys, refresh-token rotation, authorization enforcement, other services, clients (web/desktop/mobile), event bus, or deployed observability stack yet. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
 
 ## Target Feature Set
 

@@ -12,6 +12,30 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  data:
+    redis:
+      connect-timeout: ${IDENTITY_REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${IDENTITY_REDIS_COMMAND_TIMEOUT:1s}
+
+identity:
+  auth:
+    access-token-ttl: ${IDENTITY_ACCESS_TOKEN_TTL:PT5M}
+    max-sessions-per-account: ${IDENTITY_MAX_SESSIONS_PER_ACCOUNT:10}
+    rate-limit:
+      max-attempts: ${IDENTITY_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:5}
+      window: ${IDENTITY_LOGIN_RATE_LIMIT_WINDOW:PT1M}
+    password:
+      memory-k-i-b: ${IDENTITY_ARGON2_MEMORY_KIB:19456}
+      iterations: ${IDENTITY_ARGON2_ITERATIONS:2}
+      parallelism: ${IDENTITY_ARGON2_PARALLELISM:1}
+      max-concurrent-verifications: ${IDENTITY_ARGON2_MAX_CONCURRENT:16}
+      verification-acquire-timeout: ${IDENTITY_ARGON2_ACQUIRE_TIMEOUT:250ms}
+    jwt:
+      issuer: ${IDENTITY_JWT_ISSUER:lifeos-identity}
+      signing-secret: ${IDENTITY_JWT_SIGNING_SECRET:}
+    fingerprint:
+      audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
+      rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}
 
 server:
   port: 8081

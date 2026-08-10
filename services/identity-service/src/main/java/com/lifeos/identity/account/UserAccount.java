@@ -2,6 +2,8 @@ package com.lifeos.identity.account;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -33,6 +35,10 @@ public class UserAccount {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(nullable = false, length = 16)
+    @Enumerated(EnumType.STRING)
+    private AccountStatus status = AccountStatus.ACTIVE;
+
     /**
      * Creates an empty entity for JPA materialization.
      */
@@ -50,6 +56,7 @@ public class UserAccount {
         this.email = email;
         this.displayName = displayName;
         this.createdAt = Instant.now();
+        this.status = AccountStatus.ACTIVE;
     }
 
     /**
@@ -86,5 +93,37 @@ public class UserAccount {
      */
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    /**
+     * Returns the account lifecycle state used by authentication decisions.
+     *
+     * @return account status
+     */
+    public AccountStatus getStatus() {
+        return status;
+    }
+
+    /**
+     * Returns whether this account is currently allowed to authenticate.
+     *
+     * @return {@code true} only for active accounts
+     */
+    public boolean isActive() {
+        return status == AccountStatus.ACTIVE;
+    }
+
+    /**
+     * Disables the account without deleting its identity or related audit history.
+     */
+    public void disable() {
+        this.status = AccountStatus.DISABLED;
+    }
+
+    /**
+     * Re-enables a previously disabled account.
+     */
+    public void enable() {
+        this.status = AccountStatus.ACTIVE;
     }
 }

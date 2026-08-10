@@ -118,6 +118,6 @@ class UserAccountControllerIntegrationTest {
         ResponseEntity<String> prometheus = restTemplate.getForEntity(
                 "http://localhost:" + managementPort + "/actuator/prometheus", String.class);
         assertEquals(HttpStatus.OK, prometheus.getStatusCode());
-        assertTrue(prometheus.getBody().contains("http_server_requests"));
+        assertTrue(prometheus.getBody().contains("application_ready_time_seconds"));
     }
 }

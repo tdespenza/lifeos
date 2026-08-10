@@ -613,7 +613,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6) and first-party email/password login (FR7) exist in `identity-service`; OAuth2/OIDC, passkeys, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), and the configured OAuth2/OIDC authorization-code flow (FR8) exist in `identity-service`; passkeys, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.

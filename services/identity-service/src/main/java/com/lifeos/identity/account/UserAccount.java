@@ -13,10 +13,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Persisted account-registration data owned by the identity service.
+ * Persisted account identity data owned by the identity service.
  *
- * <p>This entity represents an account identity only. It deliberately does not store credentials
- * until the authentication design and security boundary are implemented.
+ * <p>This entity represents an account identity only. Password credentials and verified external
+ * provider subjects are stored in separate authentication-boundary entities.
  */
 @Entity
 @Table(name = "user_account", uniqueConstraints = @UniqueConstraint(name = "uk_user_account_email", columnNames = "email"))

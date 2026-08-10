@@ -1,5 +1,6 @@
 package com.lifeos.identity.auth;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -85,6 +87,25 @@ class JwtSessionTokenAuthorityTest {
         verify(sessionRepository, never()).countActiveByAccountId(any(), any());
         verify(jwtEncoder, never()).encode(any());
         verify(sessionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void oidcSessionDoesNotRequireLocalPasswordCredential() {
+        UserAccount account = account();
+        when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+        when(jwtEncoder.encode(any())).thenReturn(Jwt.withTokenValue("signed-token")
+                .header("alg", "HS256")
+                .claim("sub", account.getId().toString())
+                .claim("session_id", UUID.randomUUID().toString())
+                .issuedAt(Instant.parse("2026-08-09T00:00:00Z"))
+                .expiresAt(Instant.parse("2026-08-09T00:05:00Z"))
+                .build());
+
+        LoginResponse response = authority.createSession(account, SessionAuthenticationMethod.OIDC);
+
+        assertThat(response.accessToken()).isEqualTo("signed-token");
+        verify(credentialRepository, never()).findByAccountIdForUpdate(any());
+        verify(sessionRepository).saveAndFlush(any(AuthSession.class));
     }
 
     private UserAccount account() {

@@ -1,11 +1,13 @@
 package com.lifeos.identity.auth;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -21,7 +23,9 @@ public class IdentityAuthProperties {
 
     @Valid
     private final RateLimit rateLimit = new RateLimit();
+    @Valid
     private final Password password = new Password();
+    @Valid
     private final Jwt jwt = new Jwt();
     @Valid
     private final Fingerprint fingerprint = new Fingerprint();
@@ -112,6 +116,16 @@ public class IdentityAuthProperties {
             throw new IllegalArgumentException("maxSessionsPerAccount must be positive");
         }
         this.maxSessionsPerAccount = maxSessionsPerAccount;
+    }
+
+    /**
+     * Confirms that the access-token lifetime is strictly positive during property validation.
+     *
+     * @return {@code true} when issued tokens have a usable lifetime
+     */
+    @AssertTrue(message = "accessTokenTtl must be positive")
+    public boolean isAccessTokenTtlPositive() {
+        return accessTokenTtl != null && !accessTokenTtl.isZero() && !accessTokenTtl.isNegative();
     }
 
     /**
@@ -241,10 +255,15 @@ public class IdentityAuthProperties {
      */
     public static class Password {
 
+        @Positive(message = "memoryKiB must be positive")
         private int memoryKiB = 19_456;
+        @Positive(message = "iterations must be positive")
         private int iterations = 2;
+        @Positive(message = "parallelism must be positive")
         private int parallelism = 1;
+        @Positive(message = "maxConcurrentVerifications must be positive")
         private int maxConcurrentVerifications = 16;
+        @NotNull(message = "verificationAcquireTimeout must be configured")
         private Duration verificationAcquireTimeout = Duration.ofMillis(250);
 
         /**
@@ -268,6 +287,9 @@ public class IdentityAuthProperties {
          * @param memoryKiB memory cost
          */
         public void setMemoryKiB(int memoryKiB) {
+            if (memoryKiB < 1) {
+                throw new IllegalArgumentException("memoryKiB must be positive");
+            }
             this.memoryKiB = memoryKiB;
         }
 
@@ -286,6 +308,9 @@ public class IdentityAuthProperties {
          * @param iterations iteration count
          */
         public void setIterations(int iterations) {
+            if (iterations < 1) {
+                throw new IllegalArgumentException("iterations must be positive");
+            }
             this.iterations = iterations;
         }
 
@@ -304,6 +329,9 @@ public class IdentityAuthProperties {
          * @param parallelism parallelism
          */
         public void setParallelism(int parallelism) {
+            if (parallelism < 1) {
+                throw new IllegalArgumentException("parallelism must be positive");
+            }
             this.parallelism = parallelism;
         }
 
@@ -322,6 +350,9 @@ public class IdentityAuthProperties {
          * @param maxConcurrentVerifications concurrent verification limit
          */
         public void setMaxConcurrentVerifications(int maxConcurrentVerifications) {
+            if (maxConcurrentVerifications < 1) {
+                throw new IllegalArgumentException("maxConcurrentVerifications must be positive");
+            }
             this.maxConcurrentVerifications = maxConcurrentVerifications;
         }
 
@@ -340,7 +371,23 @@ public class IdentityAuthProperties {
          * @param verificationAcquireTimeout permit acquisition timeout
          */
         public void setVerificationAcquireTimeout(Duration verificationAcquireTimeout) {
+            if (verificationAcquireTimeout == null || verificationAcquireTimeout.isZero()
+                    || verificationAcquireTimeout.isNegative()) {
+                throw new IllegalArgumentException("verificationAcquireTimeout must be positive");
+            }
             this.verificationAcquireTimeout = verificationAcquireTimeout;
+        }
+
+        /**
+         * Confirms that the local hashing wait is strictly positive during property validation.
+         *
+         * @return {@code true} when permit acquisition is bounded
+         */
+        @AssertTrue(message = "verificationAcquireTimeout must be positive")
+        public boolean isVerificationAcquireTimeoutPositive() {
+            return verificationAcquireTimeout != null
+                    && !verificationAcquireTimeout.isZero()
+                    && !verificationAcquireTimeout.isNegative();
         }
     }
 
@@ -349,7 +396,9 @@ public class IdentityAuthProperties {
      */
     public static class Jwt {
 
+        @NotBlank(message = "issuer must be configured")
         private String issuer = "lifeos-identity";
+        @NotBlank(message = "signingSecret must be configured")
         private String signingSecret;
 
         /**
@@ -373,6 +422,9 @@ public class IdentityAuthProperties {
          * @param issuer issuer
          */
         public void setIssuer(String issuer) {
+            if (issuer == null || issuer.isBlank()) {
+                throw new IllegalArgumentException("issuer must not be blank");
+            }
             this.issuer = issuer;
         }
 
@@ -391,6 +443,10 @@ public class IdentityAuthProperties {
          * @param signingSecret secret value
          */
         public void setSigningSecret(String signingSecret) {
+            if (signingSecret == null || signingSecret.isBlank()
+                    || signingSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+                throw new IllegalArgumentException("signingSecret must contain at least 32 bytes");
+            }
             this.signingSecret = signingSecret;
         }
     }

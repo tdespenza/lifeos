@@ -3,9 +3,11 @@ package com.lifeos.identity.auth;
 import java.util.Optional;
 import java.util.UUID;
 import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 /**
@@ -28,6 +30,7 @@ public interface PasswordCredentialRepository extends JpaRepository<PasswordCred
      * @return locked credential when one has been provisioned
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "1000"))
     @Query("select credential from PasswordCredential credential "
             + "where credential.account.id = :accountId")
     Optional<PasswordCredential> findByAccountIdForUpdate(@Param("accountId") UUID accountId);

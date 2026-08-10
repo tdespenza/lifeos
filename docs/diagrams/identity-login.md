@@ -101,7 +101,7 @@ classDiagram
 stateDiagram-v2
     [*] --> RequestReceived
     RequestReceived --> RateLimitCheck : Redis counter increments
-    RequestReceived --> DependencyUnavailable : Redis timeout/error
+    RateLimitCheck --> DependencyUnavailable : Redis timeout/error
     RateLimitCheck --> RateLimitExceeded : threshold exceeded
     RateLimitCheck --> CredentialLookup : attempt permitted
     CredentialLookup --> HashCapacityWait : account/credential or dummy hash selected

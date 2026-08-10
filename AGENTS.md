@@ -71,6 +71,12 @@ Avoid over-engineering, hidden side effects, global mutable state, circular depe
 
 Every meaningful change must include tests or a clear explanation for why tests are not applicable. Run the relevant build, lint, static analysis, test, benchmark, or validation command when available.
 
+## GitHub Pull Request Policy
+
+- Never create a pull request in draft state for this repository.
+- Pull requests created by an agent must be ready for review immediately; do not use draft status.
+- Before handing off a pull request, verify that GitHub reports `isDraft: false` and that the PR targets the intended base branch.
+
 ## FAANG Engineering Principles
 
 ### Correctness

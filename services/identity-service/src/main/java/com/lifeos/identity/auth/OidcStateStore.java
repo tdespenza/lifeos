@@ -1,5 +1,8 @@
 package com.lifeos.identity.auth;
 
+import java.time.Duration;
+import java.util.Optional;
+
 /**
  * Distributed, single-use OIDC callback-state store.
  */
@@ -12,7 +15,7 @@ public interface OidcStateStore {
      * @param authorizationState state material
      * @param ttl expiration bound
      */
-    void save(String state, OidcAuthorizationState authorizationState, java.time.Duration ttl);
+    void save(String state, OidcAuthorizationState authorizationState, Duration ttl);
 
     /**
      * Atomically consumes one state record.
@@ -20,5 +23,5 @@ public interface OidcStateStore {
      * @param state random callback state
      * @return state record, or empty for expired/reused state
      */
-    java.util.Optional<OidcAuthorizationState> consume(String state);
+    Optional<OidcAuthorizationState> consume(String state);
 }

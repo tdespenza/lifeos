@@ -1,6 +1,8 @@
 package com.lifeos.identity.auth;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -85,6 +88,59 @@ class OidcControllerTest {
                 eq(PROVIDER_NAME),
                 eq(new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256")),
                 eq(VERIFIER));
+    }
+
+    @Test
+    void callbackUsesHeaderVerifierAndIgnoresQueryVerifier() throws Exception {
+        LoginResponse response = new LoginResponse(
+                java.util.UUID.randomUUID(), "signed-token", "Bearer", 300);
+        when(authenticationService.callback(
+                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), any()))
+                .thenReturn(response);
+
+        mockMvc.perform(get("/api/v1/auth/oidc/{provider}/callback", PROVIDER_NAME)
+                        .param("code", "code")
+                        .param("state", "state")
+                        .param("code_verifier", "query-verifier-that-must-not-be-read")
+                        .header("X-PKCE-Code-Verifier", VERIFIER))
+                .andExpect(status().isOk());
+
+        verify(authenticationService).callback(
+                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), any());
+    }
+
+    @Test
+    void callbackMapsOidcFailureToUnauthorized() throws Exception {
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new OidcAuthenticationFailureException());
+
+        mockMvc.perform(callbackRequest())
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void callbackMapsDependencyFailureToServiceUnavailable() throws Exception {
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new AuthenticationDependencyUnavailableException());
+
+        mockMvc.perform(callbackRequest())
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    void callbackMapsSessionCapacityToConflict() throws Exception {
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new SessionCapacityExceededException());
+
+        mockMvc.perform(callbackRequest())
+                .andExpect(status().isConflict());
+    }
+
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder callbackRequest() {
+        return get("/api/v1/auth/oidc/{provider}/callback", PROVIDER_NAME)
+                .param("code", "code")
+                .param("state", "state")
+                .header("X-PKCE-Code-Verifier", VERIFIER);
     }
 
     private static String codeChallenge(String verifier) {

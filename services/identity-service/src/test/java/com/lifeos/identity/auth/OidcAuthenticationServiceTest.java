@@ -3,6 +3,7 @@ package com.lifeos.identity.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -113,8 +114,7 @@ class OidcAuthenticationServiceTest {
         LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
         when(stateStore.consume("state")).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(
-                any(), org.mockito.ArgumentMatchers.eq("code"), org.mockito.ArgumentMatchers.eq(VERIFIER),
-                org.mockito.ArgumentMatchers.eq("nonce")))
+                any(), eq("code"), eq(VERIFIER), eq("nonce")))
                 .thenReturn(new OidcIdentity("subject-1", "Ada@Example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
                 .thenReturn(Optional.empty());
@@ -139,8 +139,7 @@ class OidcAuthenticationServiceTest {
         LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
         when(stateStore.consume("state")).thenReturn(Optional.of(stateWithVerifier()));
         when(providerClient.exchangeAndValidate(
-                any(), org.mockito.ArgumentMatchers.eq("code"), org.mockito.ArgumentMatchers.eq(VERIFIER),
-                org.mockito.ArgumentMatchers.eq("nonce")))
+                any(), eq("code"), eq(VERIFIER), eq("nonce")))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
                 .thenReturn(Optional.empty());
@@ -153,8 +152,7 @@ class OidcAuthenticationServiceTest {
                 .isEqualTo(response);
 
         verify(providerClient).exchangeAndValidate(
-                any(), org.mockito.ArgumentMatchers.eq("code"), org.mockito.ArgumentMatchers.eq(VERIFIER),
-                org.mockito.ArgumentMatchers.eq("nonce"));
+                any(), eq("code"), eq(VERIFIER), eq("nonce"));
     }
 
     @Test
@@ -204,6 +202,84 @@ class OidcAuthenticationServiceTest {
         verify(sessionTokenAuthority, never()).createSession(any(), any());
         verify(auditService).record(
                 SecurityAuditEventType.OIDC_CALLBACK_REJECTED, null, "127.0.0.1");
+    }
+
+    @Test
+    void returningUserReusesExistingExternalIdentityWithoutCreatingAnotherAccount() {
+        UserAccount account = account();
+        LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
+        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
+                .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
+        when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
+                .thenReturn(Optional.of(new ExternalIdentity(PROVIDER_NAME, "subject-1", account.getId())));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
+        when(sessionTokenAuthority.createSession(account, SessionAuthenticationMethod.OIDC))
+                .thenReturn(response);
+
+        assertThat(service.callback(PROVIDER_NAME, "code", "state", VERIFIER, null, "127.0.0.1"))
+                .isEqualTo(response);
+
+        verify(accountRepository, never()).findByEmail(any());
+        verify(accountRepository, never()).saveAndFlush(any());
+        verify(externalIdentityRepository, never()).saveAndFlush(any());
+        verify(sessionTokenAuthority).createSession(account, SessionAuthenticationMethod.OIDC);
+    }
+
+    @Test
+    void rejectsExternalIdentityWhenLinkedAccountNoLongerExists() {
+        UUID accountId = UUID.randomUUID();
+        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
+                .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
+        when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
+                .thenReturn(Optional.of(new ExternalIdentity(PROVIDER_NAME, "subject-1", accountId)));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.callback(
+                PROVIDER_NAME, "code", "state", VERIFIER, null, "127.0.0.1"))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        verify(sessionTokenAuthority, never()).createSession(any(), any());
+        verify(accountRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectsDisabledExternalIdentityAccountWithoutCreatingASession() {
+        UserAccount account = account();
+        account.disable();
+        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
+                .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
+        when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
+                .thenReturn(Optional.of(new ExternalIdentity(PROVIDER_NAME, "subject-1", account.getId())));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
+
+        assertThatThrownBy(() -> service.callback(
+                PROVIDER_NAME, "code", "state", VERIFIER, null, "127.0.0.1"))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        verify(sessionTokenAuthority, never()).createSession(any(), any());
+        verify(accountRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void classifiesConcurrentDuplicateEmailInsertAsAuthenticationFailure() {
+        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
+                .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
+        when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
+                .thenReturn(Optional.empty());
+        when(accountRepository.findByEmail("ada@example.com")).thenReturn(Optional.empty());
+        when(accountRepository.saveAndFlush(any(UserAccount.class)))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate email"));
+
+        assertThatThrownBy(() -> service.callback(
+                PROVIDER_NAME, "code", "state", VERIFIER, null, "127.0.0.1"))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        verify(externalIdentityRepository, never()).saveAndFlush(any());
+        verify(sessionTokenAuthority, never()).createSession(any(), any());
     }
 
     private OidcAuthorizationState state() {

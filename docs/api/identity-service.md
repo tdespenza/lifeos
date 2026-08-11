@@ -93,13 +93,16 @@ Provider names, issuer endpoints, client credentials, and callback URIs are allo
 deployment configuration under `identity.auth.oidc.providers`; request input cannot select an
 arbitrary issuer or redirect URI. The legacy `GET` authorization endpoint remains available for
 private clients that retain the verifier and forward it as `X-PKCE-Code-Verifier` on the callback.
+When deployed behind a load balancer, configure `identity.auth.trusted-proxy-addresses` with the
+exact immediate proxy addresses. Forwarded client addresses are ignored from all other peers when
+computing keyed audit fingerprints.
 
 ## `GET /api/v1/auth/oidc/{provider}/callback`
 
 Consumes callback state atomically and completes the provider exchange. Browser-safe authorization
 starts use the verifier retained in the consumed Redis state. Private clients using the legacy GET
-start may supply the verifier with `X-PKCE-Code-Verifier`; the `code_verifier` query parameter is
-supported only for compatibility and should not be used by browsers. The callback rejects missing,
+start may supply the verifier with `X-PKCE-Code-Verifier`; the callback does not accept a
+`code_verifier` query parameter because query strings are commonly logged. The callback rejects missing,
 expired, reused, provider-mismatched, or PKCE-mismatched state before contacting the provider. The
 ID token must have a valid signature and time window from the configured JWKS, the exact configured
 issuer, the configured client ID in `aud`, a matching nonce, and `email_verified=true`.

@@ -30,6 +30,7 @@ public class OidcAuthenticationService {
 
     private static final Logger log = LoggerFactory.getLogger(OidcAuthenticationService.class);
     private static final Pattern CODE_VERIFIER_PATTERN = Pattern.compile("[A-Za-z0-9._~-]{43,128}");
+    private static final Pattern CODE_CHALLENGE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+$");
     private static final int MAX_EMAIL_LENGTH = 320;
     private static final int MAX_DISPLAY_NAME_LENGTH = 200;
@@ -120,13 +121,20 @@ public class OidcAuthenticationService {
             throw new OidcAuthenticationFailureException();
         }
         String state = randomValue();
-        OidcAuthorizationState authorizationState = new OidcAuthorizationState(
-                providerName,
-                provider.getRedirectUri(),
-                request.codeChallenge(),
-                request.codeChallengeMethod(),
-                randomValue(),
-                codeVerifier);
+        OidcAuthorizationState authorizationState = codeVerifier == null
+                ? new OidcAuthorizationState(
+                        providerName,
+                        provider.getRedirectUri(),
+                        request.codeChallenge(),
+                        request.codeChallengeMethod(),
+                        randomValue())
+                : OidcAuthorizationState.forBrowserRedirect(
+                        providerName,
+                        provider.getRedirectUri(),
+                        request.codeChallenge(),
+                        request.codeChallengeMethod(),
+                        randomValue(),
+                        codeVerifier);
         stateStore.save(state, authorizationState, properties.getOidc().getCallbackStateTtl());
         return UriComponentsBuilder.fromUriString(provider.getAuthorizationUri())
                 .queryParam("response_type", "code")
@@ -234,8 +242,14 @@ public class OidcAuthenticationService {
             throw new OidcAuthenticationFailureException();
         }
 
-        UserAccount account = accountRepository.saveAndFlush(
-                new UserAccount(email, boundedDisplayName(identity.displayName(), email)));
+        UserAccount account;
+        try {
+            account = accountRepository.saveAndFlush(
+                    new UserAccount(email, boundedDisplayName(identity.displayName(), email)));
+        } catch (DataIntegrityViolationException exception) {
+            // A concurrent callback may have created the same email account. Never link implicitly.
+            throw new OidcAuthenticationFailureException(exception);
+        }
         try {
             externalIdentityRepository.saveAndFlush(
                     new ExternalIdentity(providerName, identity.subject(), account.getId()));
@@ -258,7 +272,7 @@ public class OidcAuthenticationService {
     private void validatePkceChallenge(OidcAuthorizationRequest request) {
         if (request == null || !"S256".equals(request.codeChallengeMethod())
                 || request.codeChallenge() == null
-                || !CODE_VERIFIER_PATTERN.matcher(request.codeChallenge()).matches()) {
+                || !CODE_CHALLENGE_PATTERN.matcher(request.codeChallenge()).matches()) {
             throw new OidcAuthenticationFailureException();
         }
     }

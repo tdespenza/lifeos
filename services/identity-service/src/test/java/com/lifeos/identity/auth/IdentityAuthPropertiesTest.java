@@ -39,4 +39,16 @@ class IdentityAuthPropertiesTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("signingSecret must contain at least 32 bytes");
     }
+
+    @Test
+    void rejectsBlankOrIncompleteOidcScope() {
+        IdentityAuthProperties.Provider provider = new IdentityAuthProperties.Provider();
+
+        assertThatThrownBy(() -> provider.setScope(" "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scope must be non-blank and include openid");
+        assertThatThrownBy(() -> provider.setScope("profile email"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scope must be non-blank and include openid");
+    }
 }

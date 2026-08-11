@@ -1,5 +1,7 @@
 package com.lifeos.identity.auth;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.net.http.HttpClient;
@@ -17,6 +19,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestOperations;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.client.ClientHttpRequestFactory;
@@ -29,7 +33,7 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
 
     private final RestClient restClient;
     private final RestOperations jwkRestOperations;
-    private final ConcurrentMap<String, JwtDecoder> decoderCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<DecoderCacheKey, JwtDecoder> decoderCache = new ConcurrentHashMap<>();
 
     /**
      * Creates a provider client with a bounded, reusable HTTP client abstraction.
@@ -101,21 +105,30 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
             validateClaims(jwt, provider, nonce);
             String subject = requiredClaim(jwt.getSubject());
             String email = requiredClaim(jwt.getClaimAsString("email"));
-            Boolean emailVerified = jwt.getClaim("email_verified");
-            if (!Boolean.TRUE.equals(emailVerified)) {
+            Object emailVerified = jwt.getClaim("email_verified");
+            if (!isEmailVerified(emailVerified)) {
                 throw new OidcAuthenticationFailureException();
             }
             String displayName = jwt.getClaimAsString("name");
             return new OidcIdentity(subject, email, StringUtils.hasText(displayName) ? displayName : email);
         } catch (OidcAuthenticationFailureException exception) {
             throw exception;
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().is5xxServerError()) {
+                throw new AuthenticationDependencyUnavailableException();
+            }
+            // Do not retain or expose provider response bodies, which may contain secrets.
+            throw new OidcAuthenticationFailureException();
+        } catch (RestClientException exception) {
+            throw new AuthenticationDependencyUnavailableException(exception);
         } catch (RuntimeException exception) {
             throw new OidcAuthenticationFailureException(exception);
         }
     }
 
     private JwtDecoder decoder(IdentityAuthProperties.Provider provider) {
-        return decoderCache.computeIfAbsent(provider.getIssuer(), ignored -> {
+        DecoderCacheKey cacheKey = new DecoderCacheKey(provider.getIssuer(), provider.getJwkSetUri());
+        return decoderCache.computeIfAbsent(cacheKey, ignored -> {
             NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(provider.getJwkSetUri())
                     .restOperations(jwkRestOperations)
                     .build();
@@ -141,6 +154,14 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
         return value;
     }
 
+    private boolean isEmailVerified(Object claim) {
+        return Boolean.TRUE.equals(claim)
+                || claim instanceof String value && "true".equalsIgnoreCase(value);
+    }
+
+    private record DecoderCacheKey(String issuer, String jwkSetUri) {
+    }
+
     private static final class OidcClaimsValidator implements OAuth2TokenValidator<Jwt> {
 
         private final OAuth2TokenValidator<Jwt> timeAndIssuerValidator;
@@ -163,9 +184,7 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
      * OIDC token response. Only the ID token is read by the identity service; access and refresh
      * tokens are intentionally not exposed by this package's public identity contract.
      */
-    private record OidcTokenResponse(
-            @com.fasterxml.jackson.annotation.JsonProperty("id_token") String idToken,
-            @com.fasterxml.jackson.annotation.JsonProperty("access_token") String accessToken,
-            @com.fasterxml.jackson.annotation.JsonProperty("refresh_token") String refreshToken) {
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record OidcTokenResponse(@JsonProperty("id_token") String idToken) {
     }
 }

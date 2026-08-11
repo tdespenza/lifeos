@@ -22,6 +22,7 @@ public class LoginController {
     private static final String TEMPORARY_FAILURE = "Authentication is temporarily unavailable.";
 
     private final LoginService loginService;
+    private final ClientAddressResolver clientAddressResolver;
 
     /**
      * Creates the login controller.
@@ -29,7 +30,19 @@ public class LoginController {
      * @param loginService login application service
      */
     public LoginController(LoginService loginService) {
+        this(loginService, new ClientAddressResolver(new IdentityAuthProperties()));
+    }
+
+    /**
+     * Creates the login controller with trusted-proxy-aware client address resolution.
+     *
+     * @param loginService login application service
+     * @param clientAddressResolver client address resolver
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public LoginController(LoginService loginService, ClientAddressResolver clientAddressResolver) {
         this.loginService = loginService;
+        this.clientAddressResolver = clientAddressResolver;
     }
 
     /**
@@ -42,7 +55,7 @@ public class LoginController {
     @PostMapping("/api/v1/auth/login")
     public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
-        return ResponseEntity.ok(loginService.login(request, servletRequest.getRemoteAddr()));
+        return ResponseEntity.ok(loginService.login(request, clientAddressResolver.resolve(servletRequest)));
     }
 
     /**

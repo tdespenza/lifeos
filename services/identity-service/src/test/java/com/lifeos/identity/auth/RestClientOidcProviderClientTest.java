@@ -16,9 +16,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -36,15 +38,21 @@ class RestClientOidcProviderClientTest {
     private static final String VERIFIER = "a-verifier-with-43-characters-012345678901234";
     private static final String NONCE = "callback-nonce";
 
-    private RSAKey signingKey;
+    private static RSAKey signingKey;
+    private static RSAKey untrustedKey;
     private IdentityAuthProperties.Provider provider;
     private MockRestServiceServer tokenServer;
     private MockRestServiceServer jwkServer;
     private RestClientOidcProviderClient client;
 
-    @BeforeEach
-    void setUp() throws JOSEException {
+    @BeforeAll
+    static void generateSigningKeys() throws JOSEException {
         signingKey = new RSAKeyGenerator(2048).keyID("oidc-test-key").generate();
+        untrustedKey = new RSAKeyGenerator(2048).keyID("untrusted-key").generate();
+    }
+
+    @BeforeEach
+    void setUp() {
         provider = new IdentityAuthProperties.Provider();
         provider.setIssuer("https://issuer.example");
         provider.setAuthorizationUri("https://issuer.example/authorize");
@@ -132,15 +140,70 @@ class RestClientOidcProviderClientTest {
     }
 
     @Test
-    void rejectsAnIdTokenWithAnUntrustedSignature() throws Exception {
-        RSAKey otherSigningKey = new RSAKeyGenerator(2048).keyID("untrusted-key").generate();
-        expectProviderExchange(token(validClaims(), otherSigningKey));
+    void acceptsAnIdTokenWithStringEmailVerificationClaim() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder(validClaims())
+                .claim("email_verified", "true")
+                .build();
+        expectProviderExchange(token(claims));
+
+        OidcIdentity identity = client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE);
+
+        assertThat(identity.email()).isEqualTo("ada@example.com");
+        tokenServer.verify();
+        jwkServer.verify();
+    }
+
+    @Test
+    void rejectsAnExpiredIdToken() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder(validClaims())
+                .expirationTime(Date.from(Instant.now().minusSeconds(5)))
+                .build();
+        expectProviderExchange(token(claims));
 
         assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
                 .isInstanceOf(OidcAuthenticationFailureException.class);
 
         tokenServer.verify();
         jwkServer.verify();
+    }
+
+    @Test
+    void rejectsAnIdTokenWithAnUntrustedSignature() throws Exception {
+        expectProviderExchange(token(validClaims(), untrustedKey));
+
+        assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        tokenServer.verify();
+        jwkServer.verify();
+    }
+
+    @Test
+    void rejectsTokenResponseWithoutIdToken() {
+        tokenServer.expect(MockRestRequestMatchers.requestTo(provider.getTokenUri()))
+                .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
+                .andRespond(MockRestResponseCreators.withSuccess(
+                        "{\"access_token\":\"provider-access\"}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        tokenServer.verify();
+    }
+
+    @Test
+    void mapsNonSuccessfulTokenEndpointResponseToSanitizedAuthenticationFailure() {
+        tokenServer.expect(MockRestRequestMatchers.requestTo(provider.getTokenUri()))
+                .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
+                .andRespond(MockRestResponseCreators.withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":\"provider-secret-response\"}"));
+
+        assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
+                .isInstanceOf(OidcAuthenticationFailureException.class)
+                .hasNoCause();
+
+        tokenServer.verify();
     }
 
     private void expectProviderExchange(SignedJWT token) {

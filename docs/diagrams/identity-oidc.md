@@ -63,7 +63,7 @@ sequenceDiagram
         Client->>Provider: Authorize with state, nonce, and PKCE challenge
         Provider-->>API: Redirect code + state
         API->>App: callback parameters + client address
-        Note over API,App: Verifier is recovered from single-use server state
+        Note over API,App: Browser path recovers verifier from single-use server state; client-held path uses the private callback header
         App->>Redis: atomic GET+DEL state
         alt state expired, reused, or mismatched
             Redis-->>App: empty or invalid state
@@ -181,18 +181,21 @@ stateDiagram-v2
     StateConsumed --> CallbackRejected : provider/redirect mismatch
     StateConsumed --> CallbackRejected : PKCE verifier mismatch
     StateConsumed --> ProviderExchange : PKCE verifier matches
-    ProviderExchange --> CallbackRejected : exchange failure
+    ProviderExchange --> ProviderExchangeUnavailable : provider exchange or JWKS dependency failure
+    ProviderExchange --> CallbackRejected : provider token rejected or ID-token claims invalid
     ProviderExchange --> CallbackRejected : issuer/audience/signature/time invalid
     ProviderExchange --> CallbackRejected : nonce or verified-email invalid
     ProviderExchange --> AccountResolution : verified provider subject
     AccountResolution --> CallbackRejected : disabled account or email conflict
-    AccountResolution --> StateStoreUnavailable : database dependency failure
+    AccountResolution --> DatabaseUnavailable : database dependency failure
     AccountResolution --> SessionCapacityConflict : active session cap reached
     AccountResolution --> SessionCreated : new or linked active account
     SessionCreated --> AuditRecorded
     CallbackRejected --> AuditRecorded
     SessionCapacityConflict --> AuditRecorded
     StateStoreUnavailable --> AuditRecorded
+    ProviderExchangeUnavailable --> AuditRecorded
+    DatabaseUnavailable --> AuditRecorded
     AuditRecorded --> [*]
 ```
 
@@ -214,4 +217,11 @@ stateDiagram-v2
   requiring a local password credential. Raw tokens, callback state, email addresses, and provider
   claims are not written to audit logs.
 - Every callback rejection, dependency failure, capacity conflict, and successful OIDC session is
-  recorded as a redacted security audit event with correlation and keyed client-fingerprint data.
+  recorded as a redacted security audit event with correlation and keyed client-fingerprint data
+  when the audit store is available. If audit persistence itself fails, the service logs the
+  operational failure and returns a generic temporary-failure response; no audit row can be
+  claimed for that failure without a separate fallback sink.
+- The browser POST flow intentionally retains the verifier in server-side state. This makes the
+  provider redirect usable without a custom browser header, but an observer holding both callback
+  code and state does not need an independently retained verifier; single-use state is the replay
+  control. Clients requiring client-held PKCE proof must use the header-based callback path.

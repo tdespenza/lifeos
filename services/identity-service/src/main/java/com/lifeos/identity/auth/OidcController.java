@@ -31,6 +31,7 @@ public class OidcController {
     private static final String CAPACITY_FAILURE = "The account cannot create another active session.";
 
     private final OidcAuthenticationService authenticationService;
+    private final ClientAddressResolver clientAddressResolver;
 
     /**
      * Creates the OIDC controller.
@@ -38,7 +39,21 @@ public class OidcController {
      * @param authenticationService OIDC flow service
      */
     public OidcController(OidcAuthenticationService authenticationService) {
+        this(authenticationService, new ClientAddressResolver(new IdentityAuthProperties()));
+    }
+
+    /**
+     * Creates the OIDC controller with trusted-proxy-aware client address resolution.
+     *
+     * @param authenticationService OIDC flow service
+     * @param clientAddressResolver client address resolver
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public OidcController(
+            OidcAuthenticationService authenticationService,
+            ClientAddressResolver clientAddressResolver) {
         this.authenticationService = authenticationService;
+        this.clientAddressResolver = clientAddressResolver;
     }
 
     /**
@@ -96,12 +111,11 @@ public class OidcController {
     /**
      * Completes the callback. Browser-safe authorization starts retain the verifier in server-side
      * callback state. The legacy GET flow may supply it as a private-client header; query-form
-     * verifiers remain supported only for compatibility and should not be used by browsers.
+     * verifiers are deliberately not accepted because query strings are commonly logged.
      *
      * @param provider provider name
      * @param code provider authorization code
      * @param state callback state
-     * @param codeVerifier optional query-form PKCE verifier
      * @param headerCodeVerifier optional header-form PKCE verifier
      * @param error provider error value
      * @param servletRequest request used only for keyed audit fingerprinting
@@ -112,14 +126,12 @@ public class OidcController {
             @PathVariable String provider,
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String state,
-            @RequestParam(name = "code_verifier", required = false) String codeVerifier,
             @RequestHeader(name = "X-PKCE-Code-Verifier", required = false) String headerCodeVerifier,
             @RequestParam(required = false) String error,
             HttpServletRequest servletRequest) {
-        String verifier = headerCodeVerifier != null && !headerCodeVerifier.isBlank()
-                ? headerCodeVerifier : codeVerifier;
         return ResponseEntity.ok(authenticationService.callback(
-                provider, code, state, verifier, error, servletRequest.getRemoteAddr()));
+                provider, code, state, headerCodeVerifier, error,
+                clientAddressResolver.resolve(servletRequest)));
     }
 
     @ExceptionHandler(OidcAuthenticationFailureException.class)

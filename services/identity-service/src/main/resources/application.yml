@@ -19,6 +19,9 @@ spring:
 
 identity:
   auth:
+    # Only list immediate load-balancer/proxy addresses here. Forwarded headers from all other
+    # peers are ignored by ClientAddressResolver to prevent client-controlled audit fingerprints.
+    trusted-proxy-addresses: []
     access-token-ttl: ${IDENTITY_ACCESS_TOKEN_TTL:PT5M}
     max-sessions-per-account: ${IDENTITY_MAX_SESSIONS_PER_ACCOUNT:10}
     rate-limit:

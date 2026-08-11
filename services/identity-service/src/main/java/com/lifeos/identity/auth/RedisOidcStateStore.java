@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -19,6 +20,7 @@ public class RedisOidcStateStore implements OidcStateStore {
 
     private static final Logger log = LoggerFactory.getLogger(RedisOidcStateStore.class);
     private static final String KEY_PREFIX = "lifeos:identity:oidc-state:";
+    private static final Pattern STATE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final DefaultRedisScript<String> CONSUME_SCRIPT = new DefaultRedisScript<>(
             "local value = redis.call('GET', KEYS[1]); "
                     + "if value then redis.call('DEL', KEYS[1]); end; return value;",
@@ -51,16 +53,26 @@ public class RedisOidcStateStore implements OidcStateStore {
 
     @Override
     public Optional<OidcAuthorizationState> consume(String state) {
+        if (state == null || !STATE_PATTERN.matcher(state).matches()) {
+            return Optional.empty();
+        }
+        String payload;
         try {
-            String payload = redisTemplate.execute(CONSUME_SCRIPT, List.of(key(state)));
-            if (payload == null) {
-                return Optional.empty();
-            }
-            return Optional.of(objectMapper.readValue(payload, OidcAuthorizationState.class));
-        } catch (JsonProcessingException | RuntimeException exception) {
+            payload = redisTemplate.execute(CONSUME_SCRIPT, List.of(key(state)));
+        } catch (RuntimeException exception) {
             log.atWarn().addKeyValue("event", "oidc_state_store_unavailable")
                     .log("OIDC callback state could not be consumed");
             throw new AuthenticationDependencyUnavailableException(exception);
+        }
+        if (payload == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(objectMapper.readValue(payload, OidcAuthorizationState.class));
+        } catch (JsonProcessingException exception) {
+            log.atWarn().addKeyValue("event", "oidc_state_payload_invalid")
+                    .log("OIDC callback state payload could not be read");
+            return Optional.empty();
         }
     }
 

@@ -3,12 +3,15 @@ package com.lifeos.identity.auth;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
@@ -33,6 +36,7 @@ public class IdentityAuthProperties {
     private final Fingerprint fingerprint = new Fingerprint();
     @Valid
     private final Oidc oidc = new Oidc();
+    private Set<String> trustedProxyAddresses = new LinkedHashSet<>();
     @NotNull(message = "accessTokenTtl must be configured")
     private Duration accessTokenTtl = Duration.ofMinutes(5);
     @Min(value = 1, message = "maxSessionsPerAccount must be positive")
@@ -42,6 +46,26 @@ public class IdentityAuthProperties {
      * Creates authentication properties with safe development defaults.
      */
     public IdentityAuthProperties() {
+    }
+
+    /**
+     * Returns the exact immediate proxy addresses allowed to supply an X-Forwarded-For header.
+     *
+     * @return trusted proxy addresses
+     */
+    public Set<String> getTrustedProxyAddresses() {
+        return trustedProxyAddresses;
+    }
+
+    /**
+     * Replaces the trusted proxy address allow-list during configuration binding.
+     *
+     * @param trustedProxyAddresses exact proxy addresses
+     */
+    public void setTrustedProxyAddresses(Set<String> trustedProxyAddresses) {
+        this.trustedProxyAddresses = trustedProxyAddresses == null
+                ? new LinkedHashSet<>()
+                : new LinkedHashSet<>(trustedProxyAddresses);
     }
 
     /**
@@ -393,19 +417,27 @@ public class IdentityAuthProperties {
     public static class Provider {
 
         @NotBlank(message = "issuer must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "issuer must be an absolute https URL")
         private String issuer;
         @NotBlank(message = "authorizationUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "authorizationUri must be an absolute https URL")
         private String authorizationUri;
         @NotBlank(message = "tokenUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "tokenUri must be an absolute https URL")
         private String tokenUri;
         @NotBlank(message = "jwkSetUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "jwkSetUri must be an absolute https URL")
         private String jwkSetUri;
         @NotBlank(message = "clientId must be configured")
         private String clientId;
         @NotBlank(message = "clientSecret must be configured")
         private String clientSecret;
         @NotBlank(message = "redirectUri must be configured")
+        @Pattern(
+                regexp = "(?i)(https://[^\\s]+|http://(?:localhost|127\\.0\\.0\\.1)(?::\\d+)?(?:/[^\\s]*)?)",
+                message = "redirectUri must be an absolute https URL or loopback http URL")
         private String redirectUri;
+        @NotBlank(message = "scope must be configured")
         private String scope = "openid profile email";
 
         /**
@@ -475,7 +507,11 @@ public class IdentityAuthProperties {
         }
 
         public void setScope(String scope) {
-            this.scope = scope;
+            if (scope == null || scope.isBlank()
+                    || !Set.of(scope.trim().split("\\s+")).contains("openid")) {
+                throw new IllegalArgumentException("scope must be non-blank and include openid");
+            }
+            this.scope = scope.trim();
         }
     }
 

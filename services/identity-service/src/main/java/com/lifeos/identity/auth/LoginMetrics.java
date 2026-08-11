@@ -6,7 +6,7 @@ import java.util.Locale;
 import org.springframework.stereotype.Component;
 
 /**
- * Low-cardinality metrics for first-party authentication outcomes.
+ * Low-cardinality metrics for identity authentication outcomes.
  */
 @Component
 public class LoginMetrics {
@@ -29,7 +29,7 @@ public class LoginMetrics {
      */
     public void record(SecurityAuditEventType eventType) {
         Counter.builder("identity_login_outcomes_total")
-                .description("First-party login outcomes")
+                .description("Identity authentication outcomes")
                 .tag("outcome", eventType.name().toLowerCase(Locale.ROOT))
                 .register(meterRegistry)
                 .increment();

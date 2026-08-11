@@ -257,7 +257,7 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 - Use gRPC with versioned `.proto` contracts in a shared `grpc-contracts` module for all internal service-to-service calls (ADR-007)
 - Use PostgreSQL as the system of record for identity, task/goal, calendar, finance, and audit/permission domains, one schema/database per owning service (ADR-008) [DONE — both existing services]
 - Use MongoDB for journals, notes, and AI conversation history, owned only by the profile/journal and AI orchestrator services (ADR-009)
-- Use Redis as the shared cache/session/rate-limit/lock/pub-sub layer across all services (ADR-010) [PARTIAL — identity login rate limiting]
+- Use Redis as the shared cache/session/rate-limit/lock/pub-sub layer across all services (ADR-010) [PARTIAL — identity authentication rate limiting and short-lived OIDC/WebAuthn state]
 - Use Qdrant as the dedicated vector database for embeddings/RAG/semantic search (ADR-011)
 - Use WebRTC (SFU architecture) for live sessions and transcode recordings to HLS via ffmpeg for playback (ADR-012)
 - Run a private Hyperledger Besu network with Web3j as the Java client; anchor only Merkle roots and minimal metadata on-chain, never private data (ADR-013)
@@ -613,7 +613,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), and the configured OAuth2/OIDC authorization-code flow (FR8) exist in `identity-service`; passkeys, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), and passkey/WebAuthn assertion login (FR9) exist in `identity-service`; passkey credential registration/provisioning, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.
@@ -689,7 +689,7 @@ So that I can use an established identity without sharing its password with Life
 **When** the callback is received
 **Then** authentication is rejected, no account link or session is created, and the failure is audit logged without exposing provider tokens.
 
-### Story 1.4: Passkey/WebAuthn login
+### Story 1.4: Passkey/WebAuthn login [DONE]
 
 As a registered user,
 I want to authenticate with a passkey,
@@ -706,6 +706,17 @@ So that I can log in without entering a password on a supported device.
 **Given** a wrong origin/RP id, invalid signature, stale challenge, counter regression, or replayed challenge
 **When** authentication is attempted
 **Then** the service rejects the attempt and records a redacted security-audit event.
+
+**Implementation notes:** `POST /api/v1/auth/passkey/options` creates a username-less assertion
+request and returns an opaque challenge handle plus browser `publicKey` options. Redis stores the
+exact Yubico `AssertionRequest` for five minutes by default and consumes it with atomic GET+DEL
+semantics. `POST /api/v1/auth/passkey/assertion` validates the exact configured origin and RP ID,
+requires configured user verification, checks the registered public key and authenticator counter,
+advances the counter with a conditional PostgreSQL update, and creates a `PASSKEY` session through
+the shared ADR-020 authority. Passkey endpoints share the distributed attempt limiter and emit
+redacted success, rejection, rate-limit, dependency, and session-capacity audit events. Private
+keys never enter the service; credential registration/provisioning remains a separate authenticated
+step-up story.
 
 ### Story 1.5: JWT issuance and verification
 

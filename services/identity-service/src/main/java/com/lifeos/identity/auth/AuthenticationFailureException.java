@@ -12,4 +12,13 @@ public class AuthenticationFailureException extends RuntimeException {
     public AuthenticationFailureException() {
         super("The supplied credentials could not be verified.");
     }
+
+    /**
+     * Creates a generic authentication failure while retaining the internal diagnostic cause.
+     *
+     * @param cause internal failure cause; never exposed in the HTTP response
+     */
+    public AuthenticationFailureException(Throwable cause) {
+        super("The supplied credentials could not be verified.", cause);
+    }
 }

@@ -32,3 +32,9 @@ identity:
       provider-connect-timeout: PT2S
       provider-read-timeout: PT5S
       providers: {}
+    webauthn:
+      challenge-ttl: PT5M
+      rp-id: localhost
+      rp-name: LifeOS Test
+      allowed-origins: http://localhost:4200
+      user-verification: REQUIRED

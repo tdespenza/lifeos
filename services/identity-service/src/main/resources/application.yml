@@ -19,6 +19,9 @@ spring:
 
 identity:
   auth:
+    # Only list immediate load-balancer/proxy addresses here. Forwarded headers from all other
+    # peers are ignored by ClientAddressResolver to prevent client-controlled audit fingerprints.
+    trusted-proxy-addresses: []
     access-token-ttl: ${IDENTITY_ACCESS_TOKEN_TTL:PT5M}
     max-sessions-per-account: ${IDENTITY_MAX_SESSIONS_PER_ACCOUNT:10}
     rate-limit:
@@ -36,6 +39,13 @@ identity:
     fingerprint:
       audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
       rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}
+    oidc:
+      callback-state-ttl: ${IDENTITY_OIDC_CALLBACK_STATE_TTL:PT5M}
+      provider-connect-timeout: ${IDENTITY_OIDC_PROVIDER_CONNECT_TIMEOUT:PT2S}
+      provider-read-timeout: ${IDENTITY_OIDC_PROVIDER_READ_TIMEOUT:PT5S}
+      # Providers are intentionally empty by default. Deployments must explicitly configure
+      # each allow-listed provider and its secret-manager-backed client credentials.
+      providers: {}
 
 server:
   port: 8081

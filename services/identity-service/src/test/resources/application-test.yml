@@ -27,3 +27,8 @@ identity:
     fingerprint:
       audit-client-fingerprint-secret: test-only-audit-fingerprint-secret-that-is-at-least-32-bytes
       rate-limit-key-secret: test-only-rate-limit-key-secret-that-is-at-least-32-bytes
+    oidc:
+      callback-state-ttl: PT5M
+      provider-connect-timeout: PT2S
+      provider-read-timeout: PT5S
+      providers: {}

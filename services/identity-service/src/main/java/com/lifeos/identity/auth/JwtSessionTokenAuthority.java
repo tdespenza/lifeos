@@ -88,17 +88,37 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     @Override
     @Transactional
     public LoginResponse createSession(UserAccount account) {
+        return createSession(account, SessionAuthenticationMethod.PASSWORD);
+    }
+
+    /**
+     * Creates a session after revalidating the account and the credential required by the
+     * authentication method. OIDC accounts deliberately have no local password credential.
+     *
+     * @param account account selected by the verified authentication result
+     * @param authenticationMethod authentication method already verified at the protocol boundary
+     * @return signed access-token result
+     */
+    @Override
+    @Transactional
+    public LoginResponse createSession(
+            UserAccount account, SessionAuthenticationMethod authenticationMethod) {
         try {
+            if (authenticationMethod == null) {
+                throw new AuthenticationFailureException();
+            }
             UserAccount lockedAccount = accountRepository.findByIdForUpdate(account.getId())
                     .orElseThrow(AuthenticationFailureException::new);
             if (!lockedAccount.isActive()) {
                 throw new AuthenticationFailureException();
             }
-            PasswordCredential lockedCredential = credentialRepository
-                    .findByAccountIdForUpdate(lockedAccount.getId())
-                    .orElseThrow(AuthenticationFailureException::new);
-            if (!lockedCredential.isActive()) {
-                throw new AuthenticationFailureException();
+            if (authenticationMethod == SessionAuthenticationMethod.PASSWORD) {
+                PasswordCredential lockedCredential = credentialRepository
+                        .findByAccountIdForUpdate(lockedAccount.getId())
+                        .orElseThrow(AuthenticationFailureException::new);
+                if (!lockedCredential.isActive()) {
+                    throw new AuthenticationFailureException();
+                }
             }
 
             Instant issuedAt = clock.instant();
@@ -123,6 +143,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             sessionRepository.saveAndFlush(new AuthSession(
                     sessionId,
                     lockedAccount,
+                    authenticationMethod,
                     TokenDigest.sha256(accessToken),
                     issuedAt,
                     expiresAt));

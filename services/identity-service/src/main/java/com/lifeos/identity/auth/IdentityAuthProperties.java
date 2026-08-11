@@ -2,11 +2,16 @@ package com.lifeos.identity.auth;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
@@ -29,6 +34,9 @@ public class IdentityAuthProperties {
     private final Jwt jwt = new Jwt();
     @Valid
     private final Fingerprint fingerprint = new Fingerprint();
+    @Valid
+    private final Oidc oidc = new Oidc();
+    private Set<String> trustedProxyAddresses = new LinkedHashSet<>();
     @NotNull(message = "accessTokenTtl must be configured")
     private Duration accessTokenTtl = Duration.ofMinutes(5);
     @Min(value = 1, message = "maxSessionsPerAccount must be positive")
@@ -38,6 +46,26 @@ public class IdentityAuthProperties {
      * Creates authentication properties with safe development defaults.
      */
     public IdentityAuthProperties() {
+    }
+
+    /**
+     * Returns the exact immediate proxy addresses allowed to supply an X-Forwarded-For header.
+     *
+     * @return trusted proxy addresses
+     */
+    public Set<String> getTrustedProxyAddresses() {
+        return trustedProxyAddresses;
+    }
+
+    /**
+     * Replaces the trusted proxy address allow-list during configuration binding.
+     *
+     * @param trustedProxyAddresses exact proxy addresses
+     */
+    public void setTrustedProxyAddresses(Set<String> trustedProxyAddresses) {
+        this.trustedProxyAddresses = trustedProxyAddresses == null
+                ? new LinkedHashSet<>()
+                : new LinkedHashSet<>(trustedProxyAddresses);
     }
 
     /**
@@ -74,6 +102,15 @@ public class IdentityAuthProperties {
      */
     public Fingerprint getFingerprint() {
         return fingerprint;
+    }
+
+    /**
+     * Returns OIDC provider and callback settings.
+     *
+     * @return OIDC settings
+     */
+    public Oidc getOidc() {
+        return oidc;
     }
 
     /**
@@ -247,6 +284,234 @@ public class IdentityAuthProperties {
          */
         public void setRateLimitKeySecret(String rateLimitKeySecret) {
             this.rateLimitKeySecret = rateLimitKeySecret;
+        }
+    }
+
+    /**
+     * OIDC provider configuration. Providers are explicitly allow-listed by deployment
+     * configuration; request input can never select an arbitrary issuer or redirect URI.
+     */
+    public static class Oidc {
+
+        @NotNull(message = "callbackStateTtl must be configured")
+        private Duration callbackStateTtl = Duration.ofMinutes(5);
+        @NotNull(message = "providerConnectTimeout must be configured")
+        private Duration providerConnectTimeout = Duration.ofSeconds(2);
+        @NotNull(message = "providerReadTimeout must be configured")
+        private Duration providerReadTimeout = Duration.ofSeconds(5);
+        @Valid
+        private Map<String, Provider> providers = new LinkedHashMap<>();
+
+        /**
+         * Creates OIDC settings with a bounded callback-state lifetime.
+         */
+        public Oidc() {
+        }
+
+        /**
+         * Returns the callback-state TTL.
+         *
+         * @return callback-state TTL
+         */
+        public Duration getCallbackStateTtl() {
+            return callbackStateTtl;
+        }
+
+        /**
+         * Sets the callback-state TTL.
+         *
+         * @param callbackStateTtl callback-state TTL
+         */
+        public void setCallbackStateTtl(Duration callbackStateTtl) {
+            if (callbackStateTtl == null || callbackStateTtl.isZero() || callbackStateTtl.isNegative()) {
+                throw new IllegalArgumentException("callbackStateTtl must be positive");
+            }
+            this.callbackStateTtl = callbackStateTtl;
+        }
+
+        /**
+         * Returns the bounded provider TCP connection timeout.
+         *
+         * @return connection timeout
+         */
+        public Duration getProviderConnectTimeout() {
+            return providerConnectTimeout;
+        }
+
+        /**
+         * Sets the provider TCP connection timeout.
+         *
+         * @param providerConnectTimeout connection timeout
+         */
+        public void setProviderConnectTimeout(Duration providerConnectTimeout) {
+            this.providerConnectTimeout = positiveDuration(providerConnectTimeout, "providerConnectTimeout");
+        }
+
+        /**
+         * Returns the bounded provider response timeout.
+         *
+         * @return response timeout
+         */
+        public Duration getProviderReadTimeout() {
+            return providerReadTimeout;
+        }
+
+        /**
+         * Sets the provider response timeout.
+         *
+         * @param providerReadTimeout response timeout
+         */
+        public void setProviderReadTimeout(Duration providerReadTimeout) {
+            this.providerReadTimeout = positiveDuration(providerReadTimeout, "providerReadTimeout");
+        }
+
+        /**
+         * Returns the explicitly configured providers.
+         *
+         * @return provider map keyed by the public provider name
+         */
+        public Map<String, Provider> getProviders() {
+            return providers;
+        }
+
+        /**
+         * Replaces the provider map during configuration binding.
+         *
+         * @param providers provider map
+         */
+        public void setProviders(Map<String, Provider> providers) {
+            this.providers = providers == null ? new LinkedHashMap<>() : new LinkedHashMap<>(providers);
+        }
+
+        /**
+         * Returns one allow-listed provider, if configured.
+         *
+         * @param name provider name
+         * @return provider configuration
+         */
+        public Provider provider(String name) {
+            return name == null ? null : providers.get(name);
+        }
+
+        /**
+         * Confirms that state is bounded and usable.
+         *
+         * @return true when the TTL is positive
+         */
+        @AssertTrue(message = "callbackStateTtl must be positive")
+        public boolean isCallbackStateTtlPositive() {
+            return callbackStateTtl != null && !callbackStateTtl.isZero() && !callbackStateTtl.isNegative();
+        }
+
+        private Duration positiveDuration(Duration value, String name) {
+            if (value == null || value.isZero() || value.isNegative()) {
+                throw new IllegalArgumentException(name + " must be positive");
+            }
+            return value;
+        }
+    }
+
+    /**
+     * One confidential OIDC provider's protocol endpoints and client credentials.
+     */
+    public static class Provider {
+
+        @NotBlank(message = "issuer must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "issuer must be an absolute https URL")
+        private String issuer;
+        @NotBlank(message = "authorizationUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "authorizationUri must be an absolute https URL")
+        private String authorizationUri;
+        @NotBlank(message = "tokenUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "tokenUri must be an absolute https URL")
+        private String tokenUri;
+        @NotBlank(message = "jwkSetUri must be configured")
+        @Pattern(regexp = "https://[^\\s]+", message = "jwkSetUri must be an absolute https URL")
+        private String jwkSetUri;
+        @NotBlank(message = "clientId must be configured")
+        private String clientId;
+        @NotBlank(message = "clientSecret must be configured")
+        private String clientSecret;
+        @NotBlank(message = "redirectUri must be configured")
+        @Pattern(
+                regexp = "(?i)(https://[^\\s]+|http://(?:localhost|127\\.0\\.0\\.1)(?::\\d+)?(?:/[^\\s]*)?)",
+                message = "redirectUri must be an absolute https URL or loopback http URL")
+        private String redirectUri;
+        @NotBlank(message = "scope must be configured")
+        private String scope = "openid profile email";
+
+        /**
+         * Creates an empty provider for external configuration binding.
+         */
+        public Provider() {
+        }
+
+        public String getIssuer() {
+            return issuer;
+        }
+
+        public void setIssuer(String issuer) {
+            this.issuer = issuer;
+        }
+
+        public String getAuthorizationUri() {
+            return authorizationUri;
+        }
+
+        public void setAuthorizationUri(String authorizationUri) {
+            this.authorizationUri = authorizationUri;
+        }
+
+        public String getTokenUri() {
+            return tokenUri;
+        }
+
+        public void setTokenUri(String tokenUri) {
+            this.tokenUri = tokenUri;
+        }
+
+        public String getJwkSetUri() {
+            return jwkSetUri;
+        }
+
+        public void setJwkSetUri(String jwkSetUri) {
+            this.jwkSetUri = jwkSetUri;
+        }
+
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        public String getClientSecret() {
+            return clientSecret;
+        }
+
+        public void setClientSecret(String clientSecret) {
+            this.clientSecret = clientSecret;
+        }
+
+        public String getRedirectUri() {
+            return redirectUri;
+        }
+
+        public void setRedirectUri(String redirectUri) {
+            this.redirectUri = redirectUri;
+        }
+
+        public String getScope() {
+            return scope;
+        }
+
+        public void setScope(String scope) {
+            if (scope == null || scope.isBlank()
+                    || !Set.of(scope.trim().split("\\s+")).contains("openid")) {
+                throw new IllegalArgumentException("scope must be non-blank and include openid");
+            }
+            this.scope = scope.trim();
         }
     }
 

@@ -65,17 +65,22 @@ credential before issuing a token.
 
 OAuth2/OIDC uses the authorization-code flow with PKCE. The identity service
 owns provider callbacks, validates issuer, audience, nonce, state, and PKCE
-requirements, and links a verified provider subject to an existing or newly
-created LifeOS account according to an explicit account-linking policy. A link
-requires a provider-reported verified email (`email_verified=true`) plus an
-already authenticated LifeOS session or explicit reauthentication/step-up;
-matching email alone never authorizes linking. Provider-subject or email
-conflicts are rejected with a generic response and routed through account
-recovery or support, never automatic takeover. Unlinking requires recent
-reauthentication and at least one remaining usable recovery/authentication
-method; recovery itself must verify an existing LifeOS factor or verified
-account-recovery channel and must not trust an unverified provider claim.
-Access tokens from providers are never exposed to downstream LifeOS services.
+requirements. Browser starts bind the single-use Redis state to a random value
+held in a `Secure`, `HttpOnly`, `SameSite=Lax`, host-only transaction cookie;
+Redis retains only its SHA-256 hash and atomically compares it before consuming
+state. This prevents a callback code/state pair from another browser from
+creating a session and does not rely on IP-address binding. The service links a
+verified provider subject to an existing or newly created LifeOS account
+according to an explicit account-linking policy. A link requires a
+provider-reported verified email (`email_verified=true`) plus an already
+authenticated LifeOS session or explicit reauthentication/step-up; matching
+email alone never authorizes linking. Provider-subject or email conflicts are
+rejected with a generic response and routed through account recovery or
+support, never automatic takeover. Unlinking requires recent reauthentication
+and at least one remaining usable recovery/authentication method; recovery
+itself must verify an existing LifeOS factor or verified account-recovery
+channel and must not trust an unverified provider claim. Access tokens from
+providers are never exposed to downstream LifeOS services.
 
 ### Passkeys
 
@@ -135,13 +140,16 @@ key and required metadata.
   valid successors.
 - Durable session and revocation metadata is stored in the identity PostgreSQL
   database so users can view and revoke devices; PostgreSQL is the durable
-  revocation authority. Redis stores bounded TTL state for rate limits, login
-  challenges, and hot-path revocation/cache lookups. A Redis hit may accelerate
-  a revocation-sensitive decision, but a miss, timeout, or outage falls back to
-  PostgreSQL; if both stores are unavailable, the request is rejected
-  fail-closed. Revocation is committed to PostgreSQL before cache invalidation,
-  and recovery repopulates Redis from PostgreSQL without promoting a revoked
-  session from stale cache state.
+  revocation authority. Each new session records its verified authentication
+  method for security analysis and future session management. During a rolling
+  upgrade, a legacy row without this metadata is interpreted as a password
+  session, the only factor that could have created it. Redis stores bounded TTL
+  state for rate limits, login challenges, and hot-path revocation/cache
+  lookups. A Redis hit may accelerate a revocation-sensitive decision, but a
+  miss, timeout, or outage falls back to PostgreSQL; if both stores are
+  unavailable, the request is rejected fail-closed. Revocation is committed to
+  PostgreSQL before cache invalidation, and recovery repopulates Redis from
+  PostgreSQL without promoting a revoked session from stale cache state.
 - Active-session capacity is limited to 10 sessions per account and 2 sessions
   per registered device. When either limit is reached, new session creation is
   rejected with a bounded capacity response and the client must obtain

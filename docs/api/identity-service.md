@@ -75,10 +75,12 @@ limit is ten by default.
 Starts the browser-safe authorization-code flow for an explicitly configured OIDC provider. The
 client generates an RFC 7636 verifier and its `S256` `code_challenge`, then submits both in a JSON
 or `application/x-www-form-urlencoded` request body over TLS. The service validates the pair,
-creates a random state and nonce, stores the callback material including the verifier in Redis for
-five minutes, and responds with `302 Found` to the provider's configured authorization URI. The
+creates a random state, nonce, and browser transaction, stores the callback material including the
+verifier and only the transaction's SHA-256 hash in Redis for five minutes, and responds with
+`302 Found` to the provider's configured authorization URI. It also sets a per-state transaction
+cookie with `HttpOnly`, `Secure`, `SameSite=Lax`, and the `/api/v1/auth/oidc` path attributes. The
 provider can therefore redirect directly to the identity-service callback without placing the
-verifier in a URL.
+verifier in a URL, while a copied code/state pair cannot complete from another browser.
 
 Example form request:
 
@@ -100,18 +102,21 @@ computing keyed audit fingerprints.
 ## `GET /api/v1/auth/oidc/{provider}/callback`
 
 Consumes callback state atomically and completes the provider exchange. Browser-safe authorization
-starts use the verifier retained in the consumed Redis state. Private clients using the legacy GET
-start may supply the verifier with `X-PKCE-Code-Verifier`; the callback does not accept a
-`code_verifier` query parameter because query strings are commonly logged. The callback rejects missing,
-expired, reused, provider-mismatched, or PKCE-mismatched state before contacting the provider. The
-ID token must have a valid signature and time window from the configured JWKS, the exact configured
-issuer, the configured client ID in `aud`, a matching nonce, and `email_verified=true`.
+starts require the matching per-state browser transaction cookie as well as the verifier retained
+in the consumed Redis state. Redis compares the SHA-256 hash before deleting state, so a callback
+from another browser does not invalidate the initiating browser's transaction. Private clients
+using the legacy GET start may supply the verifier with `X-PKCE-Code-Verifier`; the callback does
+not accept a `code_verifier` query parameter because query strings are commonly logged. The callback
+rejects missing, expired, reused, provider-mismatched, transaction-mismatched, or PKCE-mismatched
+state before contacting the provider. The ID token must have a valid signature and time window from
+the configured JWKS, the exact configured issuer, the configured client ID in `aud`, a matching
+nonce, and `email_verified=true`.
 
 | Status | Condition | Body |
 | --- | --- | --- |
 | `200 OK` | Valid callback and active linked/new account | Shared `LoginResponse` session/token result |
 | `400 Bad Request` | Invalid authorization-start request | Generic RFC 9457 problem detail |
-| `401 Unauthorized` | Invalid, expired, reused, or mismatched callback; unverified email; provider subject/email conflict | Generic OIDC failure; provider tokens and claim values are not returned |
+| `401 Unauthorized` | Invalid, expired, reused, transaction-mismatched, or otherwise mismatched callback; unverified email; provider subject/email conflict | Generic OIDC failure; provider tokens and claim values are not returned |
 | `409 Conflict` | Active-session capacity reached | Generic session-capacity problem detail |
 | `503 Service Unavailable` | Redis callback-state, provider exchange, audit, database, or session dependency failed | Generic temporary-failure problem detail |
 

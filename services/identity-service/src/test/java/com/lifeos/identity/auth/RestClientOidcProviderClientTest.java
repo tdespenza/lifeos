@@ -156,7 +156,7 @@ class RestClientOidcProviderClientTest {
     @Test
     void rejectsAnExpiredIdToken() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder(validClaims())
-                .expirationTime(Date.from(Instant.now().minusSeconds(5)))
+                .expirationTime(Date.from(Instant.now().minusSeconds(125)))
                 .build();
         expectProviderExchange(token(claims));
 
@@ -201,6 +201,19 @@ class RestClientOidcProviderClientTest {
 
         assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
                 .isInstanceOf(OidcAuthenticationFailureException.class)
+                .hasNoCause();
+
+        tokenServer.verify();
+    }
+
+    @Test
+    void mapsServerErrorTokenEndpointResponseToDependencyFailure() {
+        tokenServer.expect(MockRestRequestMatchers.requestTo(provider.getTokenUri()))
+                .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
+                .andRespond(MockRestResponseCreators.withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+        assertThatThrownBy(() -> client.exchangeAndValidate(provider, CODE, VERIFIER, NONCE))
+                .isInstanceOf(AuthenticationDependencyUnavailableException.class)
                 .hasNoCause();
 
         tokenServer.verify();

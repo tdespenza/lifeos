@@ -4,8 +4,9 @@ These diagrams describe the implemented authorization-code flow at
 `/api/v1/auth/oidc/{provider}/authorize` and
 `/api/v1/auth/oidc/{provider}/callback`. The identity service is the provider allow-list,
 callback, account-linking, audit, and LifeOS session authority. Redis stores only short-lived,
-single-use callback state; PostgreSQL stores the verified external-identity mapping and durable
-session metadata.
+single-use callback state. Browser starts also receive a short-lived, host-only browser
+transaction cookie; Redis stores only its SHA-256 hash. PostgreSQL stores the verified
+external-identity mapping and durable session metadata.
 
 ## Use-case view
 
@@ -45,6 +46,7 @@ sequenceDiagram
     actor User
     participant Client as REST/browser client
     participant API as OidcController
+    participant Cookie as Browser transaction cookie
     participant App as OidcAuthenticationService
     participant Redis as RedisOidcStateStore
     participant Provider as OIDC provider
@@ -54,18 +56,20 @@ sequenceDiagram
     User->>Client: Choose supported provider
     Client->>API: POST /authorize + S256 challenge + verifier
     API->>App: provider + challenge + verifier
-    App->>Redis: SET state(provider, challenge, nonce, verifier) EX 5m
+    App->>Redis: SET state(provider, challenge, nonce, verifier, transaction hash) EX 5m
     alt Redis unavailable
         Redis-->>App: fail closed
         App-->>API: 503 generic problem
     else state stored
-        App-->>Client: 302 configured provider authorization URI
+        API-->>Client: 302 provider URI + Set-Cookie transaction
+        Client->>Cookie: Store HttpOnly, Secure, SameSite=Lax transaction
         Client->>Provider: Authorize with state, nonce, and PKCE challenge
         Provider-->>API: Redirect code + state
-        API->>App: callback parameters + client address
-        Note over API,App: Browser path recovers verifier from single-use server state; client-held path uses the private callback header
-        App->>Redis: atomic GET+DEL state
-        alt state expired, reused, or mismatched
+        Cookie-->>API: matching transaction cookie
+        API->>App: callback parameters + transaction + client address
+        Note over API,App: Browser path recovers verifier from server state and requires its matching transaction cookie; private clients use the callback header
+        App->>Redis: atomic GET + transaction-hash compare + DEL state
+        alt state expired, reused, mismatched, or transaction-bound to another browser
             Redis-->>App: empty or invalid state
             App->>DB: audit callback-rejected outcome
             App-->>API: 401 generic OIDC problem
@@ -93,18 +97,19 @@ sequenceDiagram
 classDiagram
     class OidcController {
         +authorize(provider, codeChallenge, method) ResponseEntity
-        +callback(provider, code, state, verifier, error) ResponseEntity
+        +callback(provider, code, state, verifier, error, transaction) ResponseEntity
     }
     class OidcAuthenticationService {
         +begin(provider, challenge) URI
-        +callback(provider, code, state, verifier, error) LoginResponse
+        +beginBrowser(provider, challenge, verifier) BrowserAuthorizationStart
+        +callback(provider, code, state, verifier, error, transaction) LoginResponse
         -resolveAccount(provider, identity) UserAccount
         -verifyPkce(challenge, verifier) boolean
     }
     class OidcStateStore {
         <<interface>>
         +save(state, authorizationState, ttl)
-        +consume(state) OidcAuthorizationState
+        +consume(state, browserTransactionHash) OidcAuthorizationState
     }
     class OidcAuthorizationState {
         String provider
@@ -113,6 +118,7 @@ classDiagram
         String codeChallengeMethod
         String nonce
         String codeVerifier
+        String browserTransactionHash
     }
     class OidcProviderClient {
         <<interface>>
@@ -171,10 +177,10 @@ stateDiagram-v2
     AuthorizationRequested --> ProviderNotConfigured : unknown provider
     AuthorizationRequested --> CallbackRejected : invalid PKCE challenge
     AuthorizationRequested --> StateStoreUnavailable : Redis write failure
-    AuthorizationRequested --> StateStored : valid S256 challenge (+ verifier for browser path)
+    AuthorizationRequested --> StateStored : valid S256 challenge (+ verifier and transaction hash for browser path)
     StateStored --> ProviderAuthorization
     ProviderAuthorization --> CallbackReceived : provider redirects with code/state
-    CallbackReceived --> CallbackRejected : provider error or missing input
+    CallbackReceived --> CallbackRejected : provider error, missing input, or missing/mismatched transaction cookie
     CallbackReceived --> StateStoreUnavailable : Redis read failure
     CallbackReceived --> CallbackRejected : expired or reused state
     CallbackReceived --> StateConsumed : state atomically consumed
@@ -204,10 +210,14 @@ stateDiagram-v2
 - Only explicitly configured providers, issuer endpoints, client IDs, client credentials, JWKS
   URIs, and callback URIs are usable; provider transport is HTTPS, with loopback HTTP allowed only
   for local callbacks.
-- Callback state is short-lived and atomically consumed. Expired, reused, provider-mismatched, or
-  PKCE-mismatched callbacks cannot reach provider exchange, account linking, or session creation.
-- Browser authorization starts retain the client-generated verifier only in the short-lived,
-  single-use server state; the verifier is never appended to the provider redirect URI.
+- Callback state is short-lived and atomically consumed. Expired, reused, provider-mismatched,
+  transaction-mismatched, or PKCE-mismatched callbacks cannot reach provider exchange, account
+  linking, or session creation.
+- Browser authorization starts retain the client-generated verifier only in short-lived,
+  single-use server state. They are bound to a 256-bit transaction value held in a Secure,
+  HttpOnly, `SameSite=Lax` cookie. Redis retains only the transaction's SHA-256 hash and deletes
+  state atomically only after that hash matches. The verifier and transaction are never appended
+  to the provider redirect URI.
 - ID tokens must pass signature and time validation plus exact issuer, configured audience, matching
   nonce, and `email_verified=true` checks. Provider access and refresh tokens are never persisted or
   returned to downstream LifeOS services.
@@ -221,7 +231,7 @@ stateDiagram-v2
   when the audit store is available. If audit persistence itself fails, the service logs the
   operational failure and returns a generic temporary-failure response; no audit row can be
   claimed for that failure without a separate fallback sink.
-- The browser POST flow intentionally retains the verifier in server-side state. This makes the
-  provider redirect usable without a custom browser header, but an observer holding both callback
-  code and state does not need an independently retained verifier; single-use state is the replay
-  control. Clients requiring client-held PKCE proof must use the header-based callback path.
+- A callback code and state copied to another browser cannot consume browser-bound state without
+  the initiating browser's transaction cookie. The callback cookie is host-only, scoped to the
+  OIDC path, and cleared after a successful callback. Private clients requiring client-held PKCE
+  proof use the legacy GET start and the `X-PKCE-Code-Verifier` callback header instead.

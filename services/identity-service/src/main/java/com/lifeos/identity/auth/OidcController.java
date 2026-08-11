@@ -1,11 +1,16 @@
 package com.lifeos.identity.auth;
 
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.time.Duration;
+import java.util.regex.Pattern;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -29,6 +34,9 @@ public class OidcController {
     private static final String OIDC_FAILURE = "The OIDC authentication request could not be completed.";
     private static final String TEMPORARY_FAILURE = "Authentication is temporarily unavailable.";
     private static final String CAPACITY_FAILURE = "The account cannot create another active session.";
+    static final String BROWSER_TRANSACTION_COOKIE_PREFIX = "lifeos_oidc_tx_";
+    private static final String BROWSER_TRANSACTION_COOKIE_PATH = "/api/v1/auth/oidc";
+    private static final Pattern STATE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
 
     private final OidcAuthenticationService authenticationService;
     private final ClientAddressResolver clientAddressResolver;
@@ -76,7 +84,8 @@ public class OidcController {
 
     /**
      * Starts a browser-safe authorization redirect from a form POST. The verifier is stored in
-     * the short-lived callback state, so the provider can redirect directly to the callback.
+     * the short-lived callback state, which is bound to a secure, HttpOnly transaction cookie so
+     * the provider can redirect directly to the callback without a callback verifier parameter.
      *
      * @param provider provider name
      * @param codeChallenge client-generated PKCE challenge
@@ -110,8 +119,9 @@ public class OidcController {
 
     /**
      * Completes the callback. Browser-safe authorization starts retain the verifier in server-side
-     * callback state. The legacy GET flow may supply it as a private-client header; query-form
-     * verifiers are deliberately not accepted because query strings are commonly logged.
+     * callback state and require the matching browser transaction cookie. The legacy GET flow may
+     * supply the verifier as a private-client header; query-form verifiers are deliberately not
+     * accepted because query strings are commonly logged.
      *
      * @param provider provider name
      * @param code provider authorization code
@@ -129,9 +139,20 @@ public class OidcController {
             @RequestHeader(name = "X-PKCE-Code-Verifier", required = false) String headerCodeVerifier,
             @RequestParam(required = false) String error,
             HttpServletRequest servletRequest) {
-        return ResponseEntity.ok(authenticationService.callback(
-                provider, code, state, headerCodeVerifier, error,
-                clientAddressResolver.resolve(servletRequest)));
+        String browserTransaction = browserTransaction(servletRequest, state);
+        LoginResponse response = authenticationService.callback(
+                provider,
+                code,
+                state,
+                headerCodeVerifier,
+                error,
+                browserTransaction,
+                clientAddressResolver.resolve(servletRequest));
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok();
+        if (browserTransaction != null) {
+            responseBuilder.header(HttpHeaders.SET_COOKIE, expiredBrowserTransactionCookie(state).toString());
+        }
+        return responseBuilder.body(response);
     }
 
     @ExceptionHandler(OidcAuthenticationFailureException.class)
@@ -168,7 +189,53 @@ public class OidcController {
     }
 
     private ResponseEntity<Void> redirect(String provider, OidcAuthorizationStartRequest request) {
-        URI location = authenticationService.begin(provider, request.challengeRequest(), request.codeVerifier());
-        return ResponseEntity.status(HttpStatus.FOUND).location(location).build();
+        OidcAuthenticationService.BrowserAuthorizationStart authorizationStart = authenticationService
+                .beginBrowser(provider, request.challengeRequest(), request.codeVerifier());
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(authorizationStart.authorizationUri())
+                .header(HttpHeaders.SET_COOKIE, browserTransactionCookie(authorizationStart).toString())
+                .build();
+    }
+
+    private String browserTransaction(HttpServletRequest servletRequest, String state) {
+        String cookieName = browserTransactionCookieName(state);
+        if (cookieName == null || servletRequest.getCookies() == null) {
+            return null;
+        }
+        for (Cookie cookie : servletRequest.getCookies()) {
+            if (cookieName.equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
+    }
+
+    private ResponseCookie browserTransactionCookie(
+            OidcAuthenticationService.BrowserAuthorizationStart authorizationStart) {
+        return ResponseCookie.from(
+                        browserTransactionCookieName(authorizationStart.state()),
+                        authorizationStart.browserTransaction())
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("Lax")
+                .path(BROWSER_TRANSACTION_COOKIE_PATH)
+                .maxAge(authorizationStart.ttl())
+                .build();
+    }
+
+    private ResponseCookie expiredBrowserTransactionCookie(String state) {
+        return ResponseCookie.from(browserTransactionCookieName(state), "")
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("Lax")
+                .path(BROWSER_TRANSACTION_COOKIE_PATH)
+                .maxAge(Duration.ZERO)
+                .build();
+    }
+
+    private String browserTransactionCookieName(String state) {
+        return state != null && STATE_PATTERN.matcher(state).matches()
+                ? BROWSER_TRANSACTION_COOKIE_PREFIX + state
+                : null;
     }
 }

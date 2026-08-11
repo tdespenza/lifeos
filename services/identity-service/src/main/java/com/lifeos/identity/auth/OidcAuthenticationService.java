@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -31,6 +32,7 @@ public class OidcAuthenticationService {
     private static final Logger log = LoggerFactory.getLogger(OidcAuthenticationService.class);
     private static final Pattern CODE_VERIFIER_PATTERN = Pattern.compile("[A-Za-z0-9._~-]{43,128}");
     private static final Pattern CODE_CHALLENGE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
+    private static final Pattern BROWSER_TRANSACTION_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+$");
     private static final int MAX_EMAIL_LENGTH = 320;
     private static final int MAX_DISPLAY_NAME_LENGTH = 200;
@@ -93,6 +95,28 @@ public class OidcAuthenticationService {
     }
 
     /**
+     * Browser authorization redirect plus the transaction material that must be delivered only in
+     * an HttpOnly, Secure, SameSite cookie.
+     *
+     * @param authorizationUri configured provider authorization URI
+     * @param state single-use callback state
+     * @param browserTransaction opaque browser-bound transaction secret
+     * @param ttl transaction cookie lifetime
+     */
+    public record BrowserAuthorizationStart(
+            URI authorizationUri,
+            String state,
+            String browserTransaction,
+            Duration ttl) {
+
+        @Override
+        public String toString() {
+            return "BrowserAuthorizationStart[authorizationUri=" + authorizationUri
+                    + ", state=<redacted>, browserTransaction=<redacted>, ttl=" + ttl + ']';
+        }
+    }
+
+    /**
      * Creates a single-use callback state and returns the configured provider authorization URI.
      *
      * @param providerName allow-listed provider name
@@ -100,43 +124,66 @@ public class OidcAuthenticationService {
      * @return provider authorization URI
      */
     public URI begin(String providerName, OidcAuthorizationRequest request) {
-        return begin(providerName, request, null);
+        return beginInternal(providerName, request, null, null).authorizationUri();
     }
 
     /**
-     * Creates callback state with a server-held verifier for a browser redirect flow.
+     * Creates browser-bound callback state with a server-held verifier for a browser redirect
+     * flow.
      *
      * @param providerName allow-listed provider name
      * @param request client PKCE challenge
      * @param codeVerifier client-generated PKCE verifier retained for the callback
-     * @return provider authorization URI
+     * @return provider authorization URI and browser transaction material
      */
-    public URI begin(String providerName, OidcAuthorizationRequest request, String codeVerifier) {
+    public BrowserAuthorizationStart beginBrowser(
+            String providerName, OidcAuthorizationRequest request, String codeVerifier) {
+        String browserTransaction = randomValue();
+        AuthorizationStart authorizationStart = beginInternal(
+                providerName,
+                request,
+                codeVerifier,
+                browserTransactionHash(browserTransaction));
+        return new BrowserAuthorizationStart(
+                authorizationStart.authorizationUri(),
+                authorizationStart.state(),
+                browserTransaction,
+                properties.getOidc().getCallbackStateTtl());
+    }
+
+    private AuthorizationStart beginInternal(
+            String providerName,
+            OidcAuthorizationRequest request,
+            String codeVerifier,
+            String browserTransactionHash) {
         IdentityAuthProperties.Provider provider = provider(providerName);
         validateProviderTransport(provider);
         validatePkceChallenge(request);
         if (codeVerifier != null
                 && (!CODE_VERIFIER_PATTERN.matcher(codeVerifier).matches()
+                || browserTransactionHash == null
                 || !verifyPkce(request.codeChallenge(), codeVerifier))) {
             throw new OidcAuthenticationFailureException();
         }
         String state = randomValue();
+        String nonce = randomValue();
         OidcAuthorizationState authorizationState = codeVerifier == null
                 ? new OidcAuthorizationState(
                         providerName,
                         provider.getRedirectUri(),
                         request.codeChallenge(),
                         request.codeChallengeMethod(),
-                        randomValue())
+                        nonce)
                 : OidcAuthorizationState.forBrowserRedirect(
                         providerName,
                         provider.getRedirectUri(),
                         request.codeChallenge(),
                         request.codeChallengeMethod(),
-                        randomValue(),
-                        codeVerifier);
+                        nonce,
+                        codeVerifier,
+                        browserTransactionHash);
         stateStore.save(state, authorizationState, properties.getOidc().getCallbackStateTtl());
-        return UriComponentsBuilder.fromUriString(provider.getAuthorizationUri())
+        URI authorizationUri = UriComponentsBuilder.fromUriString(provider.getAuthorizationUri())
                 .queryParam("response_type", "code")
                 .queryParam("client_id", provider.getClientId())
                 .queryParam("redirect_uri", provider.getRedirectUri())
@@ -148,6 +195,7 @@ public class OidcAuthenticationService {
                 .build()
                 .encode()
                 .toUri();
+        return new AuthorizationStart(authorizationUri, state);
     }
 
     /**
@@ -175,17 +223,45 @@ public class OidcAuthenticationService {
             String codeVerifier,
             String providerError,
             String clientAddress) {
+        return callback(providerName, code, state, codeVerifier, providerError, null, clientAddress);
+    }
+
+    /**
+     * Consumes and validates one provider callback with browser transaction binding, then creates
+     * a shared LifeOS session.
+     *
+     * @param providerName allow-listed provider name
+     * @param code provider authorization code
+     * @param state callback state
+     * @param codeVerifier client PKCE verifier, unless a verifier was retained at authorization
+     *     start
+     * @param providerError provider-reported error, if any
+     * @param browserTransaction transaction cookie value for browser authorization state
+     * @param clientAddress request source used only for keyed audit fingerprinting
+     * @return shared session/token result
+     */
+    @Transactional
+    public LoginResponse callback(
+            String providerName,
+            String code,
+            String state,
+            String codeVerifier,
+            String providerError,
+            String browserTransaction,
+            String clientAddress) {
         try {
             IdentityAuthProperties.Provider provider = provider(providerName);
             validateProviderTransport(provider);
             if (hasText(providerError) || !hasText(code) || !hasText(state)) {
                 throw new OidcAuthenticationFailureException();
             }
-            OidcAuthorizationState authorizationState = stateStore.consume(state)
+            String transactionHash = browserTransactionHash(browserTransaction);
+            OidcAuthorizationState authorizationState = stateStore.consume(state, transactionHash)
                     .orElseThrow(OidcAuthenticationFailureException::new);
             String effectiveCodeVerifier = hasText(authorizationState.codeVerifier())
                     ? authorizationState.codeVerifier() : codeVerifier;
-            if (!providerName.equals(authorizationState.provider())
+            if (!browserTransactionMatches(authorizationState.browserTransactionHash(), transactionHash)
+                    || !providerName.equals(authorizationState.provider())
                     || !provider.getRedirectUri().equals(authorizationState.redirectUri())
                     || !hasText(effectiveCodeVerifier)
                     || !CODE_VERIFIER_PATTERN.matcher(effectiveCodeVerifier).matches()
@@ -340,6 +416,26 @@ public class OidcAuthenticationService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
+    private String browserTransactionHash(String browserTransaction) {
+        if (!hasText(browserTransaction)
+                || !BROWSER_TRANSACTION_PATTERN.matcher(browserTransaction).matches()) {
+            return null;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(browserTransaction.getBytes(StandardCharsets.US_ASCII));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AuthenticationDependencyUnavailableException(exception);
+        }
+    }
+
+    private boolean browserTransactionMatches(String expectedHash, String actualHash) {
+        return expectedHash == null || (actualHash != null && MessageDigest.isEqual(
+                expectedHash.getBytes(StandardCharsets.US_ASCII),
+                actualHash.getBytes(StandardCharsets.US_ASCII)));
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
@@ -375,5 +471,8 @@ public class OidcAuthenticationService {
                     .log("OIDC authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }
+    }
+
+    private record AuthorizationStart(URI authorizationUri, String state) {
     }
 }

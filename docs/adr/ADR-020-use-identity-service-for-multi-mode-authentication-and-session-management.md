@@ -65,17 +65,22 @@ credential before issuing a token.
 
 OAuth2/OIDC uses the authorization-code flow with PKCE. The identity service
 owns provider callbacks, validates issuer, audience, nonce, state, and PKCE
-requirements, and links a verified provider subject to an existing or newly
-created LifeOS account according to an explicit account-linking policy. A link
-requires a provider-reported verified email (`email_verified=true`) plus an
-already authenticated LifeOS session or explicit reauthentication/step-up;
-matching email alone never authorizes linking. Provider-subject or email
-conflicts are rejected with a generic response and routed through account
-recovery or support, never automatic takeover. Unlinking requires recent
-reauthentication and at least one remaining usable recovery/authentication
-method; recovery itself must verify an existing LifeOS factor or verified
-account-recovery channel and must not trust an unverified provider claim.
-Access tokens from providers are never exposed to downstream LifeOS services.
+requirements. Browser starts bind the single-use Redis state to a random value
+held in a `Secure`, `HttpOnly`, `SameSite=Lax`, host-only transaction cookie;
+Redis retains only its SHA-256 hash and atomically compares it before consuming
+state. This prevents a callback code/state pair from another browser from
+creating a session and does not rely on IP-address binding. The service links a
+verified provider subject to an existing or newly created LifeOS account
+according to an explicit account-linking policy. A link requires a
+provider-reported verified email (`email_verified=true`) plus an already
+authenticated LifeOS session or explicit reauthentication/step-up; matching
+email alone never authorizes linking. Provider-subject or email conflicts are
+rejected with a generic response and routed through account recovery or
+support, never automatic takeover. Unlinking requires recent reauthentication
+and at least one remaining usable recovery/authentication method; recovery
+itself must verify an existing LifeOS factor or verified account-recovery
+channel and must not trust an unverified provider claim. Access tokens from
+providers are never exposed to downstream LifeOS services.
 
 ### Passkeys
 

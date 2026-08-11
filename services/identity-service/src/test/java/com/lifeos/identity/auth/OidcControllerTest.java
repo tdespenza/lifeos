@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import jakarta.servlet.http.Cookie;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.Base64;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
 
 /**
  * Verifies that the browser-safe authorization start accepts the PKCE pair without exposing the
@@ -33,6 +36,8 @@ class OidcControllerTest {
 
     private static final String PROVIDER_NAME = "example";
     private static final String VERIFIER = "a-verifier-with-43-characters-012345678901234";
+    private static final String BROWSER_STATE = "s".repeat(43);
+    private static final String BROWSER_TRANSACTION = "t".repeat(43);
 
     @Mock
     private OidcAuthenticationService authenticationService;
@@ -45,23 +50,28 @@ class OidcControllerTest {
     }
 
     @Test
-    void formAuthorizationStartStoresVerifierThroughServiceAndRedirects() throws Exception {
+    void formAuthorizationStartStoresVerifierInBoundStateAndRedirects() throws Exception {
         URI providerRedirect = URI.create("https://issuer.example/authorize?state=state");
-        when(authenticationService.begin(
+        when(authenticationService.beginBrowser(
                 eq(PROVIDER_NAME),
                 eq(new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256")),
                 eq(VERIFIER)))
-                .thenReturn(providerRedirect);
+                .thenReturn(browserStart(providerRedirect));
 
         mockMvc.perform(post("/api/v1/auth/oidc/{provider}/authorize", PROVIDER_NAME)
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .param("code_challenge", codeChallenge(VERIFIER))
                         .param("code_challenge_method", "S256")
-                        .param("code_verifier", VERIFIER))
+                .param("code_verifier", VERIFIER))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", providerRedirect.toString()));
+                .andExpect(header().string("Location", providerRedirect.toString()))
+                .andExpect(header().string("Set-Cookie", containsString(
+                        OidcController.BROWSER_TRANSACTION_COOKIE_PREFIX + BROWSER_STATE + '=')))
+                .andExpect(header().string("Set-Cookie", containsString("HttpOnly")))
+                .andExpect(header().string("Set-Cookie", containsString("Secure")))
+                .andExpect(header().string("Set-Cookie", containsString("SameSite=Lax")));
 
-        verify(authenticationService).begin(
+        verify(authenticationService).beginBrowser(
                 eq(PROVIDER_NAME),
                 eq(new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256")),
                 eq(VERIFIER));
@@ -70,11 +80,11 @@ class OidcControllerTest {
     @Test
     void jsonAuthorizationStartAcceptsProtocolFieldNames() throws Exception {
         URI providerRedirect = URI.create("https://issuer.example/authorize?state=state");
-        when(authenticationService.begin(
+        when(authenticationService.beginBrowser(
                 eq(PROVIDER_NAME),
                 eq(new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256")),
                 eq(VERIFIER)))
-                .thenReturn(providerRedirect);
+                .thenReturn(browserStart(providerRedirect));
 
         mockMvc.perform(post("/api/v1/auth/oidc/{provider}/authorize", PROVIDER_NAME)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -82,9 +92,11 @@ class OidcControllerTest {
                                 {"code_challenge":"%s","code_challenge_method":"S256","code_verifier":"%s"}
                                 """.formatted(codeChallenge(VERIFIER), VERIFIER)))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", providerRedirect.toString()));
+                .andExpect(header().string("Location", providerRedirect.toString()))
+                .andExpect(header().string("Set-Cookie", containsString(
+                        OidcController.BROWSER_TRANSACTION_COOKIE_PREFIX + BROWSER_STATE + '=')));
 
-        verify(authenticationService).begin(
+        verify(authenticationService).beginBrowser(
                 eq(PROVIDER_NAME),
                 eq(new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256")),
                 eq(VERIFIER));
@@ -95,7 +107,7 @@ class OidcControllerTest {
         LoginResponse response = new LoginResponse(
                 java.util.UUID.randomUUID(), "signed-token", "Bearer", 300);
         when(authenticationService.callback(
-                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), any()))
+                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), isNull(), any()))
                 .thenReturn(response);
 
         mockMvc.perform(get("/api/v1/auth/oidc/{provider}/callback", PROVIDER_NAME)
@@ -106,12 +118,45 @@ class OidcControllerTest {
                 .andExpect(status().isOk());
 
         verify(authenticationService).callback(
-                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), any());
+                eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), isNull(), any());
+    }
+
+    @Test
+    void browserCallbackUsesMatchingTransactionCookieAndClearsIt() throws Exception {
+        LoginResponse response = new LoginResponse(
+                java.util.UUID.randomUUID(), "signed-token", "Bearer", 300);
+        when(authenticationService.callback(
+                eq(PROVIDER_NAME),
+                eq("code"),
+                eq(BROWSER_STATE),
+                isNull(),
+                isNull(),
+                eq(BROWSER_TRANSACTION),
+                any()))
+                .thenReturn(response);
+
+        mockMvc.perform(get("/api/v1/auth/oidc/{provider}/callback", PROVIDER_NAME)
+                        .param("code", "code")
+                        .param("state", BROWSER_STATE)
+                        .cookie(new Cookie(
+                                OidcController.BROWSER_TRANSACTION_COOKIE_PREFIX + BROWSER_STATE,
+                                BROWSER_TRANSACTION)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Set-Cookie", containsString("Max-Age=0")));
+
+        verify(authenticationService).callback(
+                eq(PROVIDER_NAME),
+                eq("code"),
+                eq(BROWSER_STATE),
+                isNull(),
+                isNull(),
+                eq(BROWSER_TRANSACTION),
+                any());
     }
 
     @Test
     void callbackMapsOidcFailureToUnauthorized() throws Exception {
-        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new OidcAuthenticationFailureException());
 
         mockMvc.perform(callbackRequest())
@@ -120,7 +165,7 @@ class OidcControllerTest {
 
     @Test
     void callbackMapsDependencyFailureToServiceUnavailable() throws Exception {
-        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new AuthenticationDependencyUnavailableException());
 
         mockMvc.perform(callbackRequest())
@@ -129,7 +174,7 @@ class OidcControllerTest {
 
     @Test
     void callbackMapsSessionCapacityToConflict() throws Exception {
-        when(authenticationService.callback(any(), any(), any(), any(), any(), any()))
+        when(authenticationService.callback(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new SessionCapacityExceededException());
 
         mockMvc.perform(callbackRequest())
@@ -141,6 +186,11 @@ class OidcControllerTest {
                 .param("code", "code")
                 .param("state", "state")
                 .header("X-PKCE-Code-Verifier", VERIFIER);
+    }
+
+    private OidcAuthenticationService.BrowserAuthorizationStart browserStart(URI providerRedirect) {
+        return new OidcAuthenticationService.BrowserAuthorizationStart(
+                providerRedirect, BROWSER_STATE, BROWSER_TRANSACTION, Duration.ofMinutes(5));
     }
 
     private static String codeChallenge(String verifier) {

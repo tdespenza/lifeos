@@ -10,6 +10,8 @@ package com.lifeos.identity.auth;
  * @param nonce OIDC replay-protection nonce
  * @param codeVerifier optional server-held PKCE verifier for browser callbacks; when non-null,
  *     client-held PKCE proof is not required at callback time
+ * @param browserTransactionHash SHA-256 hash of the HttpOnly browser transaction cookie required
+ *     to consume browser callback state
  */
 public record OidcAuthorizationState(
         String provider,
@@ -17,7 +19,8 @@ public record OidcAuthorizationState(
         String codeChallenge,
         String codeChallengeMethod,
         String nonce,
-        String codeVerifier) {
+        String codeVerifier,
+        String browserTransactionHash) {
 
     /**
      * Redacts nonce, challenge, and verifier material from diagnostics and logs.
@@ -29,7 +32,8 @@ public record OidcAuthorizationState(
         return "OidcAuthorizationState[provider=" + provider
                 + ", redirectUri=" + redirectUri
                 + ", codeChallengeMethod=" + codeChallengeMethod
-                + ", codeChallenge=<redacted>, nonce=<redacted>, codeVerifier=<redacted>]";
+                + ", codeChallenge=<redacted>, nonce=<redacted>, codeVerifier=<redacted>"
+                + ", browserTransactionHash=<redacted>]";
     }
 
     /**
@@ -41,6 +45,7 @@ public record OidcAuthorizationState(
      * @param codeChallengeMethod PKCE method
      * @param nonce OIDC nonce
      * @param codeVerifier client-generated verifier retained for the browser callback
+     * @param browserTransactionHash cookie hash required to consume the callback state
      * @return browser callback state
      */
     public static OidcAuthorizationState forBrowserRedirect(
@@ -49,9 +54,11 @@ public record OidcAuthorizationState(
             String codeChallenge,
             String codeChallengeMethod,
             String nonce,
-            String codeVerifier) {
+            String codeVerifier,
+            String browserTransactionHash) {
         return new OidcAuthorizationState(
-                provider, redirectUri, codeChallenge, codeChallengeMethod, nonce, codeVerifier);
+                provider, redirectUri, codeChallenge, codeChallengeMethod, nonce, codeVerifier,
+                browserTransactionHash);
     }
 
     /**
@@ -69,6 +76,6 @@ public record OidcAuthorizationState(
             String codeChallenge,
             String codeChallengeMethod,
             String nonce) {
-        this(provider, redirectUri, codeChallenge, codeChallengeMethod, nonce, null);
+        this(provider, redirectUri, codeChallenge, codeChallengeMethod, nonce, null, null);
     }
 }

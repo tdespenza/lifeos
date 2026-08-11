@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,8 @@ class OidcAuthenticationServiceTest {
 
     private static final String PROVIDER_NAME = "example";
     private static final String VERIFIER = "a-verifier-with-43-characters-012345678901234";
+    private static final String BROWSER_TRANSACTION = "b".repeat(43);
+    private static final String OTHER_BROWSER_TRANSACTION = "c".repeat(43);
 
     @Mock
     private OidcStateStore stateStore;
@@ -94,25 +97,29 @@ class OidcAuthenticationServiceTest {
     }
 
     @Test
-    void browserAuthorizationStartStoresVerifierWithoutAddingItToProviderRedirect() {
-        URIAssertions redirect = new URIAssertions(service.begin(
+    void browserAuthorizationStartBindsVerifierToTransactionWithoutAddingItToProviderRedirect() {
+        OidcAuthenticationService.BrowserAuthorizationStart authorizationStart = service.beginBrowser(
                 PROVIDER_NAME,
                 new OidcAuthorizationRequest(codeChallenge(VERIFIER), "S256"),
-                VERIFIER));
+                VERIFIER);
 
         ArgumentCaptor<OidcAuthorizationState> stateValueCaptor =
                 ArgumentCaptor.forClass(OidcAuthorizationState.class);
         verify(stateStore).save(any(), stateValueCaptor.capture(), any());
 
         assertThat(stateValueCaptor.getValue().codeVerifier()).isEqualTo(VERIFIER);
-        assertThat(redirect.value()).doesNotContain("code_verifier");
+        assertThat(stateValueCaptor.getValue().browserTransactionHash())
+                .isEqualTo(browserTransactionHash(authorizationStart.browserTransaction()));
+        assertThat(authorizationStart.state()).hasSize(43);
+        assertThat(authorizationStart.browserTransaction()).hasSize(43);
+        assertThat(authorizationStart.authorizationUri().toString()).doesNotContain("code_verifier");
     }
 
     @Test
     void successfulCallbackCreatesNewAccountAndSharedOidcSession() {
         UserAccount account = account();
         LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(
                 any(), eq("code"), eq(VERIFIER), eq("nonce")))
                 .thenReturn(new OidcIdentity("subject-1", "Ada@Example.com", "Ada Lovelace"));
@@ -137,7 +144,8 @@ class OidcAuthenticationServiceTest {
     void callbackUsesVerifierRetainedInServerSideStateForBrowserRedirect() {
         UserAccount account = account();
         LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
-        when(stateStore.consume("state")).thenReturn(Optional.of(stateWithVerifier()));
+        when(stateStore.consume(eq("state"), eq(browserTransactionHash(BROWSER_TRANSACTION))))
+                .thenReturn(Optional.of(stateWithVerifier()));
         when(providerClient.exchangeAndValidate(
                 any(), eq("code"), eq(VERIFIER), eq("nonce")))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
@@ -148,7 +156,8 @@ class OidcAuthenticationServiceTest {
         when(sessionTokenAuthority.createSession(account, SessionAuthenticationMethod.OIDC))
                 .thenReturn(response);
 
-        assertThat(service.callback(PROVIDER_NAME, "code", "state", null, null, "127.0.0.1"))
+        assertThat(service.callback(
+                PROVIDER_NAME, "code", "state", null, null, BROWSER_TRANSACTION, "127.0.0.1"))
                 .isEqualTo(response);
 
         verify(providerClient).exchangeAndValidate(
@@ -156,8 +165,29 @@ class OidcAuthenticationServiceTest {
     }
 
     @Test
+    void rejectsCrossBrowserCallbackInjectionBeforeProviderExchange() {
+        when(stateStore.consume(eq("state"), eq(browserTransactionHash(OTHER_BROWSER_TRANSACTION))))
+                .thenReturn(Optional.of(stateWithVerifier()));
+
+        assertThatThrownBy(() -> service.callback(
+                PROVIDER_NAME,
+                "attacker-code",
+                "state",
+                null,
+                null,
+                OTHER_BROWSER_TRANSACTION,
+                "127.0.0.1"))
+                .isInstanceOf(OidcAuthenticationFailureException.class);
+
+        verify(providerClient, never()).exchangeAndValidate(any(), any(), any(), any());
+        verify(sessionTokenAuthority, never()).createSession(any(), any());
+        verify(auditService).record(
+                SecurityAuditEventType.OIDC_CALLBACK_REJECTED, null, "127.0.0.1");
+    }
+
+    @Test
     void expiredOrReusedCallbackIsRejectedBeforeProviderExchange() {
-        when(stateStore.consume("state")).thenReturn(Optional.empty());
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.callback(
                 PROVIDER_NAME, "code", "state", VERIFIER, null, "127.0.0.1"))
@@ -171,7 +201,7 @@ class OidcAuthenticationServiceTest {
 
     @Test
     void mismatchedPkceVerifierIsRejectedAndCannotCreateAccountOrSession() {
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
 
         assertThatThrownBy(() -> service.callback(
                 PROVIDER_NAME, "code", "state", "another-verifier-with-43-characters-012345678901", null,
@@ -186,7 +216,7 @@ class OidcAuthenticationServiceTest {
 
     @Test
     void existingEmailIsNotAutomaticallyLinkedOrIssuedASession() {
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
@@ -208,7 +238,7 @@ class OidcAuthenticationServiceTest {
     void returningUserReusesExistingExternalIdentityWithoutCreatingAnotherAccount() {
         UserAccount account = account();
         LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
@@ -229,7 +259,7 @@ class OidcAuthenticationServiceTest {
     @Test
     void rejectsExternalIdentityWhenLinkedAccountNoLongerExists() {
         UUID accountId = UUID.randomUUID();
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
@@ -248,7 +278,7 @@ class OidcAuthenticationServiceTest {
     void rejectsDisabledExternalIdentityAccountWithoutCreatingASession() {
         UserAccount account = account();
         account.disable();
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
@@ -265,7 +295,7 @@ class OidcAuthenticationServiceTest {
 
     @Test
     void classifiesConcurrentDuplicateEmailInsertAsAuthenticationFailure() {
-        when(stateStore.consume("state")).thenReturn(Optional.of(state()));
+        when(stateStore.consume(eq("state"), isNull())).thenReturn(Optional.of(state()));
         when(providerClient.exchangeAndValidate(any(), any(), any(), any()))
                 .thenReturn(new OidcIdentity("subject-1", "ada@example.com", "Ada Lovelace"));
         when(externalIdentityRepository.findByProviderAndSubject(PROVIDER_NAME, "subject-1"))
@@ -292,13 +322,14 @@ class OidcAuthenticationServiceTest {
     }
 
     private OidcAuthorizationState stateWithVerifier() {
-        return new OidcAuthorizationState(
+        return OidcAuthorizationState.forBrowserRedirect(
                 PROVIDER_NAME,
                 "https://lifeos.example/api/v1/auth/oidc/example/callback",
                 codeChallenge(VERIFIER),
                 "S256",
                 "nonce",
-                VERIFIER);
+                VERIFIER,
+                browserTransactionHash(BROWSER_TRANSACTION));
     }
 
     private UserAccount account() {
@@ -311,6 +342,16 @@ class OidcAuthenticationServiceTest {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(verifier.getBytes(StandardCharsets.US_ASCII));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    private static String browserTransactionHash(String transaction) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(transaction.getBytes(StandardCharsets.US_ASCII));
             return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
         } catch (java.security.NoSuchAlgorithmException exception) {
             throw new AssertionError(exception);

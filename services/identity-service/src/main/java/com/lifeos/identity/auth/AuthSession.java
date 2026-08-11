@@ -3,10 +3,13 @@ package com.lifeos.identity.auth;
 import com.lifeos.identity.account.UserAccount;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -25,6 +28,14 @@ public class AuthSession {
 
     @Column(name = "account_id", nullable = false)
     private UUID accountId;
+
+    /**
+     * Authentication factor that established this session. The column stays nullable during the
+     * rolling upgrade; pre-existing sessions are interpreted as password sessions by the getter.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "authentication_method", length = 16, updatable = false)
+    private SessionAuthenticationMethod authenticationMethod;
 
     @Column(name = "access_token_hash", nullable = false, length = 64)
     private String accessTokenHash;
@@ -50,14 +61,17 @@ public class AuthSession {
      *
      * @param sessionId stable session identifier
      * @param account owning account
+     * @param authenticationMethod verified factor that established this session
      * @param accessTokenHash SHA-256 digest of the issued access token
      * @param createdAt creation timestamp
      * @param expiresAt expiry timestamp
      */
-    public AuthSession(UUID sessionId, UserAccount account, String accessTokenHash,
+    public AuthSession(UUID sessionId, UserAccount account, SessionAuthenticationMethod authenticationMethod,
+            String accessTokenHash,
             Instant createdAt, Instant expiresAt) {
         this.id = sessionId;
         this.accountId = account.getId();
+        this.authenticationMethod = Objects.requireNonNull(authenticationMethod, "authenticationMethod");
         this.accessTokenHash = accessTokenHash;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
@@ -80,6 +94,18 @@ public class AuthSession {
      */
     public UUID getAccountId() {
         return accountId;
+    }
+
+    /**
+     * Returns the factor that established this session.
+     *
+     * <p>Rows created before authentication-method persistence are password sessions because that
+     * was the only supported authentication flow at the time.
+     *
+     * @return session authentication method
+     */
+    public SessionAuthenticationMethod getAuthenticationMethod() {
+        return authenticationMethod == null ? SessionAuthenticationMethod.PASSWORD : authenticationMethod;
     }
 
     /**

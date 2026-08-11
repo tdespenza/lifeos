@@ -17,6 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -105,7 +106,10 @@ class JwtSessionTokenAuthorityTest {
 
         assertThat(response.accessToken()).isEqualTo("signed-token");
         verify(credentialRepository, never()).findByAccountIdForUpdate(any());
-        verify(sessionRepository).saveAndFlush(any(AuthSession.class));
+        ArgumentCaptor<AuthSession> sessionCaptor = ArgumentCaptor.forClass(AuthSession.class);
+        verify(sessionRepository).saveAndFlush(sessionCaptor.capture());
+        assertThat(sessionCaptor.getValue().getAuthenticationMethod())
+                .isEqualTo(SessionAuthenticationMethod.OIDC);
     }
 
     private UserAccount account() {

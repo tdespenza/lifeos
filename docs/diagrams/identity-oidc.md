@@ -144,6 +144,7 @@ classDiagram
     class AuthSession {
         UUID id
         UUID accountId
+        SessionAuthenticationMethod authenticationMethod
         String accessTokenHash
         Instant expiresAt
         boolean revoked

@@ -104,6 +104,9 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     public LoginResponse createSession(
             UserAccount account, SessionAuthenticationMethod authenticationMethod) {
         try {
+            if (authenticationMethod == null) {
+                throw new AuthenticationFailureException();
+            }
             UserAccount lockedAccount = accountRepository.findByIdForUpdate(account.getId())
                     .orElseThrow(AuthenticationFailureException::new);
             if (!lockedAccount.isActive()) {
@@ -140,6 +143,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             sessionRepository.saveAndFlush(new AuthSession(
                     sessionId,
                     lockedAccount,
+                    authenticationMethod,
                     TokenDigest.sha256(accessToken),
                     issuedAt,
                     expiresAt));

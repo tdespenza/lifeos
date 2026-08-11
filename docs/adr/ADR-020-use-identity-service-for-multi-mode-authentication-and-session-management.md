@@ -140,13 +140,16 @@ key and required metadata.
   valid successors.
 - Durable session and revocation metadata is stored in the identity PostgreSQL
   database so users can view and revoke devices; PostgreSQL is the durable
-  revocation authority. Redis stores bounded TTL state for rate limits, login
-  challenges, and hot-path revocation/cache lookups. A Redis hit may accelerate
-  a revocation-sensitive decision, but a miss, timeout, or outage falls back to
-  PostgreSQL; if both stores are unavailable, the request is rejected
-  fail-closed. Revocation is committed to PostgreSQL before cache invalidation,
-  and recovery repopulates Redis from PostgreSQL without promoting a revoked
-  session from stale cache state.
+  revocation authority. Each new session records its verified authentication
+  method for security analysis and future session management. During a rolling
+  upgrade, a legacy row without this metadata is interpreted as a password
+  session, the only factor that could have created it. Redis stores bounded TTL
+  state for rate limits, login challenges, and hot-path revocation/cache
+  lookups. A Redis hit may accelerate a revocation-sensitive decision, but a
+  miss, timeout, or outage falls back to PostgreSQL; if both stores are
+  unavailable, the request is rejected fail-closed. Revocation is committed to
+  PostgreSQL before cache invalidation, and recovery repopulates Redis from
+  PostgreSQL without promoting a revoked session from stale cache state.
 - Active-session capacity is limited to 10 sessions per account and 2 sessions
   per registered device. When either limit is reached, new session creation is
   rejected with a bounded capacity response and the client must obtain

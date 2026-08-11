@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Persistence operations for WebAuthn credential metadata.
@@ -26,9 +27,9 @@ public interface WebAuthnCredentialRepository extends JpaRepository<WebAuthnCred
      * Finds an enabled credential by its discoverable user handle.
      *
      * @param userHandle URL-safe user handle
-     * @return enabled credential, when present
+     * @return enabled credentials, possibly empty when no credential uses the handle
      */
-    Optional<WebAuthnCredential> findByUserHandleAndEnabledTrue(String userHandle);
+    List<WebAuthnCredential> findByUserHandleAndEnabledTrue(String userHandle);
 
     /**
      * Lists enabled credentials owned by one account.
@@ -50,6 +51,7 @@ public interface WebAuthnCredentialRepository extends JpaRepository<WebAuthnCred
      * @return number of rows updated; exactly one is required
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
     @Query("update WebAuthnCredential credential set credential.signatureCount = :nextCount, "
             + "credential.lastUsedAt = :lastUsedAt "
             + "where credential.id = :id and credential.enabled = true "

@@ -1,8 +1,6 @@
 package com.lifeos.identity.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
@@ -17,21 +15,22 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 /**
  * Verifies bounded and atomic Redis challenge behavior.
  */
 class RedisWebAuthnChallengeStoreTest {
 
-    private static final String CHALLENGE_ID = "c".repeat(43);
+    private static final WebAuthnChallengeId CHALLENGE_ID =
+            new WebAuthnChallengeId("c".repeat(43));
 
     @Test
     void rejectsMalformedChallengeBeforeCallingRedis() {
         StringRedisTemplate redisTemplate = org.mockito.Mockito.mock(StringRedisTemplate.class);
         RedisWebAuthnChallengeStore store = new RedisWebAuthnChallengeStore(redisTemplate);
 
-        assertThat(store.consume("too-short")).isEqualTo(Optional.empty());
+        assertThat(WebAuthnChallengeId.parse("too-short")).isEmpty();
+        assertThat(store.consume(null)).isEqualTo(Optional.empty());
 
         verifyNoInteractions(redisTemplate);
     }
@@ -40,14 +39,17 @@ class RedisWebAuthnChallengeStoreTest {
     void consumesStoredPayloadAtomicallyAndParsesAssertionRequest() throws Exception {
         StringRedisTemplate redisTemplate = org.mockito.Mockito.mock(StringRedisTemplate.class);
         AssertionRequest request = assertionRequest();
-        doReturn(request.toJson()).when(redisTemplate).execute(
-                any(DefaultRedisScript.class), anyList());
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> values = org.mockito.Mockito.mock(ValueOperations.class);
+        doReturn(values).when(redisTemplate).opsForValue();
+        doReturn(request.toJson()).when(values).getAndDelete(
+                "lifeos:identity:webauthn-challenge:" + CHALLENGE_ID.value());
         RedisWebAuthnChallengeStore store = new RedisWebAuthnChallengeStore(redisTemplate);
 
         Optional<AssertionRequest> consumed = store.consume(CHALLENGE_ID);
 
         assertThat(consumed).contains(request);
-        verify(redisTemplate).execute(any(DefaultRedisScript.class), anyList());
+        verify(values).getAndDelete("lifeos:identity:webauthn-challenge:" + CHALLENGE_ID.value());
     }
 
     @Test
@@ -62,7 +64,7 @@ class RedisWebAuthnChallengeStoreTest {
         store.save(CHALLENGE_ID, request, Duration.ofMinutes(5));
 
         verify(values).set(
-                eq("lifeos:identity:webauthn-challenge:" + CHALLENGE_ID),
+                eq("lifeos:identity:webauthn-challenge:" + CHALLENGE_ID.value()),
                 eq(request.toJson()),
                 eq(Duration.ofMinutes(5)));
     }

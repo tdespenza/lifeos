@@ -126,7 +126,7 @@ conditional counter write; a stale or concurrent counter update cannot create a 
 | `401 Unauthorized` | Unknown/disabled credential, wrong origin or RP ID, invalid signature, missing user verification, stale/replayed challenge, or counter regression | Same generic passkey failure for every assertion rejection |
 | `409 Conflict` | Active-session capacity reached | Generic problem detail; no session is created |
 | `429 Too Many Requests` | Client exceeded the shared Redis-backed passkey-attempt limit | Generic problem detail plus `Retry-After` seconds |
-| `503 Service Unavailable` | Redis challenge state, credential store, audit persistence, session authority, or another required dependency cannot complete safely | Generic temporary-failure problem detail |
+| `503 Service Unavailable` | A Redis, persistence, audit, or other dependency failure is explicitly mapped to `AuthenticationDependencyUnavailableException` or `DataAccessException` | Generic temporary-failure problem detail |
 
 The identity service never accepts or stores a private key. The authenticator retains the private
 key; PostgreSQL stores only the credential id, account/user handle, COSE public key, enabled state,

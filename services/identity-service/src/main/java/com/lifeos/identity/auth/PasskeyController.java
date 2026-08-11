@@ -28,11 +28,11 @@ public class PasskeyController {
     private final ClientAddressResolver clientAddressResolver;
 
     /**
-     * Creates the passkey controller.
+     * Creates a controller with default address resolution for package-local MVC tests only.
      *
      * @param authenticationService passkey authentication service
      */
-    public PasskeyController(PasskeyAuthenticationService authenticationService) {
+    PasskeyController(PasskeyAuthenticationService authenticationService) {
         this(authenticationService, new ClientAddressResolver(new IdentityAuthProperties()));
     }
 

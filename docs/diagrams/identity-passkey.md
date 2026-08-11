@@ -44,7 +44,7 @@ flowchart LR
 sequenceDiagram
     actor User
     participant Client as REST/browser client
-    participant API as PasskeyAuthenticationController
+    participant API as PasskeyController
     participant App as PasskeyAuthenticationService
     participant Redis as WebAuthnChallengeStore
     participant Authenticator as Platform authenticator
@@ -55,6 +55,7 @@ sequenceDiagram
     User->>Client: Choose passkey sign-in
     Client->>API: Begin passkey authentication
     API->>App: authentication options request
+    App->>Verifier: startAssertion(StartAssertionOptions)
     App->>Redis: Store random challenge + expected origin/RP ID (short TTL)
     alt Redis unavailable
         Redis-->>App: timeout or error
@@ -67,19 +68,20 @@ sequenceDiagram
         Authenticator-->>Client: Credential ID + signed assertion
         Client->>API: Complete passkey authentication + assertion
         API->>App: assertion request + correlation context
-        App->>Redis: Atomically consume challenge
+        App->>Redis: ValueOperations.getAndDelete(challenge key)
         alt Challenge stale, reused, or mismatched
             Redis-->>App: empty or invalid challenge
             App->>DB: Audit rejected outcome
             App-->>API: 401 generic authentication problem
         else Challenge consumed
-            App->>DB: Load credential public key and stored counter by credential ID
+            App->>Verifier: Load credential public key and stored counter by credential ID
+            Verifier->>DB: WebAuthnCredentialRepositoryAdapter lookup
             alt Credential unknown or disabled
-                DB-->>App: no usable credential
+                DB-->>Verifier: no usable credential
                 App->>DB: Audit rejected outcome
                 App-->>API: 401 generic authentication problem
             else Credential available
-                App->>Verifier: Verify assertion against challenge and credential metadata
+                App->>Verifier: finishAssertion(FinishAssertionOptions)
                 Verifier->>Verifier: Check origin, RP ID hash, user verification, and signature
                 alt Origin/RP ID, user verification, or signature invalid
                     Verifier-->>App: Verification failure
@@ -107,7 +109,7 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class PasskeyAuthenticationController {
+    class PasskeyController {
         +options() PasskeyAuthenticationOptions
         +assertion(request) LoginResponse
     }
@@ -179,7 +181,7 @@ classDiagram
         +sign(challenge, clientData, authenticatorData) WebAuthnAssertion
     }
 
-    PasskeyAuthenticationController --> PasskeyAuthenticationService : delegates
+    PasskeyController --> PasskeyAuthenticationService : delegates
     PasskeyAuthenticationService --> WebAuthnChallengeStore : atomically consumes
     PasskeyAuthenticationService --> RelyingParty : validates
     PasskeyAuthenticationService --> WebAuthnCredentialRepository : loads and updates counter

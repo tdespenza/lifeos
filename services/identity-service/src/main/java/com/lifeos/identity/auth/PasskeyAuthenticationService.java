@@ -6,7 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.identity.account.UserAccount;
 import com.yubico.webauthn.AssertionRequest;
 import com.yubico.webauthn.AssertionResult;
+import com.yubico.webauthn.FinishAssertionOptions;
 import com.yubico.webauthn.RelyingParty;
+import com.yubico.webauthn.StartAssertionOptions;
+import com.yubico.webauthn.data.UserVerificationRequirement;
 import com.yubico.webauthn.exception.AssertionFailedException;
 import com.yubico.webauthn.data.AuthenticatorAssertionResponse;
 import com.yubico.webauthn.data.ClientAssertionExtensionOutputs;
@@ -14,9 +17,7 @@ import com.yubico.webauthn.data.PublicKeyCredential;
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.time.Clock;
-import java.util.Base64;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,7 +38,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class PasskeyAuthenticationService {
 
     private static final Logger log = LoggerFactory.getLogger(PasskeyAuthenticationService.class);
-    private static final Pattern CHALLENGE_ID_PATTERN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final String PASSKEY_RATE_LIMIT_KEY = "passkey";
 
     private final IdentityAuthProperties properties;
@@ -121,7 +121,7 @@ public class PasskeyAuthenticationService {
         try {
             rateLimiter.check(PASSKEY_RATE_LIMIT_KEY, clientAddress);
             AssertionRequest request = relyingParty.startAssertion(
-                    com.yubico.webauthn.StartAssertionOptions.builder()
+                    StartAssertionOptions.builder()
                             .userVerification(properties.getWebauthn().getUserVerification())
                             .build());
             JsonNode optionsEnvelope = objectMapper.readTree(request.toCredentialsGetJson());
@@ -129,9 +129,9 @@ public class PasskeyAuthenticationService {
             if (publicKeyOptions == null || !publicKeyOptions.isObject()) {
                 throw new AuthenticationDependencyUnavailableException();
             }
-            String challengeId = randomChallengeId();
+            WebAuthnChallengeId challengeId = WebAuthnChallengeId.generate(secureRandom);
             challengeStore.save(challengeId, request, properties.getWebauthn().getChallengeTtl());
-            return new PasskeyAuthenticationOptions(challengeId, publicKeyOptions);
+            return new PasskeyAuthenticationOptions(challengeId.value(), publicKeyOptions);
         } catch (AuthenticationDependencyUnavailableException exception) {
             recordAudit(SecurityAuditEventType.PASSKEY_DEPENDENCY_UNAVAILABLE, null, clientAddress);
             throw exception;
@@ -155,17 +155,19 @@ public class PasskeyAuthenticationService {
     public LoginResponse complete(PasskeyAuthenticationRequest request, String clientAddress) {
         try {
             rateLimiter.check(PASSKEY_RATE_LIMIT_KEY, clientAddress);
-            validateRequest(request);
-            AssertionRequest assertionRequest = challengeStore.consume(request.challengeId())
+            WebAuthnChallengeId challengeId = validateRequest(request);
+            AssertionRequest assertionRequest = challengeStore.consume(challengeId)
                     .orElseThrow(AuthenticationFailureException::new);
             PublicKeyCredential<AuthenticatorAssertionResponse, ClientAssertionExtensionOutputs> assertion =
                     assertionParser.parse(objectMapper.writeValueAsString(request.credential()));
             AssertionResult result = relyingParty.finishAssertion(
-                    com.yubico.webauthn.FinishAssertionOptions.builder()
+                    FinishAssertionOptions.builder()
                             .request(assertionRequest)
                             .response(assertion)
                             .build());
-            if (!result.isSuccess() || !result.isUserVerified()) {
+            boolean userVerificationRequired = properties.getWebauthn().getUserVerification()
+                    == UserVerificationRequirement.REQUIRED;
+            if (!result.isSuccess() || (userVerificationRequired && !result.isUserVerified())) {
                 throw new AuthenticationFailureException();
             }
 
@@ -202,29 +204,28 @@ public class PasskeyAuthenticationService {
             throw exception;
         } catch (AssertionFailedException | IOException exception) {
             recordAudit(SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, clientAddress);
-            throw new AuthenticationFailureException();
+            throw new AuthenticationFailureException(exception);
         } catch (DataAccessException exception) {
             recordAudit(SecurityAuditEventType.PASSKEY_DEPENDENCY_UNAVAILABLE, null, clientAddress);
             throw new AuthenticationDependencyUnavailableException(exception);
         } catch (RuntimeException exception) {
+            log.atError()
+                    .addKeyValue("event", "passkey_assertion_unexpected_error")
+                    .setCause(exception)
+                    .log("Passkey assertion processing failed unexpectedly");
             recordAudit(SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, clientAddress);
-            throw new AuthenticationFailureException();
+            throw new AuthenticationFailureException(exception);
         }
     }
 
-    private void validateRequest(PasskeyAuthenticationRequest request) {
+    private WebAuthnChallengeId validateRequest(PasskeyAuthenticationRequest request) {
         if (request == null || request.challengeId() == null || request.credential() == null
-                || !CHALLENGE_ID_PATTERN.matcher(request.challengeId()).matches()
                 || !request.credential().isObject()
                 || request.credential().size() == 0) {
             throw new AuthenticationFailureException();
         }
-    }
-
-    private String randomChallengeId() {
-        byte[] bytes = new byte[32];
-        secureRandom.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        return WebAuthnChallengeId.parse(request.challengeId())
+                .orElseThrow(AuthenticationFailureException::new);
     }
 
     private void recordSuccessfulAudit(UserAccount account, String clientAddress) {
@@ -244,6 +245,7 @@ public class PasskeyAuthenticationService {
             }
         } catch (RuntimeException exception) {
             log.atError().addKeyValue("event", "passkey_login_audit_failed")
+                    .setCause(exception)
                     .log("Passkey authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }
@@ -255,6 +257,7 @@ public class PasskeyAuthenticationService {
             metrics.record(eventType);
         } catch (RuntimeException exception) {
             log.atError().addKeyValue("event", "passkey_audit_failed")
+                    .setCause(exception)
                     .log("Passkey authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }

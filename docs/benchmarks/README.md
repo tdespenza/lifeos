@@ -13,7 +13,7 @@ The full target benchmark list is in `REQUIREMENTS.md`'s "Performance and Benchm
 | REST vs. gRPC latency | No gRPC endpoint exists yet | Not started |
 | GraphQL aggregation performance | No GraphQL layer exists yet | Not started |
 | PostgreSQL query plans | Feasible today (identity-service, task-goal-service both query real Postgres) but not yet done | Not started, unblocked |
-| Redis cache/challenge latency and hit ratios | No benchmark harness or representative load profile exists yet | Not started |
+| Redis rate-limit and challenge-state latency and operation outcomes | No benchmark harness or representative load profile exists yet | Not started |
 | Vector search latency | No vector database exists yet | Not started |
 | Kafka/Pulsar event throughput | No event bus exists yet | Not started |
 | Video processing pipeline latency | No media streaming service exists yet | Not started |

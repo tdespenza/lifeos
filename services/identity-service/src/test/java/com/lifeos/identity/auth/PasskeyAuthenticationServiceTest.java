@@ -20,6 +20,7 @@ import com.yubico.webauthn.data.ByteArray;
 import com.yubico.webauthn.data.ClientAssertionExtensionOutputs;
 import com.yubico.webauthn.data.PublicKeyCredential;
 import com.yubico.webauthn.data.AuthenticatorAssertionResponse;
+import com.yubico.webauthn.data.UserVerificationRequirement;
 import com.yubico.webauthn.exception.AssertionFailedException;
 import java.time.Clock;
 import java.time.Instant;
@@ -40,7 +41,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class PasskeyAuthenticationServiceTest {
 
-    private static final String CHALLENGE_ID = "c".repeat(43);
+    private static final WebAuthnChallengeId CHALLENGE_ID =
+            new WebAuthnChallengeId("c".repeat(43));
     private static final String CLIENT_ADDRESS = "127.0.0.1";
 
     @Mock
@@ -69,11 +71,12 @@ class PasskeyAuthenticationServiceTest {
     private RegisteredCredential registeredCredential;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private IdentityAuthProperties properties;
     private PasskeyAuthenticationService service;
 
     @BeforeEach
     void setUp() {
-        IdentityAuthProperties properties = new IdentityAuthProperties();
+        properties = new IdentityAuthProperties();
         service = new PasskeyAuthenticationService(
                 properties,
                 relyingParty,
@@ -117,6 +120,67 @@ class PasskeyAuthenticationServiceTest {
         verify(auditService).recordWithinCurrentTransaction(
                 SecurityAuditEventType.PASSKEY_LOGIN_SUCCEEDED, account.getId(), CLIENT_ADDRESS);
         verify(metrics).record(SecurityAuditEventType.PASSKEY_LOGIN_SUCCEEDED);
+    }
+
+    @Test
+    void unverifiedAssertionIsRejectedWhenUserVerificationIsRequired() throws Exception {
+        when(challengeStore.consume(CHALLENGE_ID)).thenReturn(Optional.of(assertionRequest));
+        when(assertionParser.parse(anyString())).thenReturn(assertion);
+        when(relyingParty.finishAssertion(any())).thenReturn(assertionResult);
+        when(assertionResult.isSuccess()).thenReturn(true);
+        when(assertionResult.isUserVerified()).thenReturn(false);
+
+        assertThatThrownBy(() -> service.complete(request(), CLIENT_ADDRESS))
+                .isInstanceOf(AuthenticationFailureException.class);
+
+        verify(auditService).record(
+                SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, CLIENT_ADDRESS);
+        verifyNoSessionCreated();
+    }
+
+    @Test
+    void unverifiedAssertionIsAcceptedWhenUserVerificationIsPreferred() throws Exception {
+        properties.getWebauthn().setUserVerification(UserVerificationRequirement.PREFERRED);
+        UserAccount account = account();
+        WebAuthnCredential credential = credential(account, 4);
+        ByteArray credentialId = ByteArray.fromBase64Url(credential.getCredentialId());
+        LoginResponse response = new LoginResponse(UUID.randomUUID(), "signed-token", "Bearer", 300);
+        when(challengeStore.consume(CHALLENGE_ID)).thenReturn(Optional.of(assertionRequest));
+        when(assertionParser.parse(anyString())).thenReturn(assertion);
+        when(relyingParty.finishAssertion(any())).thenReturn(assertionResult);
+        when(assertionResult.isSuccess()).thenReturn(true);
+        when(assertionResult.getCredential()).thenReturn(registeredCredential);
+        when(registeredCredential.getCredentialId()).thenReturn(credentialId);
+        when(assertionResult.getSignatureCount()).thenReturn(5L);
+        when(credentialRepository.findByCredentialIdAndEnabledTrue(credential.getCredentialId()))
+                .thenReturn(Optional.of(credential));
+        when(credentialRepository.advanceSignatureCountIfCurrent(
+                eq(credential.getId()), eq(4L), eq(5L), any())).thenReturn(1);
+        when(sessionTokenAuthority.createSession(account, SessionAuthenticationMethod.PASSKEY))
+                .thenReturn(response);
+
+        assertThat(service.complete(request(), CLIENT_ADDRESS)).isEqualTo(response);
+    }
+
+    @Test
+    void verifiedAssertionWithUnknownCredentialIsRejected() throws Exception {
+        when(challengeStore.consume(CHALLENGE_ID)).thenReturn(Optional.of(assertionRequest));
+        when(assertionParser.parse(anyString())).thenReturn(assertion);
+        when(relyingParty.finishAssertion(any())).thenReturn(assertionResult);
+        when(assertionResult.isSuccess()).thenReturn(true);
+        when(assertionResult.isUserVerified()).thenReturn(true);
+        when(assertionResult.getCredential()).thenReturn(registeredCredential);
+        when(registeredCredential.getCredentialId())
+                .thenReturn(ByteArray.fromBase64Url("Y3JlZGVudGlhbC1pZA"));
+        when(credentialRepository.findByCredentialIdAndEnabledTrue("Y3JlZGVudGlhbC1pZA"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.complete(request(), CLIENT_ADDRESS))
+                .isInstanceOf(AuthenticationFailureException.class);
+
+        verify(auditService).record(
+                SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, CLIENT_ADDRESS);
+        verifyNoSessionCreated();
     }
 
     @Test
@@ -198,12 +262,13 @@ class PasskeyAuthenticationServiceTest {
         assertThat(options.challengeId()).matches("[A-Za-z0-9_-]{43}");
         assertThat(options.publicKey().get("rpId").asText()).isEqualTo("localhost");
         verify(challengeStore).save(
-                eq(options.challengeId()), eq(assertionRequest), eq(java.time.Duration.ofMinutes(5)));
+                eq(new WebAuthnChallengeId(options.challengeId())),
+                eq(assertionRequest), eq(java.time.Duration.ofMinutes(5)));
     }
 
     private PasskeyAuthenticationRequest request() throws Exception {
         return new PasskeyAuthenticationRequest(
-                CHALLENGE_ID,
+                CHALLENGE_ID.value(),
                 objectMapper.readTree("{\"id\":\"credential\",\"response\":{}}"));
     }
 

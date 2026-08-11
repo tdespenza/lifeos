@@ -67,7 +67,7 @@ class WebAuthnCredentialRepositoryAdapterTest {
     }
 
     @Test
-    void usernameLookupReturnsOnlyEnabledCredentialDescriptors() throws Exception {
+    void usernameLookupMapsCredentialDescriptorsForAccount() throws Exception {
         when(accountRepository.findByEmail(account.getEmail())).thenReturn(Optional.of(account));
         when(credentialRepository.findAllByAccount_IdAndEnabledTrue(account.getId()))
                 .thenReturn(List.of(credential));
@@ -78,6 +78,16 @@ class WebAuthnCredentialRepositoryAdapterTest {
         assertThat(descriptors).singleElement()
                 .extracting(descriptor -> descriptor.getId().getBase64Url())
                 .isEqualTo(credential.getCredentialId());
+    }
+
+    @Test
+    void userHandleLookupUsesTheFirstCredentialForTheAccount() throws Exception {
+        when(credentialRepository.findByUserHandleAndEnabledTrue(credential.getUserHandle()))
+                .thenReturn(List.of(credential));
+
+        assertThat(adapter.getUsernameForUserHandle(
+                ByteArray.fromBase64Url(credential.getUserHandle())))
+                .contains(account.getEmail());
     }
 
     @Test

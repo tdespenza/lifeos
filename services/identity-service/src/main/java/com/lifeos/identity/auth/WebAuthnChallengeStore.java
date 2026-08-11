@@ -16,7 +16,7 @@ public interface WebAuthnChallengeStore {
      * @param request immutable WebAuthn request containing the random challenge
      * @param ttl expiration bound
      */
-    void save(String challengeId, AssertionRequest request, Duration ttl);
+    void save(WebAuthnChallengeId challengeId, AssertionRequest request, Duration ttl);
 
     /**
      * Atomically consumes one assertion request.
@@ -24,5 +24,5 @@ public interface WebAuthnChallengeStore {
      * @param challengeId opaque client correlation value
      * @return request, or empty for stale, malformed, or replayed state
      */
-    Optional<AssertionRequest> consume(String challengeId);
+    Optional<AssertionRequest> consume(WebAuthnChallengeId challengeId);
 }

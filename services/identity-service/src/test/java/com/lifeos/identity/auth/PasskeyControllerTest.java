@@ -98,6 +98,34 @@ class PasskeyControllerTest {
     }
 
     @Test
+    void dependencyFailureReturnsGenericServiceUnavailableWithoutEchoingCredential() throws Exception {
+        when(authenticationService.complete(any(PasskeyAuthenticationRequest.class), any()))
+                .thenThrow(new AuthenticationDependencyUnavailableException());
+
+        mockMvc.perform(post("/api/v1/auth/passkey/assertion")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"challengeId":"%s","credential":{"id":"secret-credential","response":{}}}
+                                """.formatted("c".repeat(43))))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string(not(containsString("secret-credential"))));
+    }
+
+    @Test
+    void sessionCapacityFailureReturnsGenericConflictWithoutEchoingCredential() throws Exception {
+        when(authenticationService.complete(any(PasskeyAuthenticationRequest.class), any()))
+                .thenThrow(new SessionCapacityExceededException());
+
+        mockMvc.perform(post("/api/v1/auth/passkey/assertion")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"challengeId":"%s","credential":{"id":"secret-credential","response":{}}}
+                                """.formatted("c".repeat(43))))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(not(containsString("secret-credential"))));
+    }
+
+    @Test
     void malformedAssertionReturnsGenericBadRequest() throws Exception {
         mockMvc.perform(post("/api/v1/auth/passkey/assertion")
                         .contentType(MediaType.APPLICATION_JSON)

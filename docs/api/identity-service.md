@@ -4,12 +4,14 @@ Base URL (local): `http://localhost:8081`
 
 Management URL (local): `http://localhost:9081`
 
-Status: account registration, first-party email/password login, and configured OAuth2/OIDC authorization-code login are implemented. Passkeys/WebAuthn, refresh-token rotation, asymmetric key/JWKS publication, RBAC/ABAC, and user-facing session revocation remain planned stories. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
+Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, and passkey/WebAuthn assertion login are implemented. Passkey credential registration/provisioning, refresh-token rotation, asymmetric key/JWKS publication, RBAC/ABAC, and user-facing session revocation remain planned stories. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
 
 The story-level first-party login diagrams are in
 [`docs/diagrams/identity-login.md`](../diagrams/identity-login.md), and the OAuth2/OIDC use-case,
 sequence, domain, and lifecycle diagrams are in
 [`docs/diagrams/identity-oidc.md`](../diagrams/identity-oidc.md).
+The implemented Story 1.4 passkey/WebAuthn use-case, sequence, domain, and lifecycle diagrams are in
+[`docs/diagrams/identity-passkey.md`](../diagrams/identity-passkey.md).
 
 All requests receive a server-generated `X-Correlation-ID` response header. Any incoming value is ignored so caller-controlled personal data cannot enter MDC, request context, or structured logs. Registration logs include the generated correlation context and event outcome without logging the email address, account identifier, or database exception details.
 
@@ -69,6 +71,73 @@ HMAC-SHA-256 digests of normalized email plus the request source address, using 
 client fingerprints use a separate `IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET`. Both secrets must be
 supplied by a secret manager and must not reuse the JWT signing key. The account's active-session
 limit is ten by default.
+
+## `POST /api/v1/auth/passkey/options`
+
+Starts a username-less WebAuthn assertion ceremony. The identity service creates the request using
+the configured relying-party id, exact allowed origins, and user-verification policy, stores the
+complete assertion request in Redis for the configured short TTL (five minutes by default), and
+returns an opaque challenge handle alongside the browser-facing `publicKey` options. The client
+passes the `publicKey` object to `navigator.credentials.get` and must keep `challengeId` with the
+resulting credential.
+
+### Responses
+
+| Status | Condition | Body/headers |
+| --- | --- | --- |
+| `200 OK` | Assertion ceremony started | `{ "challengeId": "<opaque 43-character handle>", "publicKey": { ... } }` |
+| `429 Too Many Requests` | Client exceeded the shared Redis-backed passkey-attempt limit | Generic problem detail plus `Retry-After` seconds |
+| `503 Service Unavailable` | Redis or WebAuthn configuration/dependency cannot complete safely | Generic temporary-failure problem detail |
+
+## `POST /api/v1/auth/passkey/assertion`
+
+Consumes one browser assertion and creates the shared LifeOS session/token result. The service
+atomically consumes the server-side challenge before parsing the assertion, then the WebAuthn
+library validates the challenge, exact origin, RP-ID hash, user verification, credential public-key
+signature, and authenticator counter. The durable `webauthn_credential` record is updated with a
+conditional counter write; a stale or concurrent counter update cannot create a session.
+
+### Request Body
+
+```json
+{
+  "challengeId": "<value returned by the options endpoint>",
+  "credential": {
+    "id": "<browser credential id>",
+    "rawId": "<base64url credential id>",
+    "response": {
+      "clientDataJSON": "<base64url>",
+      "authenticatorData": "<base64url>",
+      "signature": "<base64url>",
+      "userHandle": "<base64url or null>"
+    },
+    "type": "public-key",
+    "clientExtensionResults": {}
+  }
+}
+```
+
+### Responses
+
+| Status | Condition | Body/headers |
+| --- | --- | --- |
+| `200 OK` | Valid registered credential and active account | Shared `LoginResponse` containing `sessionId`, signed `accessToken`, `tokenType: Bearer`, and `expiresIn` seconds |
+| `400 Bad Request` | Missing, malformed, or invalidly shaped request | Generic RFC 9457 problem detail; assertion values are not echoed |
+| `401 Unauthorized` | Unknown/disabled credential, wrong origin or RP ID, invalid signature, missing user verification, stale/replayed challenge, or counter regression | Same generic passkey failure for every assertion rejection |
+| `409 Conflict` | Active-session capacity reached | Generic problem detail; no session is created |
+| `429 Too Many Requests` | Client exceeded the shared Redis-backed passkey-attempt limit | Generic problem detail plus `Retry-After` seconds |
+| `503 Service Unavailable` | Redis challenge state, credential store, audit persistence, session authority, or another required dependency cannot complete safely | Generic temporary-failure problem detail |
+
+The identity service never accepts or stores a private key. The authenticator retains the private
+key; PostgreSQL stores only the credential id, account/user handle, COSE public key, enabled state,
+and signature counter. This story assumes credentials are provisioned by a trusted registration
+flow; the registration ceremony and credential-management endpoints are separate scope and must
+enforce an authenticated step-up/recovery policy before inserting `webauthn_credential` rows.
+
+Configure `IDENTITY_WEBAUTHN_RP_ID`, `IDENTITY_WEBAUTHN_RP_NAME`,
+`IDENTITY_WEBAUTHN_ALLOWED_ORIGINS`, `IDENTITY_WEBAUTHN_USER_VERIFICATION`, and
+`IDENTITY_WEBAUTHN_CHALLENGE_TTL` per deployment. Production browser origins must use exact HTTPS
+origins; HTTP is accepted only for local `localhost`/`127.0.0.1` development.
 
 ## `POST /api/v1/auth/oidc/{provider}/authorize`
 

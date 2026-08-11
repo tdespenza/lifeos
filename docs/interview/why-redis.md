@@ -1,10 +1,10 @@
 # Why Redis (Caching, Sessions, Rate Limiting)
 
-Identity-service now uses Redis for its distributed first-party login rate limiter. Redis stores only
-short-lived, hashed attempt-counter keys; PostgreSQL remains the durable store for accounts,
-credentials, sessions, and audit events. Shared caching, refresh-token state, and gateway limits
-are still planned. I want to be explicit about that boundary instead of implying the full target
-architecture is wired in.
+Identity-service now uses Redis for distributed authentication rate limiting, OAuth2/OIDC callback
+state, and single-use WebAuthn assertion challenges. Redis stores only short-lived, bounded state;
+PostgreSQL remains the durable store for accounts, credentials, sessions, and audit events. Shared
+caching, refresh-token state, and gateway limits are still planned. I want to be explicit about
+that boundary instead of implying the full target architecture is wired in.
 
 So why is it there at all? Because I know what's coming, and I'd rather stand the dependency up early and get comfortable operating it before I actually need it under pressure. Once there's an API gateway and an Identity Service doing real session/token validation, and a Finance Service serving account summaries that are expensive to recompute per request, I'll have three needs that all share the same shape: high-churn, latency-sensitive state that every service instance needs to see immediately, and that doesn't need to survive a restart.
 

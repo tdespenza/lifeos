@@ -112,6 +112,28 @@ class JwtSessionTokenAuthorityTest {
                 .isEqualTo(SessionAuthenticationMethod.OIDC);
     }
 
+    @Test
+    void passkeySessionDoesNotRequireLocalPasswordCredential() {
+        UserAccount account = account();
+        when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+        when(jwtEncoder.encode(any())).thenReturn(Jwt.withTokenValue("signed-token")
+                .header("alg", "HS256")
+                .claim("sub", account.getId().toString())
+                .claim("session_id", UUID.randomUUID().toString())
+                .issuedAt(Instant.parse("2026-08-09T00:00:00Z"))
+                .expiresAt(Instant.parse("2026-08-09T00:05:00Z"))
+                .build());
+
+        LoginResponse response = authority.createSession(account, SessionAuthenticationMethod.PASSKEY);
+
+        assertThat(response.accessToken()).isEqualTo("signed-token");
+        verify(credentialRepository, never()).findByAccountIdForUpdate(any());
+        ArgumentCaptor<AuthSession> sessionCaptor = ArgumentCaptor.forClass(AuthSession.class);
+        verify(sessionRepository).saveAndFlush(sessionCaptor.capture());
+        assertThat(sessionCaptor.getValue().getAuthenticationMethod())
+                .isEqualTo(SessionAuthenticationMethod.PASSKEY);
+    }
+
     private UserAccount account() {
         return accountWithId(UUID.randomUUID());
     }

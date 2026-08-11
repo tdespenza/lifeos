@@ -10,9 +10,11 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
+import com.yubico.webauthn.data.UserVerificationRequirement;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -36,6 +38,8 @@ public class IdentityAuthProperties {
     private final Fingerprint fingerprint = new Fingerprint();
     @Valid
     private final Oidc oidc = new Oidc();
+    @Valid
+    private final WebAuthn webauthn = new WebAuthn();
     private Set<String> trustedProxyAddresses = new LinkedHashSet<>();
     @NotNull(message = "accessTokenTtl must be configured")
     private Duration accessTokenTtl = Duration.ofMinutes(5);
@@ -111,6 +115,15 @@ public class IdentityAuthProperties {
      */
     public Oidc getOidc() {
         return oidc;
+    }
+
+    /**
+     * Returns WebAuthn relying-party and challenge settings.
+     *
+     * @return WebAuthn settings
+     */
+    public WebAuthn getWebauthn() {
+        return webauthn;
     }
 
     /**
@@ -512,6 +525,144 @@ public class IdentityAuthProperties {
                 throw new IllegalArgumentException("scope must be non-blank and include openid");
             }
             this.scope = scope.trim();
+        }
+    }
+
+    /**
+     * WebAuthn relying-party configuration and bounded challenge policy.
+     */
+    public static class WebAuthn {
+
+        @NotNull(message = "challengeTtl must be configured")
+        private Duration challengeTtl = Duration.ofMinutes(5);
+        @NotBlank(message = "rpId must be configured")
+        private String rpId = "localhost";
+        @NotBlank(message = "rpName must be configured")
+        private String rpName = "LifeOS";
+        @NotEmpty(message = "allowedOrigins must contain at least one origin")
+        private Set<String> allowedOrigins = new LinkedHashSet<>(Set.of("http://localhost:4200"));
+        @NotNull(message = "userVerification must be configured")
+        private UserVerificationRequirement userVerification = UserVerificationRequirement.REQUIRED;
+
+        /**
+         * Creates WebAuthn settings with safe local-development defaults.
+         */
+        public WebAuthn() {
+        }
+
+        /**
+         * Returns the lifetime of one single-use assertion request.
+         *
+         * @return challenge TTL
+         */
+        public Duration getChallengeTtl() {
+            return challengeTtl;
+        }
+
+        /**
+         * Sets the challenge lifetime.
+         *
+         * @param challengeTtl challenge TTL
+         */
+        public void setChallengeTtl(Duration challengeTtl) {
+            if (challengeTtl == null || challengeTtl.isZero() || challengeTtl.isNegative()) {
+                throw new IllegalArgumentException("challengeTtl must be positive");
+            }
+            this.challengeTtl = challengeTtl;
+        }
+
+        /**
+         * Returns the WebAuthn relying-party identifier.
+         *
+         * @return RP ID
+         */
+        public String getRpId() {
+            return rpId;
+        }
+
+        /**
+         * Sets the WebAuthn relying-party identifier.
+         *
+         * @param rpId RP ID
+         */
+        public void setRpId(String rpId) {
+            if (rpId == null || rpId.isBlank()) {
+                throw new IllegalArgumentException("rpId must not be blank");
+            }
+            this.rpId = rpId.trim();
+        }
+
+        /**
+         * Returns the display name advertised to authenticators.
+         *
+         * @return RP display name
+         */
+        public String getRpName() {
+            return rpName;
+        }
+
+        /**
+         * Sets the display name advertised to authenticators.
+         *
+         * @param rpName RP display name
+         */
+        public void setRpName(String rpName) {
+            if (rpName == null || rpName.isBlank()) {
+                throw new IllegalArgumentException("rpName must not be blank");
+            }
+            this.rpName = rpName.trim();
+        }
+
+        /**
+         * Returns the exact browser origins accepted by the relying party.
+         *
+         * @return allowed origins
+         */
+        public Set<String> getAllowedOrigins() {
+            return allowedOrigins;
+        }
+
+        /**
+         * Replaces the exact browser-origin allow-list.
+         *
+         * @param allowedOrigins browser origins
+         */
+        public void setAllowedOrigins(Set<String> allowedOrigins) {
+            if (allowedOrigins == null || allowedOrigins.isEmpty()) {
+                throw new IllegalArgumentException("allowedOrigins must contain at least one origin");
+            }
+            this.allowedOrigins = new LinkedHashSet<>(allowedOrigins);
+        }
+
+        /**
+         * Returns the user-verification policy required during assertions.
+         *
+         * @return user-verification policy
+         */
+        public UserVerificationRequirement getUserVerification() {
+            return userVerification;
+        }
+
+        /**
+         * Sets the user-verification policy required during assertions.
+         *
+         * @param userVerification user-verification policy
+         */
+        public void setUserVerification(UserVerificationRequirement userVerification) {
+            if (userVerification == null) {
+                throw new IllegalArgumentException("userVerification must be configured");
+            }
+            this.userVerification = userVerification;
+        }
+
+        /**
+         * Confirms that the configured challenge TTL is strictly positive.
+         *
+         * @return true when the challenge can be bounded
+         */
+        @AssertTrue(message = "challengeTtl must be positive")
+        public boolean isChallengeTtlPositive() {
+            return challengeTtl != null && !challengeTtl.isZero() && !challengeTtl.isNegative();
         }
     }
 

@@ -30,5 +30,20 @@ public enum SecurityAuditEventType {
     OIDC_DEPENDENCY_UNAVAILABLE,
 
     /** An OIDC session could not be created because account capacity was reached. */
-    OIDC_SESSION_CAPACITY_REACHED
+    OIDC_SESSION_CAPACITY_REACHED,
+
+    /** A passkey assertion completed and created a LifeOS session. */
+    PASSKEY_LOGIN_SUCCEEDED,
+
+    /** A passkey assertion was rejected without exposing protocol details. */
+    PASSKEY_ASSERTION_REJECTED,
+
+    /** A passkey client exceeded the bounded distributed attempt limit. */
+    PASSKEY_LOGIN_RATE_LIMITED,
+
+    /** A dependency required for a safe passkey decision was unavailable. */
+    PASSKEY_DEPENDENCY_UNAVAILABLE,
+
+    /** A passkey session could not be created because account capacity was reached. */
+    PASSKEY_SESSION_CAPACITY_REACHED
 }

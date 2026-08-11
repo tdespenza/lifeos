@@ -46,6 +46,12 @@ identity:
       # Providers are intentionally empty by default. Deployments must explicitly configure
       # each allow-listed provider and its secret-manager-backed client credentials.
       providers: {}
+    webauthn:
+      challenge-ttl: ${IDENTITY_WEBAUTHN_CHALLENGE_TTL:PT5M}
+      rp-id: ${IDENTITY_WEBAUTHN_RP_ID:localhost}
+      rp-name: ${IDENTITY_WEBAUTHN_RP_NAME:LifeOS}
+      allowed-origins: ${IDENTITY_WEBAUTHN_ALLOWED_ORIGINS:http://localhost:4200}
+      user-verification: ${IDENTITY_WEBAUTHN_USER_VERIFICATION:REQUIRED}
 
 server:
   port: 8081

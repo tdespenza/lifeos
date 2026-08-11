@@ -9,5 +9,8 @@ public enum SessionAuthenticationMethod {
     PASSWORD,
 
     /** OIDC authentication is verified by the provider and does not require a local password. */
-    OIDC
+    OIDC,
+
+    /** Passkey authentication is verified by a registered WebAuthn public key. */
+    PASSKEY
 }

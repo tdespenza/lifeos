@@ -177,6 +177,7 @@ public class PasskeyAuthenticationService {
                     .orElseThrow(AuthenticationFailureException::new);
             long nextSignatureCount = result.getSignatureCount();
             if (nextSignatureCount < 0
+                    || nextSignatureCount < credential.getSignatureCount()
                     || credentialRepository.advanceSignatureCountIfCurrent(
                             credential.getId(),
                             credential.getSignatureCount(),
@@ -211,7 +212,6 @@ public class PasskeyAuthenticationService {
         } catch (RuntimeException exception) {
             log.atError()
                     .addKeyValue("event", "passkey_assertion_unexpected_error")
-                    .setCause(exception)
                     .log("Passkey assertion processing failed unexpectedly");
             recordAudit(SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, clientAddress);
             throw new AuthenticationFailureException(exception);
@@ -245,7 +245,6 @@ public class PasskeyAuthenticationService {
             }
         } catch (RuntimeException exception) {
             log.atError().addKeyValue("event", "passkey_login_audit_failed")
-                    .setCause(exception)
                     .log("Passkey authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }
@@ -257,7 +256,6 @@ public class PasskeyAuthenticationService {
             metrics.record(eventType);
         } catch (RuntimeException exception) {
             log.atError().addKeyValue("event", "passkey_audit_failed")
-                    .setCause(exception)
                     .log("Passkey authentication audit persistence failed");
             throw new AuthenticationDependencyUnavailableException(exception);
         }

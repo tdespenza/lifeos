@@ -3,6 +3,7 @@ package com.lifeos.identity.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -248,6 +249,32 @@ class PasskeyAuthenticationServiceTest {
 
         verify(auditService).record(
                 SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, CLIENT_ADDRESS);
+        verifyNoSessionCreated();
+    }
+
+    @Test
+    void signatureCounterRegressionCannotCreateSession() throws Exception {
+        UserAccount account = account();
+        WebAuthnCredential credential = credential(account, 4);
+        ByteArray credentialId = ByteArray.fromBase64Url(credential.getCredentialId());
+        when(challengeStore.consume(CHALLENGE_ID)).thenReturn(Optional.of(assertionRequest));
+        when(assertionParser.parse(anyString())).thenReturn(assertion);
+        when(relyingParty.finishAssertion(any())).thenReturn(assertionResult);
+        when(assertionResult.isSuccess()).thenReturn(true);
+        when(assertionResult.isUserVerified()).thenReturn(true);
+        when(assertionResult.getCredential()).thenReturn(registeredCredential);
+        when(registeredCredential.getCredentialId()).thenReturn(credentialId);
+        when(assertionResult.getSignatureCount()).thenReturn(3L);
+        when(credentialRepository.findByCredentialIdAndEnabledTrue(credential.getCredentialId()))
+                .thenReturn(Optional.of(credential));
+
+        assertThatThrownBy(() -> service.complete(request(), CLIENT_ADDRESS))
+                .isInstanceOf(AuthenticationFailureException.class);
+
+        verify(auditService).record(
+                SecurityAuditEventType.PASSKEY_ASSERTION_REJECTED, null, CLIENT_ADDRESS);
+        verify(credentialRepository, never()).advanceSignatureCountIfCurrent(
+                any(), anyLong(), anyLong(), any());
         verifyNoSessionCreated();
     }
 

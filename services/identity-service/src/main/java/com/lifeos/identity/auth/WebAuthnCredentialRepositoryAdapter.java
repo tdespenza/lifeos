@@ -119,7 +119,7 @@ public class WebAuthnCredentialRepositoryAdapter implements CredentialRepository
                     .signatureCount(credential.getSignatureCount())
                     .build());
         } catch (Base64UrlException | IllegalArgumentException exception) {
-            logDecodeFailure(credential, exception);
+            logDecodeFailure(credential);
             return Optional.empty();
         }
     }
@@ -131,16 +131,15 @@ public class WebAuthnCredentialRepositoryAdapter implements CredentialRepository
         try {
             return Optional.of(ByteArray.fromBase64Url(value));
         } catch (Base64UrlException | IllegalArgumentException exception) {
-            logDecodeFailure(credential, exception);
+            logDecodeFailure(credential);
             return Optional.empty();
         }
     }
 
-    private void logDecodeFailure(WebAuthnCredential credential, Exception exception) {
+    private void logDecodeFailure(WebAuthnCredential credential) {
         log.atWarn()
                 .addKeyValue("event", "webauthn_credential_decode_failed")
                 .addKeyValue("credentialRowId", credential.getId())
-                .setCause(exception)
                 .log("Stored WebAuthn credential metadata could not be decoded");
     }
 }

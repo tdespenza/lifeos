@@ -159,7 +159,7 @@ key and required metadata.
   inserts the new session or applies the explicitly approved revocation in the
   same transaction, so capacity enforcement cannot race with session creation
   or revocation.
-- Browser clients use refresh cookies with `Secure`, `HttpOnly`, `Path=/api/v1/auth`,
+- Browser clients use refresh cookies with `Secure`, `HttpOnly`, `Path=/api/v1/auth/refresh`,
   no `Domain` attribute (host-only), and `SameSite=Lax`. Cookie-authenticated
   refresh, logout, session-revocation, and account-linking requests require a
   CSRF token and an `Origin` value matching a configured LifeOS web origin;

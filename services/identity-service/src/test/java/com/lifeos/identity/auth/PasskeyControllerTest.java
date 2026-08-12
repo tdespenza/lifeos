@@ -62,6 +62,7 @@ class PasskeyControllerTest {
                                 {"challengeId":"%s","credential":{"id":"credential","response":{}}}
                                 """.formatted("c".repeat(43))))
                 .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.sessionId").value(response.sessionId().toString()))
                 .andExpect(jsonPath("$.accessToken").value("signed-token"))
                 .andExpect(jsonPath("$.tokenType").value("Bearer"));

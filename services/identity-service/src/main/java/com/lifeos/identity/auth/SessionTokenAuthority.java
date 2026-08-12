@@ -8,7 +8,8 @@ import com.lifeos.identity.account.UserAccount;
 public interface SessionTokenAuthority {
 
     /**
-     * Creates the durable session and versioned token result for an authenticated account.
+     * Creates the durable session and versioned access/refresh token result for an authenticated
+     * account.
      *
      * @param account active authenticated account
      * @return session/token result

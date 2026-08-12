@@ -1,20 +1,22 @@
 package com.lifeos.identity.auth;
 
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.OctetSequenceKey;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
-import java.nio.charset.StandardCharsets;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.util.StringUtils;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import java.util.List;
 
 /**
  * Authentication infrastructure beans owned by the identity service.
@@ -46,27 +48,52 @@ public class AuthConfiguration {
     }
 
     /**
-     * Creates an HMAC JWT encoder from an externally supplied secret.
-     *
-     * <p>The secret is intentionally mandatory. A generated or committed fallback would produce
-     * tokens that are inconsistent across instances or trivially forgeable.
+     * Creates immutable RSA-or-HMAC JWT signing material from externalized configuration.
      *
      * @param properties authentication properties
+     * @return JWT signing material
+     */
+    @Bean
+    public JwtSigningMaterial jwtSigningMaterial(IdentityAuthProperties properties) {
+        return JwtSigningMaterial.from(properties);
+    }
+
+    /**
+     * Creates the configured JWT encoder. RSA signing is preferred; HMAC remains available for
+     * local compatibility profiles and is never published to verifiers.
+     *
+     * @param material immutable key material
      * @return JWT encoder
      */
     @Bean
-    public JwtEncoder jwtEncoder(IdentityAuthProperties properties) {
-        String secret = properties.getJwt().getSigningSecret();
-        if (!StringUtils.hasText(secret) || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
-            throw new IllegalStateException(
-                    "IDENTITY_JWT_SIGNING_SECRET must contain at least 32 bytes for login to start");
+    public JwtEncoder jwtEncoder(JwtSigningMaterial material) {
+        return new NimbusJwtEncoder(material.signingSource());
+    }
+
+    /**
+     * Creates a decoder with issuer, audience, signature, and time-window validation.
+     *
+     * @param properties authentication properties
+     * @param material immutable key material
+     * @return JWT decoder
+     */
+    @Bean
+    public JwtDecoder jwtDecoder(IdentityAuthProperties properties, JwtSigningMaterial material) {
+        NimbusJwtDecoder decoder;
+        if (material.isAsymmetric()) {
+            decoder = NimbusJwtDecoder.withPublicKey(material.rsaPublicKey())
+                    .signatureAlgorithm(SignatureAlgorithm.RS256)
+                    .build();
+        } else {
+            decoder = NimbusJwtDecoder.withSecretKey(material.hmacKey())
+                    .macAlgorithm(MacAlgorithm.HS256)
+                    .build();
         }
-        SecretKey key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        OctetSequenceKey jwk = new OctetSequenceKey.Builder(key)
-                .algorithm(JWSAlgorithm.HS256)
-                .build();
-        JWKSet keySet = new JWKSet(jwk);
-        JWKSource<SecurityContext> source = (selector, context) -> selector.select(keySet);
-        return new NimbusJwtEncoder(source);
+        OAuth2TokenValidator<Jwt> issuer = new JwtIssuerValidator(properties.getJwt().getIssuer());
+        OAuth2TokenValidator<Jwt> timestamp = new JwtTimestampValidator(properties.getJwt().getClockSkew());
+        OAuth2TokenValidator<Jwt> audience = new JwtClaimValidator<List<String>>(
+                "aud", audiences -> audiences != null && audiences.contains(properties.getJwt().getAudience()));
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(timestamp, issuer, audience));
+        return decoder;
     }
 }

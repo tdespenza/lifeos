@@ -72,7 +72,6 @@ public class SecurityAuditService {
                 Instant.now()));
         log.atInfo()
                 .addKeyValue("event", eventType.name().toLowerCase())
-                .addKeyValue("correlationId", correlationId)
                 .log("Authentication security outcome recorded");
     }
 

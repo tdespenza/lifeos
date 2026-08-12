@@ -115,7 +115,8 @@ class OidcControllerTest {
                         .param("state", "state")
                         .param("code_verifier", "query-verifier-that-must-not-be-read")
                         .header("X-PKCE-Code-Verifier", VERIFIER))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"));
 
         verify(authenticationService).callback(
                 eq(PROVIDER_NAME), eq("code"), eq("state"), eq(VERIFIER), isNull(), isNull(), any());

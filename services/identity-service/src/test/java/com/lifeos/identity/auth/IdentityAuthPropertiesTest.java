@@ -38,6 +38,9 @@ class IdentityAuthPropertiesTest {
         assertThatThrownBy(() -> properties.getJwt().setSigningSecret("too-short"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("signingSecret must contain at least 32 bytes");
+        assertThatThrownBy(() -> properties.getJwt().setReplayEncryptionSecret("too-short"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("replayEncryptionSecret must contain at least 32 bytes");
     }
 
     @Test

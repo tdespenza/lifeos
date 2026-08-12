@@ -72,8 +72,15 @@ public class PasskeyController {
     public ResponseEntity<LoginResponse> assertion(
             @Valid @RequestBody PasskeyAuthenticationRequest request,
             HttpServletRequest servletRequest) {
-        return ResponseEntity.ok(authenticationService.complete(
-                request, clientAddressResolver.resolve(servletRequest)));
+        LoginResponse response = authenticationService.complete(
+                request, clientAddressResolver.resolve(servletRequest));
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store");
+        var cookie = RefreshCookieSupport.from(response);
+        if (cookie != null) {
+            responseBuilder.header(HttpHeaders.SET_COOKIE, cookie.toString());
+        }
+        return responseBuilder.body(response);
     }
 
     @ExceptionHandler(AuthenticationFailureException.class)

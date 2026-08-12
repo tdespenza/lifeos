@@ -127,6 +127,38 @@ public class AuthSession {
     }
 
     /**
+     * Returns the persisted digest for protected-service session validation.
+     *
+     * @return access-token digest, never the raw token
+     */
+    public String getAccessTokenHash() {
+        return accessTokenHash;
+    }
+
+    /**
+     * Replaces the digest when a refresh rotation issues a successor access token for this stable
+     * session. The raw token is never accepted by this entity.
+     *
+     * @param newAccessTokenHash SHA-256 digest of the successor token
+     */
+    public void replaceAccessTokenHash(String newAccessTokenHash) {
+        this.accessTokenHash = Objects.requireNonNull(newAccessTokenHash, "newAccessTokenHash");
+    }
+
+    /**
+     * Advances the durable session deadline when refresh rotates the access token. The deadline
+     * remains bounded by the refresh-family policy enforced by the refresh authority.
+     *
+     * @param newExpiresAt successor access-token expiry
+     */
+    public void extendExpiresAt(Instant newExpiresAt) {
+        Objects.requireNonNull(newExpiresAt, "newExpiresAt");
+        if (newExpiresAt.isAfter(this.expiresAt)) {
+            this.expiresAt = newExpiresAt;
+        }
+    }
+
+    /**
      * Marks the session revoked; revocation is monotonic.
      */
     public void revoke() {

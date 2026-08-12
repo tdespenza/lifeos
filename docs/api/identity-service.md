@@ -4,7 +4,7 @@ Base URL (local): `http://localhost:8081`
 
 Management URL (local): `http://localhost:9081`
 
-Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, and passkey/WebAuthn assertion login are implemented. Passkey credential registration/provisioning, refresh-token rotation, asymmetric key/JWKS publication, RBAC/ABAC, and user-facing session revocation remain planned stories. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
+Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT issuance, JWKS publication, durable JWT/session validation, and one-time refresh-token rotation are implemented. RBAC/ABAC and user-facing session management remain planned stories. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
 
 The story-level first-party login diagrams are in
 [`docs/diagrams/identity-login.md`](../diagrams/identity-login.md), and the OAuth2/OIDC use-case,
@@ -12,6 +12,8 @@ sequence, domain, and lifecycle diagrams are in
 [`docs/diagrams/identity-oidc.md`](../diagrams/identity-oidc.md).
 The implemented Story 1.4 passkey/WebAuthn use-case, sequence, domain, and lifecycle diagrams are in
 [`docs/diagrams/identity-passkey.md`](../diagrams/identity-passkey.md).
+Story 1.5 JWT issuance, refresh rotation, JWKS verification, and token-family lifecycle diagrams are in
+[`docs/diagrams/identity-jwt.md`](../diagrams/identity-jwt.md).
 
 All requests receive a server-generated `X-Correlation-ID` response header. Any incoming value is ignored so caller-controlled personal data cannot enter MDC, request context, or structured logs. Registration logs include the generated correlation context and event outcome without logging the email address, account identifier, or database exception details.
 
@@ -40,7 +42,7 @@ path as unknown accounts.
 
 | Status | Condition | Body/headers |
 | --- | --- | --- |
-| `200 OK` | Active account and active password credential verified | `LoginResponse` containing `sessionId`, signed `accessToken`, `tokenType: Bearer`, and `expiresIn` seconds |
+| `200 OK` | Active account and active password credential verified | `LoginResponse` containing `sessionId`, signed `accessToken`, `tokenType: Bearer`, `expiresIn`, one-time `refreshToken`, and `refreshExpiresIn` seconds |
 | `400 Bad Request` | Missing, malformed, or invalidly shaped input | Generic RFC 9457 problem detail; values are not echoed |
 | `401 Unauthorized` | Unknown email, missing credential, wrong password, disabled account, or disabled credential | Same generic RFC 9457 problem detail for every credential failure |
 | `409 Conflict` | Account active-session capacity reached | Generic problem detail; no session is created |
@@ -54,16 +56,55 @@ path as unknown accounts.
   "sessionId": "d49f7cc3-78d4-4d68-8abd-b76fb3d8a77d",
   "accessToken": "<signed JWT, redacted>",
   "tokenType": "Bearer",
-  "expiresIn": 300
+  "expiresIn": 300,
+  "refreshToken": "<one-time opaque value, redacted>",
+  "refreshExpiresIn": 2592000
 }
 ```
 
-Story 1.2 uses the shared session/token authority and an externally supplied HS256 signing secret
-for the short-lived access token. Story 1.5 owns refresh-token rotation, asymmetric key rotation,
-JWKS publication, and downstream verification hardening; it must extend this authority rather than
-introduce another response or token format. Set `IDENTITY_JWT_SIGNING_SECRET` to at least 32 bytes
-through a secrets-manager-backed deployment configuration. The local/test profile provides only a
-test secret.
+The shared session/token authority issues the access token and opaque refresh token for all supported
+authentication methods. Production deployments configure an RSA private/public key pair through
+`IDENTITY_JWT_PRIVATE_KEY_PEM`, `IDENTITY_JWT_PUBLIC_KEY_PEM`, and `IDENTITY_JWT_SIGNING_KEY_ID`.
+The prior `IDENTITY_JWT_SIGNING_SECRET` HMAC path remains for local/test compatibility only and is
+never published through JWKS. Set `IDENTITY_REFRESH_REPLAY_ENCRYPTION_SECRET` independently in
+production so the one-retry response envelope has a dedicated encryption key.
+
+## `POST /api/v1/auth/refresh`
+
+Rotates a one-time opaque refresh token. The request must include an `Idempotency-Key` header. The
+service derives retry binding from the trusted resolved client address and the received `User-Agent`
+header, which is caller-controlled and is only an untrusted binding signal. The value is hashed before
+persistence, and the service does not accept a caller-supplied fingerprint. Browser clients may send
+the token in the `lifeos_refresh` host-only cookie, while mobile and desktop clients send the token in
+the JSON body. A successful rotation returns the shared `LoginResponse` with a new access JWT and
+successor refresh token.
+
+JSON clients send the exact `refreshToken` property:
+
+```json
+{
+  "refreshToken": "<one-time opaque value, redacted>"
+}
+```
+
+When both sources are present, the non-blank JSON `refreshToken` takes precedence; a blank or
+missing body value falls back to the `lifeos_refresh` cookie. Browser responses set that host-only,
+`HttpOnly`, `Secure`, `SameSite=Lax` cookie with `Path=/api/v1/auth/refresh`. Mobile and desktop
+clients should use the JSON body and platform secure storage. Retry evidence is derived from the
+resolved client address and received `User-Agent` header; the address is the trusted server-observed
+signal, while the header remains caller-controlled and untrusted.
+
+The token family row is locked for the transaction. The predecessor digest is moved to durable
+consumed-token evidence and the successor digest is stored atomically. At most one successor is
+created; one matching retry with the same idempotency key, predecessor token, and server-derived binding
+returns the encrypted committed response once. A mismatched, second, or late retry revokes the
+family and returns the same generic authentication failure.
+
+| Status | Condition |
+| --- | --- |
+| `200 OK` | Valid active predecessor or one permitted matching retry |
+| `401 Unauthorized` | Missing, expired, malformed, revoked, mismatched, or replayed token |
+| `503 Service Unavailable` | Required persistence, signing, or replay-envelope dependency failed |
 
 Login attempts are limited to five attempts per 60-second Redis window by default. Limiter keys are
 HMAC-SHA-256 digests of normalized email plus the request source address, using the dedicated

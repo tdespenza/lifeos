@@ -172,15 +172,11 @@ public final class JwtSigningMaterial {
     }
 
     /**
-     * Derives a stable AES key for encrypting the one-retry response envelope. The raw JWT or
-     * refresh token is never used as the key or persisted in plaintext.
+     * Derives the replay key for encrypting the one-retry response envelope using a public
+     * domain-separation label and the dedicated secret.
      *
-     * @param properties authentication properties
-     * @return 256-bit AES key
-     */
-    /**
-     * Derives the replay key using a public domain-separation label and the dedicated secret.
-     * The label is not key material; the configured secret remains externalized.
+     * <p>The raw JWT or refresh token is never used as the key or persisted in plaintext. The
+     * label is not key material; the configured secret remains externalized.
      *
      * @param properties authentication properties
      * @return 256-bit AES key

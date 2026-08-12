@@ -814,8 +814,25 @@ public class IdentityAuthProperties {
 
         @NotBlank(message = "issuer must be configured")
         private String issuer = "lifeos-identity";
-        @NotBlank(message = "signingSecret must be configured")
+        @NotBlank(message = "audience must be configured")
+        private String audience = "lifeos";
         private String signingSecret;
+        private String signingKeyId = "lifeos-identity-dev";
+        private String privateKeyPem;
+        private String publicKeyPem;
+        private String replayEncryptionSecret;
+        @NotNull(message = "refreshTokenTtl must be configured")
+        private Duration refreshTokenTtl = Duration.ofDays(30);
+        @NotNull(message = "refreshFamilyTtl must be configured")
+        private Duration refreshFamilyTtl = Duration.ofDays(90);
+        @NotNull(message = "refreshIdleTtl must be configured")
+        private Duration refreshIdleTtl = Duration.ofDays(14);
+        @NotNull(message = "refreshReplayTtl must be configured")
+        private Duration refreshReplayTtl = Duration.ofSeconds(30);
+        @Min(value = 1, message = "maxRefreshReplayRecordsPerFamily must be positive")
+        private int maxRefreshReplayRecordsPerFamily = 64;
+        @NotNull(message = "clockSkew must be configured")
+        private Duration clockSkew = Duration.ofSeconds(60);
 
         /**
          * Creates JWT properties without a signing secret.
@@ -845,6 +862,27 @@ public class IdentityAuthProperties {
         }
 
         /**
+         * Returns the audience required by LifeOS protected services.
+         *
+         * @return JWT audience
+         */
+        public String getAudience() {
+            return audience;
+        }
+
+        /**
+         * Sets the JWT audience.
+         *
+         * @param audience audience value
+         */
+        public void setAudience(String audience) {
+            if (audience == null || audience.isBlank()) {
+                throw new IllegalArgumentException("audience must not be blank");
+            }
+            this.audience = audience;
+        }
+
+        /**
          * Returns the configured HMAC signing secret.
          *
          * @return secret, or {@code null} when not configured
@@ -859,11 +897,133 @@ public class IdentityAuthProperties {
          * @param signingSecret secret value
          */
         public void setSigningSecret(String signingSecret) {
-            if (signingSecret == null || signingSecret.isBlank()
-                    || signingSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            if (signingSecret != null && !signingSecret.isBlank()
+                    && signingSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
                 throw new IllegalArgumentException("signingSecret must contain at least 32 bytes");
             }
             this.signingSecret = signingSecret;
+        }
+
+        /**
+         * Returns the active signing key identifier.
+         *
+         * @return key id
+         */
+        public String getSigningKeyId() {
+            return signingKeyId;
+        }
+
+        /**
+         * Sets the active signing key identifier.
+         *
+         * @param signingKeyId key id
+         */
+        public void setSigningKeyId(String signingKeyId) {
+            if (signingKeyId == null || signingKeyId.isBlank()) {
+                throw new IllegalArgumentException("signingKeyId must not be blank");
+            }
+            this.signingKeyId = signingKeyId;
+        }
+
+        public String getPrivateKeyPem() {
+            return privateKeyPem;
+        }
+
+        public void setPrivateKeyPem(String privateKeyPem) {
+            this.privateKeyPem = privateKeyPem;
+        }
+
+        public String getPublicKeyPem() {
+            return publicKeyPem;
+        }
+
+        public void setPublicKeyPem(String publicKeyPem) {
+            this.publicKeyPem = publicKeyPem;
+        }
+
+        public String getReplayEncryptionSecret() {
+            return replayEncryptionSecret;
+        }
+
+        public void setReplayEncryptionSecret(String replayEncryptionSecret) {
+            this.replayEncryptionSecret = replayEncryptionSecret;
+        }
+
+        public Duration getRefreshTokenTtl() {
+            return refreshTokenTtl;
+        }
+
+        public void setRefreshTokenTtl(Duration refreshTokenTtl) {
+            this.refreshTokenTtl = positiveDuration(refreshTokenTtl, "refreshTokenTtl");
+        }
+
+        public Duration getRefreshFamilyTtl() {
+            return refreshFamilyTtl;
+        }
+
+        public void setRefreshFamilyTtl(Duration refreshFamilyTtl) {
+            this.refreshFamilyTtl = positiveDuration(refreshFamilyTtl, "refreshFamilyTtl");
+        }
+
+        public Duration getRefreshIdleTtl() {
+            return refreshIdleTtl;
+        }
+
+        public void setRefreshIdleTtl(Duration refreshIdleTtl) {
+            this.refreshIdleTtl = positiveDuration(refreshIdleTtl, "refreshIdleTtl");
+        }
+
+        public Duration getRefreshReplayTtl() {
+            return refreshReplayTtl;
+        }
+
+        public void setRefreshReplayTtl(Duration refreshReplayTtl) {
+            this.refreshReplayTtl = positiveDuration(refreshReplayTtl, "refreshReplayTtl");
+        }
+
+        public int getMaxRefreshReplayRecordsPerFamily() {
+            return maxRefreshReplayRecordsPerFamily;
+        }
+
+        public void setMaxRefreshReplayRecordsPerFamily(int maxRefreshReplayRecordsPerFamily) {
+            if (maxRefreshReplayRecordsPerFamily < 1) {
+                throw new IllegalArgumentException("maxRefreshReplayRecordsPerFamily must be positive");
+            }
+            this.maxRefreshReplayRecordsPerFamily = maxRefreshReplayRecordsPerFamily;
+        }
+
+        public Duration getClockSkew() {
+            return clockSkew;
+        }
+
+        public void setClockSkew(Duration clockSkew) {
+            this.clockSkew = positiveDuration(clockSkew, "clockSkew");
+        }
+
+        @AssertTrue(message = "JWT lifetime settings must be positive")
+        public boolean areLifetimeSettingsPositive() {
+            return isPositive(refreshTokenTtl) && isPositive(refreshFamilyTtl)
+                    && isPositive(refreshIdleTtl) && isPositive(refreshReplayTtl)
+                    && isPositive(clockSkew);
+        }
+
+        @AssertTrue(message = "an HMAC secret or an RSA key pair must be configured")
+        public boolean isSigningMaterialConfigured() {
+            boolean hmacConfigured = signingSecret != null && !signingSecret.isBlank();
+            boolean rsaConfigured = privateKeyPem != null && !privateKeyPem.isBlank()
+                    && publicKeyPem != null && !publicKeyPem.isBlank();
+            return hmacConfigured || rsaConfigured;
+        }
+
+        private Duration positiveDuration(Duration value, String name) {
+            if (!isPositive(value)) {
+                throw new IllegalArgumentException(name + " must be positive");
+            }
+            return value;
+        }
+
+        private boolean isPositive(Duration value) {
+            return value != null && !value.isZero() && !value.isNegative();
         }
     }
 }

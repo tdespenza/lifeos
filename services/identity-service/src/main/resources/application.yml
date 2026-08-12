@@ -35,7 +35,20 @@ identity:
       verification-acquire-timeout: ${IDENTITY_ARGON2_ACQUIRE_TIMEOUT:250ms}
     jwt:
       issuer: ${IDENTITY_JWT_ISSUER:lifeos-identity}
+      audience: ${IDENTITY_JWT_AUDIENCE:lifeos}
+      signing-key-id: ${IDENTITY_JWT_SIGNING_KEY_ID:lifeos-identity}
+      # RSA PEM values are the production path. The HMAC secret remains as a compatibility path
+      # for local/test deployments and must never be shared with downstream verifiers.
       signing-secret: ${IDENTITY_JWT_SIGNING_SECRET:}
+      private-key-pem: ${IDENTITY_JWT_PRIVATE_KEY_PEM:}
+      public-key-pem: ${IDENTITY_JWT_PUBLIC_KEY_PEM:}
+      replay-encryption-secret: ${IDENTITY_REFRESH_REPLAY_ENCRYPTION_SECRET:}
+      refresh-token-ttl: ${IDENTITY_REFRESH_TOKEN_TTL:P30D}
+      refresh-family-ttl: ${IDENTITY_REFRESH_FAMILY_TTL:P90D}
+      refresh-idle-ttl: ${IDENTITY_REFRESH_IDLE_TTL:P14D}
+      refresh-replay-ttl: ${IDENTITY_REFRESH_REPLAY_TTL:PT30S}
+      max-refresh-replay-records-per-family: ${IDENTITY_MAX_REFRESH_REPLAY_RECORDS:64}
+      clock-skew: ${IDENTITY_JWT_CLOCK_SKEW:PT60S}
     fingerprint:
       audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
       rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}

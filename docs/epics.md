@@ -613,7 +613,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), and passkey/WebAuthn assertion login (FR9) exist in `identity-service`; passkey credential registration/provisioning, refresh-token rotation, RBAC/ABAC, and user-facing session management are not yet built.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), and JWT issuance/refresh verification (FR10) exist in `identity-service`; passkey credential registration/provisioning, RBAC/ABAC, and user-facing session management are not yet built.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.
@@ -665,11 +665,11 @@ So that I can start an authenticated LifeOS session.
 
 **Implementation notes:** The endpoint is `POST /api/v1/auth/login`. Active credentials are stored
 in `password_credential` as Argon2id hashes; session metadata and a SHA-256 access-token digest are
-stored durably in `auth_session`; redacted outcomes are stored in `security_audit_event`. Redis
+ stored durably in `auth_session`; redacted outcomes are stored in `security_audit_event`. Redis
 attempt counters use atomic `INCR`/`EXPIRE` with hashed email/address material and fail closed on
 dependency errors. Argon2id verification is also bounded per service instance with a semaphore and
-short acquisition timeout. Story 1.5 owns refresh-token rotation, asymmetric signing/JWKS,
-verification middleware, and user-facing session listing/revocation.
+ short acquisition timeout. Story 1.5 owns the implemented refresh-token rotation, asymmetric
+ signing/JWKS, and verification middleware; user-facing session listing/revocation remains Story 1.7.
 
 ### Story 1.3: OAuth2/OIDC login
 
@@ -718,7 +718,7 @@ redacted success, rejection, rate-limit, dependency, and session-capacity audit 
 keys never enter the service; credential registration/provisioning remains a separate authenticated
 step-up story.
 
-### Story 1.5: JWT issuance and verification
+### Story 1.5: JWT issuance and verification [DONE]
 
 As an authenticated client,
 I want a short-lived access token and a rotating refresh token,
@@ -739,6 +739,18 @@ So that downstream services can authorize requests without sharing passwords.
 **Given** two concurrent refresh requests using the same refresh token
 **When** both reach the identity service
 **Then** at most one succeeds, the token rotates atomically, and reuse detection revokes the session family.
+
+**Implementation notes:** The shared session authority issues a bounded access JWT with configured
+issuer/audience, subject, session id, authentication method, and expiry claims for password, OIDC,
+and passkey authentication. Production deployments use configured RSA signing material and expose
+the public verification key through JWKS; the existing HMAC path remains a local/test compatibility
+mode. Refresh credentials are high-entropy opaque values. PostgreSQL stores only token digests,
+durable token-family state, consumed-token replay evidence, and a short-lived encrypted idempotency
+envelope. A pessimistic family-row lock linearizes concurrent refresh requests; one matching retry
+is returned once, while mismatched or repeated reuse revokes the family. JWT validation performs
+signature/claims checks followed by the durable session check and returns generic failures without
+logging token material. See [`docs/api/identity-service.md`](api/identity-service.md) and
+[`docs/diagrams/identity-jwt.md`](diagrams/identity-jwt.md).
 
 ### Story 1.6: RBAC and ABAC authorization decisions
 

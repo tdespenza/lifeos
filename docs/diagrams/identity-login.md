@@ -2,8 +2,8 @@
 
 These diagrams describe the implemented `POST /api/v1/auth/login` flow. The identity service is
 the policy and session authority; PostgreSQL is the durable store, while Redis is limited to
-distributed attempt counters. Refresh-token rotation, asymmetric signing/JWKS, and user-facing
-session revocation remain Story 1.5 scope.
+distributed attempt counters. Refresh-token rotation and asymmetric signing/JWKS are implemented
+in Story 1.5; user-facing session revocation remains Story 1.7 scope.
 
 ## Use-case view
 

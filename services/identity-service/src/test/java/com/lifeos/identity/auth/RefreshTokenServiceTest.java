@@ -182,6 +182,7 @@ class RefreshTokenServiceTest {
                 .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
 
         assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+        verify(familyRepository).save(family);
         verify(responseCipher, never()).decrypt(any(), any(), any());
     }
 
@@ -196,6 +197,7 @@ class RefreshTokenServiceTest {
                 .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
 
         assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+        verify(familyRepository).save(family);
         verify(responseCipher, never()).decrypt(any(), any(), any());
     }
 

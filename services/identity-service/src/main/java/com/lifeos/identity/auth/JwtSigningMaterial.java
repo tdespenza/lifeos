@@ -8,6 +8,7 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
+import java.security.Signature;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
@@ -70,6 +71,19 @@ public final class JwtSigningMaterial {
                 if (!privateKey.getModulus().equals(publicKey.getModulus())) {
                     throw new IllegalStateException(
                             "Configured JWT RSA private and public keys do not match");
+                }
+                Signature probe = Signature.getInstance("SHA256withRSA");
+                byte[] probeMessage = "lifeos-jwt-key-pair-probe-v1"
+                        .getBytes(StandardCharsets.US_ASCII);
+                probe.initSign(privateKey);
+                probe.update(probeMessage);
+                byte[] signature = probe.sign();
+                probe.initVerify(publicKey);
+                probe.update(probeMessage);
+                if (!probe.verify(signature)) {
+                    throw new IllegalStateException(
+                            "Configured JWT RSA private and public keys do not form a valid "
+                                    + "signing pair");
                 }
                 if (publicKey.getModulus().bitLength() < 2048) {
                     throw new IllegalStateException("JWT RSA keys must be at least 2048 bits");

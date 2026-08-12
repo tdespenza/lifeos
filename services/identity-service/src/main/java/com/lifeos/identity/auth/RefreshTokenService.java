@@ -280,6 +280,11 @@ public class RefreshTokenService {
                 || !now.isBefore(family.getFamilyExpiresAt())) {
             return revokeAndReject(family);
         }
+        AuthSession session = sessionRepository.findById(family.getSessionId()).orElse(null);
+        UserAccount account = accountRepository.findById(family.getAccountId()).orElse(null);
+        if (session == null || account == null || session.isRevoked() || !account.isActive()) {
+            return revokeAndReject(family);
+        }
         if (replay.getState() == RefreshReplayState.COMMITTED
                 && replay.getPredecessorTokenHash().equals(presentedHash)
                 && replay.getRequestFingerprint().equals(requestFingerprint)

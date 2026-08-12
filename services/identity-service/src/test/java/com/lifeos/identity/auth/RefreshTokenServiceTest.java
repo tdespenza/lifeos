@@ -155,6 +155,8 @@ class RefreshTokenServiceTest {
                 .thenReturn(Optional.of(replay));
         when(responseCipher.decrypt(family.getId(), "key", "encrypted-envelope"))
                 .thenReturn(expected);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
 
         LoginResponse actual = service.refresh(new RefreshTokenService.RefreshRequest(
                 "presented", "key", "fingerprint"));
@@ -167,6 +169,34 @@ class RefreshTokenServiceTest {
                 "presented", "key", "fingerprint")))
                 .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
         assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+    }
+
+    @Test
+    void rejectsCommittedRetryAfterSessionRevocation() {
+        RefreshReplayRecord replay = committedReplay();
+        session.revoke();
+        stubCommittedReplay(replay);
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+
+        assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+        verify(responseCipher, never()).decrypt(any(), any(), any());
+    }
+
+    @Test
+    void rejectsCommittedRetryAfterAccountDisablement() {
+        RefreshReplayRecord replay = committedReplay();
+        account.disable();
+        stubCommittedReplay(replay);
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+
+        assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+        verify(responseCipher, never()).decrypt(any(), any(), any());
     }
 
     @Test
@@ -298,6 +328,24 @@ class RefreshTokenServiceTest {
         when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
                 .thenReturn(Optional.empty());
         when(consumedRepository.countByFamilyId(family.getId())).thenReturn(0L);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
+    }
+
+    private RefreshReplayRecord committedReplay() {
+        RefreshReplayRecord replay = new RefreshReplayRecord(
+                family.getId(), "key", "fingerprint", TokenDigest.sha256("presented"),
+                NOW.plusSeconds(30));
+        replay.commit("encrypted-envelope");
+        return replay;
+    }
+
+    private void stubCommittedReplay(RefreshReplayRecord replay) {
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(family));
+        when(familyRepository.findByIdForUpdate(family.getId())).thenReturn(Optional.of(family));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
+                .thenReturn(Optional.of(replay));
         when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
         when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
     }

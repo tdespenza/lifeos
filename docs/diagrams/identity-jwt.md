@@ -114,7 +114,8 @@ flowchart LR
 - JWT verification is only an early filter. Protected data requires an active durable session check,
   and a revoked session remains rejected after cache loss or restart.
 - Family, session, and token-digest lookups use the declared database indexes; replay evidence is
-  bounded per family and deadline-bounded.
+  bounded per family. Deadline checks bound retry eligibility and replay-expiry checks, but do not
+  delete expired `RefreshReplayRecord` rows from the database.
 
 ## Operational trade-offs
 

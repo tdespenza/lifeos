@@ -35,6 +35,7 @@ assert_equal "0.1.0" "$(bash "$VERSION_HELPER" next 0.1.0-SNAPSHOT patch)" "init
 assert_equal "0.1.1" "$(bash "$VERSION_HELPER" next 0.1.0-SNAPSHOT patch 0.1.0)" "patch release"
 assert_equal "0.2.0" "$(bash "$VERSION_HELPER" next 0.1.0-SNAPSHOT minor 0.1.0)" "minor release"
 assert_equal "1.0.0" "$(bash "$VERSION_HELPER" next 0.1.0-SNAPSHOT major 0.1.0)" "major release"
+assert_equal "0.3.0" "$(bash "$VERSION_HELPER" next 0.3.0-SNAPSHOT patch 0.2.0)" "preserve staged future release"
 assert_equal "0.1.1-SNAPSHOT" "$(bash "$VERSION_HELPER" next-snapshot 0.1.0)" "next development version"
 assert_equal "-1" "$(bash "$VERSION_HELPER" compare 0.1.0 0.1.1)" "version less-than"
 assert_equal "0" "$(bash "$VERSION_HELPER" compare 1.0.0 1.0.0)" "version equality"

@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   release:
+    name: Publish verified release
     # workflow_run executes with this workflow's write-scoped token even when
     # CI was started by a pull request. Only an actual push to this repository's
     # main branch may reach the privileged release path.
@@ -35,6 +36,7 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Read and validate project version
         id: gate
@@ -90,13 +92,15 @@ jobs:
       - name: Tag release
         if: steps.gate.outputs.tag_needed == 'true'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "Release v$VERSION"
-          git push origin "v$VERSION"
+          git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+            push origin "v$VERSION"
 
       - name: Create GitHub Release
         if: steps.gate.outputs.release_needed == 'true'
@@ -116,7 +120,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.gate.outputs.version }}
-          NEXT_SNAPSHOT: ${{ steps.gate.outputs.next_snapshot }}
+          BASE_NEXT_SNAPSHOT: ${{ steps.gate.outputs.next_snapshot }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
@@ -130,6 +134,17 @@ jobs:
             echo "::warning::origin/main ($CURRENT_MAIN_SHA) moved past the verified commit ($HEAD_SHA); skipping synchronization for this run."
             exit 0
           fi
+
+          DEV_VERSION=$(bash scripts/release-version.sh read \
+            <(git show origin/dev:build.gradle.kts))
+          DEV_BASE="${DEV_VERSION%-SNAPSHOT}"
+          CANDIDATE_BASE="${BASE_NEXT_SNAPSHOT%-SNAPSHOT}"
+          if [[ "$(bash scripts/release-version.sh compare "$DEV_BASE" "$CANDIDATE_BASE")" == "1" ]]; then
+            SELECTED_SNAPSHOT="$DEV_BASE-SNAPSHOT"
+          else
+            SELECTED_SNAPSHOT="$BASE_NEXT_SNAPSHOT"
+          fi
+          echo "Using $SELECTED_SNAPSHOT for dev (existing: $DEV_VERSION, baseline: $BASE_NEXT_SNAPSHOT)"
 
           SYNC_BRANCH="automation/sync-v$VERSION-to-dev"
           MERGED_SYNC_PR=$(gh pr list --base dev --head "$SYNC_BRANCH" --state merged --json number,url --jq '.[0] | "\(.number) \(.url)"' || true)
@@ -160,15 +175,16 @@ jobs:
             git checkout --ours -- build.gradle.kts
             git add build.gradle.kts
           fi
-          bash scripts/release-version.sh set build.gradle.kts "$NEXT_SNAPSHOT"
+          bash scripts/release-version.sh set build.gradle.kts "$SELECTED_SNAPSHOT"
           git diff --check
           git add build.gradle.kts
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: start development after v$VERSION"
-          git push --set-upstream origin "$SYNC_BRANCH"
+          git commit -m "chore: start development after v$VERSION at $SELECTED_SNAPSHOT"
+          git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+            push --set-upstream origin "$SYNC_BRANCH"
           gh pr create \
             --base dev \
             --head "$SYNC_BRANCH" \
-            --title "Sync v$VERSION and start $NEXT_SNAPSHOT development" \
-            --body "Automated post-release synchronization. This PR brings the verified v$VERSION main commit back into dev and advances the Gradle version to $NEXT_SNAPSHOT. The PR is intentionally reviewable because main and dev are squash-merged rather than fast-forwarded."
+            --title "Sync v$VERSION and start $SELECTED_SNAPSHOT development" \
+            --body "Automated post-release synchronization. This PR brings the verified v$VERSION main commit back into dev and advances the Gradle version to $SELECTED_SNAPSHOT. The existing dev version was $DEV_VERSION; the workflow selected the greater development version to avoid downgrading staged work. The PR is intentionally reviewable because main and dev are squash-merged rather than fast-forwarded."

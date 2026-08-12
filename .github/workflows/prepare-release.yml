@@ -15,16 +15,18 @@ on:
         type: choice
         options: [patch, minor, major]
 
-permissions:
-  contents: write
-  pull-requests: write
-
 concurrency:
   group: release-preparation-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   prepare:
+    name: Prepare versioned release
+    # This job creates a branch and PR, so write access is intentionally scoped
+    # to this job instead of being granted to every workflow job.
+    permissions:
+      contents: write
+      pull-requests: write
     # Never run the write-capable path for an untrusted fork. The checkout is
     # always dev, but this guard prevents a fork from requesting a release.
     if: >
@@ -33,9 +35,9 @@ jobs:
         github.event.pull_request.merged == true &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (
-          contains(join(github.event.pull_request.labels.*.name, ','), 'release:patch') ||
-          contains(join(github.event.pull_request.labels.*.name, ','), 'release:minor') ||
-          contains(join(github.event.pull_request.labels.*.name, ','), 'release:major')
+          contains(github.event.pull_request.labels.*.name, 'release:patch') ||
+          contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+          contains(github.event.pull_request.labels.*.name, 'release:major')
         )
       )
     runs-on: ubuntu-latest
@@ -46,6 +48,7 @@ jobs:
         with:
           ref: dev
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up release request
         id: request
@@ -122,7 +125,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add build.gradle.kts
           git commit -m "chore(release): prepare v$VERSION"
-          git push --set-upstream origin "$BRANCH"
+          git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+            push --set-upstream origin "$BRANCH"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "created=true" >> "$GITHUB_OUTPUT"
 

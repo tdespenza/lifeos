@@ -13,11 +13,12 @@ flowchart LR
     Identity --> Refresh["One-time opaque refresh token"]
     Identity --> Session["PostgreSQL session and family authority"]
     Service["Protected service"] --> Verify["Signature and claims check"]
+    Verify -. "RSA production mode" .-> JWKS["Public JWKS endpoint"]
+    Verify -. "HMAC local/test mode" .-> HMAC["Configured HMAC secret"]
     Verify --> IdentityVerify["Identity-service validation contract"]
     IdentityVerify --> SessionCheck["Durable active-session check"]
     SessionCheck --> Session
-    Identity --> JWKS["Public JWKS endpoint"]
-    Verify --> JWKS
+    Identity --> JWKS
 ```
 
 ## Issuance and rotation
@@ -65,8 +66,13 @@ sequenceDiagram
     participant DB as Identity PostgreSQL
 
     Client->>Service: Bearer access JWT
-    Service->>JWKS: Load public key by kid
-    Service->>Service: Verify signature, issuer, audience, subject, session id, and expiry
+    alt RSA production mode
+        Service->>JWKS: Load public RSA key by kid
+        Service->>Service: Verify signature and claims with JWKS key
+    else HMAC local/test mode
+        Service->>Service: Load configured shared HMAC secret
+        Service->>Service: Verify signature and claims with HS256 secret
+    end
     Service->>Identity: Validate bearer through internal auth contract
     Identity->>DB: Check session is active and digest matches
     Identity-->>Service: Validated subject or generic failure
@@ -93,6 +99,7 @@ flowchart LR
     Active -. "rotation commits" .-> Pending
     Committed -. "matching retry" .-> RetryConsumed
     Committed -. "mismatch or second retry" .-> Revoked
+    RetryConsumed -. "second or late reuse" .-> Revoked
     Active -. "idle or absolute deadline" .-> Expired
 ```
 

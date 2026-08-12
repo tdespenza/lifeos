@@ -10,6 +10,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
@@ -102,6 +103,8 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
      * @param sessionRepository durable session repository
      * @param accountRepository account repository
      * @param credentialRepository credential repository
+     * @param refreshTokenService refresh-family authority
+     * @param signingMaterial resolved JWT signing material
      * @param properties authentication properties
      * @param clock time source
      */
@@ -206,6 +209,12 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
                     refresh == null ? 0 : java.time.Duration.between(issuedAt, refresh.expiresAt()).toSeconds());
         } catch (SessionCapacityExceededException | AuthenticationFailureException exception) {
             throw exception;
+        } catch (DataAccessException | JwtException exception) {
+            log.atError()
+                    .addKeyValue("event", "session_token_issuance_failed")
+                    .addKeyValue("dependencyException", exception.getClass().getName())
+                    .log("Session token issuance dependency failed");
+            throw new AuthenticationDependencyUnavailableException(exception);
         } catch (RuntimeException exception) {
             log.atError()
                     .addKeyValue("event", "session_token_issuance_failed")

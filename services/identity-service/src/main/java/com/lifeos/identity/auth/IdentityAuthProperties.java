@@ -459,66 +459,146 @@ public class IdentityAuthProperties {
         public Provider() {
         }
 
+        /**
+         * Returns the provider issuer.
+         *
+         * @return issuer URL
+         */
         public String getIssuer() {
             return issuer;
         }
 
+        /**
+         * Sets the provider issuer.
+         *
+         * @param issuer issuer URL
+         */
         public void setIssuer(String issuer) {
             this.issuer = issuer;
         }
 
+        /**
+         * Returns the authorization endpoint.
+         *
+         * @return authorization URL
+         */
         public String getAuthorizationUri() {
             return authorizationUri;
         }
 
+        /**
+         * Sets the authorization endpoint.
+         *
+         * @param authorizationUri authorization URL
+         */
         public void setAuthorizationUri(String authorizationUri) {
             this.authorizationUri = authorizationUri;
         }
 
+        /**
+         * Returns the token endpoint.
+         *
+         * @return token URL
+         */
         public String getTokenUri() {
             return tokenUri;
         }
 
+        /**
+         * Sets the token endpoint.
+         *
+         * @param tokenUri token URL
+         */
         public void setTokenUri(String tokenUri) {
             this.tokenUri = tokenUri;
         }
 
+        /**
+         * Returns the provider JWK set endpoint.
+         *
+         * @return JWK set URL
+         */
         public String getJwkSetUri() {
             return jwkSetUri;
         }
 
+        /**
+         * Sets the provider JWK set endpoint.
+         *
+         * @param jwkSetUri JWK set URL
+         */
         public void setJwkSetUri(String jwkSetUri) {
             this.jwkSetUri = jwkSetUri;
         }
 
+        /**
+         * Returns the confidential client identifier.
+         *
+         * @return client identifier
+         */
         public String getClientId() {
             return clientId;
         }
 
+        /**
+         * Sets the confidential client identifier.
+         *
+         * @param clientId client identifier
+         */
         public void setClientId(String clientId) {
             this.clientId = clientId;
         }
 
+        /**
+         * Returns the confidential client secret.
+         *
+         * @return client secret
+         */
         public String getClientSecret() {
             return clientSecret;
         }
 
+        /**
+         * Sets the confidential client secret.
+         *
+         * @param clientSecret client secret
+         */
         public void setClientSecret(String clientSecret) {
             this.clientSecret = clientSecret;
         }
 
+        /**
+         * Returns the callback endpoint.
+         *
+         * @return redirect URL
+         */
         public String getRedirectUri() {
             return redirectUri;
         }
 
+        /**
+         * Sets the callback endpoint.
+         *
+         * @param redirectUri redirect URL
+         */
         public void setRedirectUri(String redirectUri) {
             this.redirectUri = redirectUri;
         }
 
+        /**
+         * Returns the requested OIDC scope.
+         *
+         * @return space-delimited scope
+         */
         public String getScope() {
             return scope;
         }
 
+        /**
+         * Sets the requested OIDC scope and requires the OpenID scope.
+         *
+         * @param scope space-delimited scope
+         */
         public void setScope(String scope) {
             if (scope == null || scope.isBlank()
                     || !Set.of(scope.trim().split("\\s+")).contains("openid")) {

@@ -44,54 +44,120 @@ public final class LoginResponse {
         this.refreshExpiresIn = refreshExpiresIn;
     }
 
+    /**
+     * Returns the durable session identifier.
+     *
+     * @return session identifier
+     */
     public UUID sessionId() {
         return sessionId;
     }
 
+    /**
+     * JavaBean accessor for the durable session identifier.
+     *
+     * @return session identifier
+     */
     public UUID getSessionId() {
         return sessionId;
     }
 
+    /**
+     * Returns the raw access JWT at the response boundary.
+     *
+     * @return access JWT
+     */
     public String accessToken() {
         return accessToken;
     }
 
+    /**
+     * JavaBean accessor for the raw access JWT.
+     *
+     * @return access JWT
+     */
     public String getAccessToken() {
         return accessToken;
     }
 
+    /**
+     * Returns the OAuth token type.
+     *
+     * @return token type
+     */
     public String tokenType() {
         return tokenType;
     }
 
+    /**
+     * JavaBean accessor for the OAuth token type.
+     *
+     * @return token type
+     */
     public String getTokenType() {
         return tokenType;
     }
 
+    /**
+     * Returns the access-token lifetime in seconds.
+     *
+     * @return access-token lifetime
+     */
     public long expiresIn() {
         return expiresIn;
     }
 
+    /**
+     * JavaBean accessor for the access-token lifetime.
+     *
+     * @return access-token lifetime
+     */
     public long getExpiresIn() {
         return expiresIn;
     }
 
+    /**
+     * Returns the raw refresh credential at the response boundary.
+     *
+     * @return refresh credential, or {@code null} for compatibility responses
+     */
     public String refreshToken() {
         return refreshToken;
     }
 
+    /**
+     * JavaBean accessor for the raw refresh credential.
+     *
+     * @return refresh credential, or {@code null} for compatibility responses
+     */
     public String getRefreshToken() {
         return refreshToken;
     }
 
+    /**
+     * Returns the refresh-token lifetime in seconds.
+     *
+     * @return refresh-token lifetime
+     */
     public long refreshExpiresIn() {
         return refreshExpiresIn;
     }
 
+    /**
+     * JavaBean accessor for the refresh-token lifetime.
+     *
+     * @return refresh-token lifetime
+     */
     public long getRefreshExpiresIn() {
         return refreshExpiresIn;
     }
 
+    /**
+     * Compares all response fields, including refresh metadata.
+     *
+     * @param other object to compare
+     * @return true when the response values match
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -108,11 +174,21 @@ public final class LoginResponse {
                 && Objects.equals(refreshToken, that.refreshToken);
     }
 
+    /**
+     * Returns a hash derived from all response fields.
+     *
+     * @return response hash
+     */
     @Override
     public int hashCode() {
         return Objects.hash(sessionId, accessToken, tokenType, expiresIn, refreshToken, refreshExpiresIn);
     }
 
+    /**
+     * Returns a redacted diagnostic representation without token values.
+     *
+     * @return redacted response representation
+     */
     @Override
     public String toString() {
         return "LoginResponse[sessionId=" + sessionId + ", accessToken=[redacted], tokenType="

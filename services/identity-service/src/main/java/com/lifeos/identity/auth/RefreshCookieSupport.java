@@ -7,7 +7,7 @@ import org.springframework.http.ResponseCookie;
 final class RefreshCookieSupport {
 
     static final String NAME = "lifeos_refresh";
-    static final String PATH = "/api/v1/auth";
+    static final String PATH = "/api/v1/auth/refresh";
 
     private RefreshCookieSupport() {
     }

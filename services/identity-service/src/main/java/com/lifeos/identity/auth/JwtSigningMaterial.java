@@ -178,6 +178,14 @@ public final class JwtSigningMaterial {
      * @param properties authentication properties
      * @return 256-bit AES key
      */
+    /**
+     * Derives the replay key using a public domain-separation label and the dedicated secret.
+     * The label is not key material; the configured secret remains externalized.
+     *
+     * @param properties authentication properties
+     * @return 256-bit AES key
+     */
+    @SuppressWarnings("PMD.HardCodedCryptoKey")
     public SecretKey replayEncryptionKey(IdentityAuthProperties properties) {
         String configured = properties.getJwt().getReplayEncryptionSecret();
         if (!StringUtils.hasText(configured)

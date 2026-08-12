@@ -38,6 +38,7 @@ public class JwtValidationService {
      * @param rawToken raw token from the Authorization header
      * @return validated subject context
      */
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public AuthenticatedSubject validate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new AuthenticationFailureException();

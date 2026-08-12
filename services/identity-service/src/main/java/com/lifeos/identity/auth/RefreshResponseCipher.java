@@ -38,6 +38,7 @@ public class RefreshResponseCipher {
      * @param response response retained for one retry
      * @return nonce and ciphertext envelope
      */
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public String encrypt(UUID familyId, String idempotencyKey, LoginResponse response) {
         try {
             byte[] nonce = new byte[NONCE_BYTES];
@@ -62,6 +63,7 @@ public class RefreshResponseCipher {
      * @param envelope nonce and ciphertext envelope
      * @return retained response
      */
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public LoginResponse decrypt(UUID familyId, String idempotencyKey, String envelope) {
         try {
             if (envelope == null || envelope.isBlank()) {

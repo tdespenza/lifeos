@@ -72,10 +72,11 @@ production so the one-retry response envelope has a dedicated encryption key.
 ## `POST /api/v1/auth/refresh`
 
 Rotates a one-time opaque refresh token. The request must include an `Idempotency-Key` header. The
-service derives retry binding from the trusted server-observed client address and user-agent, hashes
-it before persistence, and does not accept a caller-supplied fingerprint. Browser clients may send the
-token in the `lifeos_refresh` host-only cookie, while mobile and desktop clients send the token in the
-JSON body. A successful rotation returns the shared `LoginResponse` with a new access JWT and
+service derives retry binding from the trusted resolved client address and the received `User-Agent`
+header, which is caller-controlled and is only an untrusted binding signal. The value is hashed before
+persistence, and the service does not accept a caller-supplied fingerprint. Browser clients may send
+the token in the `lifeos_refresh` host-only cookie, while mobile and desktop clients send the token in
+the JSON body. A successful rotation returns the shared `LoginResponse` with a new access JWT and
 successor refresh token.
 
 JSON clients send the exact `refreshToken` property:
@@ -88,9 +89,10 @@ JSON clients send the exact `refreshToken` property:
 
 When both sources are present, the non-blank JSON `refreshToken` takes precedence; a blank or
 missing body value falls back to the `lifeos_refresh` cookie. Browser responses set that host-only,
-`HttpOnly`, `Secure`, `SameSite=Lax` cookie with `Path=/api/v1/auth`. Mobile and desktop clients
-should use the JSON body and platform secure storage. Retry evidence is always bound to the
-server-observed client address and user-agent rather than a caller-controlled or shared default value.
+`HttpOnly`, `Secure`, `SameSite=Lax` cookie with `Path=/api/v1/auth/refresh`. Mobile and desktop
+clients should use the JSON body and platform secure storage. Retry evidence is derived from the
+resolved client address and received `User-Agent` header; the address is the trusted server-observed
+signal, while the header remains caller-controlled and untrusted.
 
 The token family row is locked for the transaction. The predecessor digest is moved to durable
 consumed-token evidence and the successor digest is stored atomically. At most one successor is

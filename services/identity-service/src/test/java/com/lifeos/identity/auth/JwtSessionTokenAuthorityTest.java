@@ -22,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -133,6 +134,19 @@ class JwtSessionTokenAuthorityTest {
         verify(sessionRepository).saveAndFlush(sessionCaptor.capture());
         assertThat(sessionCaptor.getValue().getAuthenticationMethod())
                 .isEqualTo(SessionAuthenticationMethod.PASSKEY);
+    }
+
+    @Test
+    void mapsJwtEncoderFailureToDependencyUnavailable() {
+        UserAccount account = account();
+        when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+        when(jwtEncoder.encode(any())).thenThrow(new JwtException("encoder unavailable"));
+
+        assertThatThrownBy(() -> authority.createSession(account, SessionAuthenticationMethod.OIDC))
+                .isInstanceOf(AuthenticationDependencyUnavailableException.class)
+                .hasCauseInstanceOf(JwtException.class);
+
+        verify(sessionRepository, never()).saveAndFlush(any());
     }
 
     private UserAccount account() {

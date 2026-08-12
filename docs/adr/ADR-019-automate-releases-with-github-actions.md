@@ -1,42 +1,91 @@
-# ADR-019: Automate releases with a GitHub Actions workflow gated on CI success
+# ADR-019: Automate Git Flow releases with versioned GitHub Actions
 
 ## Context
 
-The repo follows Git Flow ([CONTRIBUTING.md § Branching model](../../CONTRIBUTING.md)): `main` is production-ready code, `dev` is the integration branch, and `release/*`/`hotfix/*` branches carry a version bump into `main`. Every PR in the repo is squash-merged only (`allow_merge_commit`/`allow_rebase_merge` disabled repo-wide), which means there is no literal git fast-forward between `main` and `dev` after a release lands — squash-merge produces a new commit with a different SHA on each side. Left manual, cutting a release means someone has to remember to tag the commit, write release notes, and separately open a PR to carry the release back into `dev` so it doesn't drift. For a solo-maintainer portfolio project, a manual multi-step release process is also the kind of step that gets skipped under time pressure, which is a correctness risk in itself (an untagged release, or `dev` silently diverging from what shipped).
+LifeOS uses Git Flow: `dev` is the integration branch, `release/*` and
+`hotfix/*` branches are promoted to `main`, and `main` is production-ready.
+The previous process still required a maintainer to create a release branch,
+edit the Gradle version, tag `main`, publish release notes, and synchronize the
+release back to `dev`. Those repeated steps were easy to perform inconsistently
+and did not maintain a clean development-version lifecycle.
 
-## Options Considered
+Version truth must remain singular. The root `build.gradle.kts` is the source
+of the project version, while Git tags are the source of the release history.
+`main` must remain protected, and no release may be published from a commit
+that has not passed CI.
 
-- **Fully manual releases** — tag, release notes, and the `dev` sync-back PR are all done by hand. Rejected: this is exactly the kind of repeatable, mechanical process that should not depend on a human remembering every step, and it does not exercise anything interesting from an engineering-portfolio standpoint.
-- **A release CLI tool (e.g. `semantic-release`, `release-please`) that infers the next version from commit messages (Conventional Commits)** — attractive in that it removes the manual version-bump step entirely, but it requires the whole team to follow a commit-message convention this repo doesn't currently enforce (no commit-lint step exists), and it would decide the version number algorithmically rather than as an explicit human decision made during release-prep. Rejected for now as more machinery than the current single-maintainer, low-release-frequency reality needs; revisit if commit volume or contributor count grows enough to make manual version selection error-prone.
-- **A GitHub Actions workflow triggered directly on `push: [main]`** — simpler to write than the option chosen below, but it means a release could be cut off a commit that hasn't actually been verified by CI yet if the two workflows race, or if `push` and CI-completion aren't causally ordered. Rejected in favor of gating on CI's own completion event.
-- **A GitHub Actions workflow triggered by `workflow_run` after the CI workflow completes on `main` (chosen)** — only runs once CI has actually reported a result for that exact commit, so a release can't ship off a build that hasn't been verified. This is the standard GitHub-documented pattern for "run job B only after workflow A succeeds" across separate workflow files.
+## Decision
 
-## Decision Made
+Use two workflows:
 
-Add `.github/workflows/release.yml`, triggered by `workflow_run` watching the `CI` workflow for completions on `main`. On a successful CI run, it reads `version` out of `build.gradle.kts`; if that version is a real release (no `-SNAPSHOT` suffix) and hasn't been tagged yet, it tags the commit `vX.Y.Z`, publishes a GitHub Release with auto-generated notes (`gh release create --generate-notes`), and opens a PR (base `dev`, head `main`) to bring the release commit back into `dev`. The version bump itself remains a manual step, done as part of preparing the `release/*`/`hotfix/*` PR — the workflow only reacts to that bump, it doesn't choose the version.
+1. `.github/workflows/prepare-release.yml` starts after a merged `dev` PR with
+   exactly one release label (`release:patch`, `release:minor`, or
+   `release:major`), or from `workflow_dispatch` with the same bump choice.
+   It calculates the next stable SemVer from the latest `vX.Y.Z` tag (the first
+   release adopts the version already declared on `dev`), creates
+   `release/vX.Y.Z` from current `dev`, updates `build.gradle.kts`, and opens a
+   PR into `main`.
+2. `.github/workflows/release.yml` listens for a successful CI `workflow_run`
+   on an actual push to this repository's `main`. It validates the version and
+   release ordering, creates the tag and GitHub Release idempotently, then
+   opens a synchronization PR into `dev`. That PR merges the verified `main`
+   state and changes the Gradle version to the next `-SNAPSHOT`.
 
-## Why
+The reusable `scripts/release-version.sh` contains the parsing, comparison,
+bump, and single-version-source update logic used by both workflows.
 
-Gating on `workflow_run` rather than `push` ties the release directly to a verified build rather than to the mere existence of a commit on `main`, which is the same "assume dependencies fail, verify before acting" posture the rest of this repo's reliability guidance calls for. Reading the version from `build.gradle.kts` rather than maintaining it separately (e.g. in a workflow input or a separate VERSION file) means there is exactly one place version truth lives, avoiding the two-sources-of-truth class of bug. Using tag-existence as the "already released" idempotency check means re-running the workflow (or a `workflow_run` retry) is safe — it converges rather than double-releasing.
+## Options considered
 
-## Tradeoffs
+- **Keep every release step manual** — rejected because branch creation,
+  version editing, tagging, notes, and sync-back are mechanical and
+  idempotent.
+- **Automatically merge `dev` into `main`** — rejected because it would
+  bypass the production PR guard and remove the review point that Git Flow
+  intentionally provides.
+- **Infer versions from commit messages** — deferred. Conventional Commits
+  are not currently enforced, and an explicit release label makes the
+  major/minor/patch decision visible without adding a commit-lint dependency.
+- **Release directly on every push to `main`** — rejected because the release
+  job could race CI. The `workflow_run` gate ties publication to the verified
+  CI result for the exact commit.
 
-- **The `dev` sync-back PR's CI check starts in an approval-required state.** Any PR opened via the default `GITHUB_TOKEN` has its `pull_request` workflow runs created in GitHub's approval-required state rather than run automatically — a deliberate anti-recursion measure, not a bug in this workflow (see GitHub's [`GITHUB_TOKEN` docs](https://docs.github.com/en/actions/concepts/security/github_token)). A maintainer has to click "Approve workflows to run" in the PR's merge box before CI actually executes on it. This is a smaller risk than "no CI at all" would be: the PR's content is exactly what already passed CI on `main`, so nothing unverified is entering `dev` even before that click happens.
-- **Requires an extra one-time repo setting.** The workflow needs the repo's "Allow GitHub Actions to create and approve pull requests" toggle (Settings → Actions → General) enabled — a workflow's own `permissions: pull-requests: write` block is necessary but not sufficient; that separate admin-level toggle also gates whether `GITHUB_TOKEN` can call the PR-creation API at all. If it's off, the sync-back step now fails loudly (`::error::` + non-zero exit) instead of silently no-op'ing, but the release itself (tag + GitHub Release) still succeeds independently — only the sync-back is affected.
-- **No automatic version selection.** Because the version bump is a manual edit to `build.gradle.kts` rather than commit-message-driven, a maintainer who forgets to drop the `-SNAPSHOT` suffix in a `release/*` PR simply gets no release — safe (fails closed) but requires noticing the release didn't happen, since nothing pages anyone about a skipped release today.
-- **Tag-existence is the idempotency signal for tag/release creation, but sync-back is a separate, independently retryable gate.** If the "Create GitHub Release" step fails after "Tag release" has already succeeded (e.g. a transient API error), the tag exists but no Release was published, and the next run's gate sees the tag and skips both steps — the release stays stuck half-done until someone notices and intervenes manually (e.g. `gh release create` for the existing tag by hand). This part is an accepted gap for now given how rarely two independent GitHub API calls in the same job are expected to fail between each other. The sync-back PR step does not share this weakness: it runs whenever either a release was just cut *or* a tag already exists from an earlier run, so a sync-back that fails on its own (after tag+release already succeeded) gets retried on the next workflow run rather than silently never retrying.
-- **The sync-back PR is created from `main`'s branch tip, not a pinned commit**, so it can only be opened when `origin/main` still matches the exact commit CI verified — if `main` advances in the window between that CI run completing and this step executing (e.g. another release/hotfix merges in between), the step skips with a `::warning::` rather than opening a PR that might carry unverified commits, deferring to the next release run instead of pinning to a temporary branch (which would add real complexity for a gap that, on a single-maintainer repo with `main` protected behind required PRs, is rare in practice).
+## Reliability and security safeguards
+
+- Release preparation only writes when the merged PR originated in this
+  repository; fork PRs cannot use the write-capable path.
+- The publisher only accepts successful `push` runs from this repository's
+  `main`, and uses the triggering commit SHA for checkout and release target.
+- A stable version must be greater than the latest stable tag. Reusing a
+  version tag on a different commit fails closed.
+- Tag creation and GitHub Release creation are separate idempotent checks, so a
+  transient failure after tagging can be repaired by a later successful
+  workflow run.
+- A single concurrency group serializes releases on `main`, preventing two
+  verified runs from racing on one version.
+- The sync-back PR refuses to use a moving `main` tip that differs from the
+  commit CI verified. Merge conflicts outside `build.gradle.kts` fail loudly
+  for manual resolution rather than silently discarding development work.
+- The workflows require the repository-level **Allow GitHub Actions to create
+  and approve pull requests** setting in addition to the workflow permission
+  block. `GITHUB_TOKEN`-created PRs may require a maintainer to approve their
+  workflow run before CI executes.
 
 ## Consequences
 
-- Cutting a release becomes: bump the version in a `release/*`/`hotfix/*` PR, merge it into `main`. Everything after that (tag, GitHub Release, `dev` sync PR) happens without further manual steps.
-- `docs/adr/`, not just `CONTRIBUTING.md`, now records this as a deployment-model decision, consistent with this repo's practice of one ADR per decision of this kind (see the "Architecture Decision Records" policy in [`CLAUDE.md`](../../CLAUDE.md) / [`AGENTS.md`](../../AGENTS.md)).
-- The repo now has a dependency on a specific GitHub Actions repo setting ("Allow GitHub Actions to create and approve pull requests") that isn't visible from the code alone — anyone forking or re-creating this repo needs to know to enable it, which is why it's called out here and in the inline comment directly above the relevant workflow step.
+Normal release flow is now: label a merged `dev` PR, review and merge the
+generated `release/vX.Y.Z` PR into `main`, then let verified CI publish the
+release and open the `dev` synchronization PR. A maintainer still approves the
+production promotion and any repository-level workflow approval; no protected
+branch is bypassed.
 
-## When This Decision Would Be Wrong
+The system intentionally does not publish pre-releases. Supporting release
+candidates would require defining ordering and promotion semantics beyond the
+current Git Flow model.
 
-If this project moves to multiple contributors merging frequently enough that manual version selection becomes error-prone or contested, revisit Conventional-Commits-driven automatic versioning (`release-please` or equivalent) instead of a hand-edited `build.gradle.kts` version field. If the half-done-release gap (tag exists, no GitHub Release) is ever actually hit in practice, the gate check should be strengthened to verify actual Release existence (e.g. `gh release view "v$VERSION"`) rather than tag existence alone, rather than continuing to accept the gap.
+## Validation
 
-## How We Will Validate It
-
-There is no load or correctness benchmark applicable here — this is a release-process workflow, not a runtime code path. Validation is: the first real `release/*` PR merge into `main` should be watched end-to-end (tag created, GitHub Release published with correct notes, sync-back PR opened) rather than assumed correct from the YAML alone, since `workflow_run` behavior and repo-level Action permissions can only be fully exercised by an actual run, not a local dry run. If that first real run fails, the failure mode itself (which of the four steps failed, and why) should be folded back into this ADR's Tradeoffs section rather than silently patched.
+Local validation covers the SemVer helper with shell syntax checks and
+representative initial, patch, minor, major, comparison, and file-update
+cases. The first real release must still be observed end to end because
+GitHub's `workflow_run`, token permissions, and workflow-approval behavior
+cannot be fully simulated locally.

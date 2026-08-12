@@ -1,14 +1,7 @@
 name: Release
 
-# Runs after CI succeeds on main, not on every push to main directly — a release
-# must never ship off an unverified build. See CONTRIBUTING.md § Branching model.
-#
-# workflow_run always executes with this repo's write-scoped token and secrets,
-# regardless of what triggered the upstream CI run — including a CI run started
-# by a pull_request from a fork. The job condition below requires the
-# triggering run to be a `push` event (not `pull_request`) on this repository
-# specifically, so a fork cannot get a branch it controls (e.g. one it names
-# "main") to run this workflow with our permissions.
+# Runs after CI succeeds on main, not on every push to main directly. A
+# release must never ship off an unverified build.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -19,12 +12,17 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize all main releases. Grouping by SHA allowed two main commits with
+# the same project version to race on the same tag.
 concurrency:
-  group: release-${{ github.event.workflow_run.head_sha }}
+  group: release-main
   cancel-in-progress: false
 
 jobs:
   release:
+    # workflow_run executes with this workflow's write-scoped token even when
+    # CI was started by a pull request. Only an actual push to this repository's
+    # main branch may reach the privileged release path.
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
@@ -32,111 +30,145 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout release commit
+      - name: Checkout verified main commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - name: Read project version
-        id: version
-        run: |
-          VERSION=$(grep -m1 -E '^\s*version = "' build.gradle.kts | sed -E 's/.*version = "([^"]+)".*/\1/')
-          if [[ -z "$VERSION" ]]; then
-            echo "::error::could not parse version from build.gradle.kts"
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      # `release` and `already_tagged` are deliberately separate outputs so the
-      # sync-back PR step (below) can retry independently of tag/release
-      # creation: if tag+release succeeded in an earlier run but the sync-back
-      # step itself then failed (e.g. a transient API error), a later run sees
-      # already_tagged=true and still attempts the sync, instead of silently
-      # never retrying it just because release=false on that later run.
-      - name: Decide whether this is a release
+      - name: Read and validate project version
         id: gate
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          write_output() {
+            printf '%s\n' "$@" >> "$GITHUB_OUTPUT"
+          }
+          VERSION=$(bash scripts/release-version.sh read build.gradle.kts)
+          write_output "version=$VERSION"
           if [[ "$VERSION" == *-SNAPSHOT ]]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "already_tagged=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping: version $VERSION is a SNAPSHOT, not a release."
-          elif git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "already_tagged=true" >> "$GITHUB_OUTPUT"
-            echo "Tag v$VERSION already exists; skipping tag/release, but still checking whether dev needs syncing."
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "already_tagged=false" >> "$GITHUB_OUTPUT"
+            write_output "stable=false" "tag_needed=false" "release_needed=false" "should_sync=false"
+            echo "Skipping $VERSION: development versions are not released."
+            exit 0
           fi
 
+          bash scripts/release-version.sh compare "$VERSION" "$VERSION" >/dev/null
+          git fetch origin --tags --force
+          TAG_SHA=""
+          if TAG_SHA=$(git rev-list -n1 "v$VERSION" 2>/dev/null); then
+            if [[ "$TAG_SHA" != "$HEAD_SHA" ]]; then
+              echo "::error::tag v$VERSION already points to $TAG_SHA, not the verified main commit $HEAD_SHA"
+              exit 1
+            fi
+            TAG_EXISTS=true
+          else
+            TAG_EXISTS=false
+          fi
+
+          LATEST_TAG=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^v$VERSION$" | sort -V | tail -n1 || true)
+          LATEST_VERSION="${LATEST_TAG#v}"
+          if [[ "$TAG_EXISTS" == false && -n "$LATEST_VERSION" && "$(bash scripts/release-version.sh compare "$VERSION" "$LATEST_VERSION")" != "1" ]]; then
+            echo "::error::version v$VERSION is not greater than the latest release v$LATEST_VERSION"
+            exit 1
+          fi
+
+          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          else
+            RELEASE_EXISTS=false
+          fi
+
+          NEXT_SNAPSHOT=$(bash scripts/release-version.sh next-snapshot "$VERSION")
+          write_output "stable=true"
+          write_output "tag_needed=$([[ "$TAG_EXISTS" == false ]] && echo true || echo false)"
+          write_output "release_needed=$([[ "$RELEASE_EXISTS" == false ]] && echo true || echo false)"
+          write_output "should_sync=true" "next_snapshot=$NEXT_SNAPSHOT"
+          echo "Release v$VERSION: tag_needed=$([[ "$TAG_EXISTS" == false ]] && echo true || echo false), release_needed=$([[ "$RELEASE_EXISTS" == false ]] && echo true || echo false)"
+
       - name: Tag release
-        if: steps.gate.outputs.release == 'true'
+        if: steps.gate.outputs.tag_needed == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.gate.outputs.version }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "Release v$VERSION"
           git push origin "v$VERSION"
 
       - name: Create GitHub Release
-        if: steps.gate.outputs.release == 'true'
+        if: steps.gate.outputs.release_needed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.gate.outputs.version }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          set -euo pipefail
           gh release create "v$VERSION" \
             --title "v$VERSION" \
             --target "$HEAD_SHA" \
             --generate-notes
 
-      # Requires the repo's "Allow GitHub Actions to create and approve pull
-      # requests" setting (Settings > Actions > General) to be enabled — the
-      # `permissions: pull-requests: write` block above scopes what the token
-      # is *allowed* to do, but that separate repo-level toggle gates whether
-      # GITHUB_TOKEN can call the PR-creation API at all. The pull_request run
-      # this PR triggers is also created in GitHub's "approval-required" state
-      # (GITHUB_TOKEN-opened PRs always are, to prevent recursive workflow
-      # runs) — a maintainer has to click "Approve workflows to run" in the
-      # PR's merge box for CI to actually execute on it. Its content already
-      # passed CI on main, so this isn't validating unreviewed code, but the
-      # CI check won't appear automatically.
-      - name: Open dev sync-back PR
-        if: steps.gate.outputs.release == 'true' || steps.gate.outputs.already_tagged == 'true'
+      - name: Open dev synchronization PR
+        if: steps.gate.outputs.should_sync == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.gate.outputs.version }}
+          NEXT_SNAPSHOT: ${{ steps.gate.outputs.next_snapshot }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          set -euo pipefail
           git fetch origin dev main
-          if git merge-base --is-ancestor origin/main origin/dev; then
-            echo "dev already contains this release commit; nothing to sync."
+          if git merge-base --is-ancestor "$HEAD_SHA" origin/dev; then
+            echo "dev already contains the verified release commit; nothing to sync."
             exit 0
           fi
-          # main is protected (PR required), but it can still advance between
-          # the verified CI run completing and this step running (e.g. another
-          # release/hotfix merging in between). Refuse to open a sync PR off a
-          # main that no longer matches the commit CI actually verified — the
-          # next release run will retry this once its own CI passes.
-          current_main_sha=$(git rev-parse origin/main)
-          if [[ "$current_main_sha" != "$HEAD_SHA" ]]; then
-            echo "::warning::origin/main ($current_main_sha) has moved past the verified commit ($HEAD_SHA); skipping sync-back this run, a later release will pick it up."
+          CURRENT_MAIN_SHA=$(git rev-parse origin/main)
+          if [[ "$CURRENT_MAIN_SHA" != "$HEAD_SHA" ]]; then
+            echo "::warning::origin/main ($CURRENT_MAIN_SHA) moved past the verified commit ($HEAD_SHA); skipping synchronization for this run."
             exit 0
           fi
-          if ! pr_output=$(gh pr create \
-            --base dev \
-            --head main \
-            --title "Sync dev with v$VERSION release" \
-            --body "Automated sync-back after the v$VERSION release (see CONTRIBUTING.md § Branching model — squash-merge-only means this can't be a fast-forward). This PR's CI check starts in an approval-required state since GITHUB_TOKEN opened it — see the inline comment above this step for why." 2>&1); then
-            if echo "$pr_output" | grep -qi "already exists"; then
-              echo "A sync PR is already open for this release; nothing to do."
-              exit 0
-            fi
-            echo "::error::gh pr create failed: $pr_output"
+
+          SYNC_BRANCH="automation/sync-v$VERSION-to-dev"
+          MERGED_SYNC_PR=$(gh pr list --base dev --head "$SYNC_BRANCH" --state merged --json number,url --jq '.[0] | "\(.number) \(.url)"' || true)
+          if [[ -n "$MERGED_SYNC_PR" ]]; then
+            echo "Dev synchronization PR was already merged: $MERGED_SYNC_PR"
+            exit 0
+          fi
+          EXISTING_PR=$(gh pr list --base dev --head "$SYNC_BRANCH" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"' || true)
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "Dev synchronization PR already exists: $EXISTING_PR"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            echo "::error::remote branch $SYNC_BRANCH already exists without an open synchronization PR"
             exit 1
           fi
-          echo "$pr_output"
+
+          git switch --create "$SYNC_BRANCH" origin/dev
+          if ! git merge --no-commit --no-ff origin/main; then
+            mapfile -t CONFLICT_FILES < <(git diff --name-only --diff-filter=U)
+            if [[ "${#CONFLICT_FILES[@]}" -ne 1 || "${CONFLICT_FILES[0]}" != "build.gradle.kts" ]]; then
+              git merge --abort
+              echo "::error::main-to-dev synchronization has conflicts outside build.gradle.kts; resolve this release sync manually"
+              exit 1
+            fi
+            # The version line is intentionally rewritten below. Keep dev's
+            # copy so unrelated development-only Gradle changes are preserved.
+            git checkout --ours -- build.gradle.kts
+            git add build.gradle.kts
+          fi
+          bash scripts/release-version.sh set build.gradle.kts "$NEXT_SNAPSHOT"
+          git diff --check
+          git add build.gradle.kts
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: start development after v$VERSION"
+          git push --set-upstream origin "$SYNC_BRANCH"
+          gh pr create \
+            --base dev \
+            --head "$SYNC_BRANCH" \
+            --title "Sync v$VERSION and start $NEXT_SNAPSHOT development" \
+            --body "Automated post-release synchronization. This PR brings the verified v$VERSION main commit back into dev and advances the Gradle version to $NEXT_SNAPSHOT. The PR is intentionally reviewable because main and dev are squash-merged rather than fast-forwarded."

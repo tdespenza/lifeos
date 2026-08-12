@@ -745,9 +745,10 @@ committed response, and mismatched or repeated reuse revokes the session family.
 issuer/audience, subject, session id, authentication method, and expiry claims for password, OIDC,
 and passkey authentication. Production deployments use configured RSA signing material and expose
 the public verification key through JWKS; the existing HMAC path remains a local/test compatibility
-mode. Refresh credentials are high-entropy opaque values. PostgreSQL stores only token digests,
-durable token-family state, consumed-token replay evidence, and a short-lived encrypted idempotency
-envelope. A pessimistic family-row lock linearizes concurrent refresh requests; one matching retry
+mode. Refresh credentials are high-entropy opaque values. PostgreSQL token-state rows store only
+token digests alongside durable token-family state and consumed-token replay evidence; the bounded
+encrypted idempotency envelope is a separate ciphertext record containing the permitted retry
+response. A pessimistic family-row lock linearizes concurrent refresh requests; one matching retry
 is returned once, while mismatched or repeated reuse revokes the family. JWT validation performs
 signature/claims checks followed by the durable session check and returns generic failures without
 logging token material. See [`docs/api/identity-service.md`](api/identity-service.md) and

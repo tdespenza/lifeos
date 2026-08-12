@@ -75,6 +75,7 @@ class LoginControllerIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Correlation-ID", matchesPattern("[0-9a-f-]{36}")))
+                .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.sessionId").value(matchesPattern("[0-9a-f-]{36}")))
                 .andExpect(jsonPath("$.accessToken").value(matchesPattern("[^.]+\\.[^.]+\\.[^.]+")))
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))

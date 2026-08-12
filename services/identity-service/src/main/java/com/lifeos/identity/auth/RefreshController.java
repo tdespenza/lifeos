@@ -54,7 +54,8 @@ public class RefreshController {
         String fingerprintSource = address + "|" + (userAgent == null ? "" : userAgent);
         LoginResponse response = refreshTokenService.refresh(new RefreshTokenService.RefreshRequest(
                 refreshToken, idempotencyKey, TokenDigest.sha256("refresh-client|" + fingerprintSource)));
-        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok();
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store");
         var cookie = RefreshCookieSupport.from(response);
         if (cookie != null) {
             responseBuilder.header(HttpHeaders.SET_COOKIE, cookie.toString());

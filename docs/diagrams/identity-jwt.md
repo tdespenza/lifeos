@@ -113,8 +113,8 @@ flowchart LR
   linearization point. A mismatched replay revokes the family instead of minting another successor.
 - JWT verification is only an early filter. Protected data requires an active durable session check,
   and a revoked session remains rejected after cache loss or restart.
-- Indexed family, session, and token-digest lookups are O(1) average-case in the number of accounts;
-  replay evidence is bounded per family and deadline-bounded.
+- Family, session, and token-digest lookups use the declared database indexes; replay evidence is
+  bounded per family and deadline-bounded.
 
 ## Operational trade-offs
 

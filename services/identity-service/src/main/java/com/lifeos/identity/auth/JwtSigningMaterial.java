@@ -67,6 +67,10 @@ public final class JwtSigningMaterial {
                         new PKCS8EncodedKeySpec(decodePem(privatePem, "PRIVATE KEY")));
                 RSAPublicKey publicKey = (RSAPublicKey) factory.generatePublic(
                         new X509EncodedKeySpec(decodePem(publicPem, "PUBLIC KEY")));
+                if (!privateKey.getModulus().equals(publicKey.getModulus())) {
+                    throw new IllegalStateException(
+                            "Configured JWT RSA private and public keys do not match");
+                }
                 if (publicKey.getModulus().bitLength() < 2048) {
                     throw new IllegalStateException("JWT RSA keys must be at least 2048 bits");
                 }

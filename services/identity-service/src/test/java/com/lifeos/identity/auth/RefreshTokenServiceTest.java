@@ -17,10 +17,12 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -103,6 +105,41 @@ class RefreshTokenServiceTest {
     }
 
     @Test
+    void capsSuccessorAccessTokenAtFamilyDeadline() {
+        TokenFamily nearDeadlineFamily = new TokenFamily(
+                family.getId(), account.getId(), session.getId(), TokenDigest.sha256("presented"),
+                NOW, NOW.plusSeconds(30), NOW.plusSeconds(60), NOW.plusSeconds(45));
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(nearDeadlineFamily));
+        when(familyRepository.findByIdForUpdate(nearDeadlineFamily.getId()))
+                .thenReturn(Optional.of(nearDeadlineFamily));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(
+                nearDeadlineFamily.getId(), "key"))
+                .thenReturn(Optional.empty());
+        when(consumedRepository.countByFamilyId(nearDeadlineFamily.getId())).thenReturn(0L);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
+        when(tokenGenerator.next()).thenReturn("successor-refresh");
+        when(jwtEncoder.encode(any())).thenReturn(Jwt.withTokenValue("successor-access")
+                .header("alg", "HS256")
+                .claim("sub", account.getId().toString())
+                .issuedAt(NOW)
+                .expiresAt(NOW.plusSeconds(60))
+                .build());
+        when(responseCipher.encrypt(any(), any(), any())).thenReturn("encrypted-envelope");
+
+        LoginResponse response = service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint"));
+
+        ArgumentCaptor<JwtEncoderParameters> parameters =
+                ArgumentCaptor.forClass(JwtEncoderParameters.class);
+        verify(jwtEncoder).encode(parameters.capture());
+        assertThat(parameters.getValue().getClaims().getExpiresAt()).isEqualTo(NOW.plusSeconds(60));
+        assertThat(response.expiresIn()).isEqualTo(60);
+        assertThat(session.getExpiresAt()).isEqualTo(NOW.plusSeconds(60));
+    }
+
+    @Test
     void matchingCommittedRetryReturnsTheSameSuccessorOnce() {
         RefreshReplayRecord replay = new RefreshReplayRecord(
                 family.getId(), "key", "fingerprint", TokenDigest.sha256("presented"),
@@ -130,6 +167,34 @@ class RefreshTokenServiceTest {
                 "presented", "key", "fingerprint")))
                 .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
         assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+    }
+
+    @Test
+    void rejectsMatchingCommittedRetryAfterFamilyDeadline() {
+        TokenFamily expiredFamily = new TokenFamily(
+                family.getId(), account.getId(), session.getId(), TokenDigest.sha256("presented"),
+                NOW.minusSeconds(100),
+                NOW.plusSeconds(30),
+                NOW.minusSeconds(1),
+                NOW.plusSeconds(30));
+        RefreshReplayRecord replay = new RefreshReplayRecord(
+                expiredFamily.getId(), "key", "fingerprint", TokenDigest.sha256("presented"),
+                NOW.plusSeconds(30));
+        replay.commit("encrypted-envelope");
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(expiredFamily));
+        when(familyRepository.findByIdForUpdate(expiredFamily.getId()))
+                .thenReturn(Optional.of(expiredFamily));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(
+                expiredFamily.getId(), "key"))
+                .thenReturn(Optional.of(replay));
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+
+        assertThat(expiredFamily.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+        verify(responseCipher, never()).decrypt(any(), any(), any());
     }
 
     @Test

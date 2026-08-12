@@ -215,17 +215,13 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
                     .addKeyValue("dependencyException", exception.getClass().getName())
                     .log("Session token issuance dependency failed");
             throw new AuthenticationDependencyUnavailableException(exception);
+        } catch (AuthenticationDependencyUnavailableException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             log.atError()
                     .addKeyValue("event", "session_token_issuance_failed")
                     .addKeyValue("dependencyException", exception.getClass().getName())
                     .log("Session token issuance failed");
-            if (exception instanceof AuthenticationDependencyUnavailableException dependencyException) {
-                throw dependencyException;
-            }
-            if (exception instanceof DataAccessException dataAccessException) {
-                throw new AuthenticationDependencyUnavailableException(dataAccessException);
-            }
             throw exception;
         }
     }

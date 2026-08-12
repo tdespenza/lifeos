@@ -225,18 +225,23 @@ public class RefreshTokenService {
             }
 
             String successorRefreshToken = tokenGenerator.next();
-            Instant successorAccessExpiresAt = now.plus(properties.getAccessTokenTtl());
+            Instant successorAccessExpiresAt = min(
+                    now.plus(properties.getAccessTokenTtl()), family.getFamilyExpiresAt());
             Instant successorRefreshExpiresAt = min(
                     now.plus(properties.getJwt().getRefreshTokenTtl()), family.getFamilyExpiresAt());
             Instant successorIdleExpiresAt = min(
                     now.plus(properties.getJwt().getRefreshIdleTtl()), family.getFamilyExpiresAt());
             String successorAccessToken = issueAccessToken(
-                    account, session, now, session.getAuthenticationMethod());
+                    account,
+                    session,
+                    now,
+                    successorAccessExpiresAt,
+                    session.getAuthenticationMethod());
             LoginResponse response = new LoginResponse(
                     session.getId(),
                     successorAccessToken,
                     TOKEN_TYPE,
-                    properties.getAccessTokenTtl().toSeconds(),
+                    Duration.between(now, successorAccessExpiresAt).toSeconds(),
                     successorRefreshToken,
                     Duration.between(now, successorRefreshExpiresAt).toSeconds());
 
@@ -269,6 +274,12 @@ public class RefreshTokenService {
             String presentedHash,
             String requestFingerprint) {
         Instant now = clock.instant();
+        if (family.getStatus() != TokenFamilyStatus.ACTIVE
+                || !now.isBefore(family.getRefreshExpiresAt())
+                || !now.isBefore(family.getIdleExpiresAt())
+                || !now.isBefore(family.getFamilyExpiresAt())) {
+            return revokeAndReject(family);
+        }
         if (replay.getState() == RefreshReplayState.COMMITTED
                 && replay.getPredecessorTokenHash().equals(presentedHash)
                 && replay.getRequestFingerprint().equals(requestFingerprint)
@@ -302,8 +313,8 @@ public class RefreshTokenService {
             UserAccount account,
             AuthSession session,
             Instant issuedAt,
+            Instant expiresAt,
             SessionAuthenticationMethod authenticationMethod) {
-        Instant expiresAt = issuedAt.plus(properties.getAccessTokenTtl());
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(properties.getJwt().getIssuer())
                 .audience(java.util.List.of(properties.getJwt().getAudience()))

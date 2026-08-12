@@ -148,7 +148,8 @@ public class OidcController {
                 error,
                 browserTransaction,
                 clientAddressResolver.resolve(servletRequest));
-        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok();
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store");
         if (browserTransaction != null) {
             responseBuilder.header(HttpHeaders.SET_COOKIE, expiredBrowserTransactionCookie(state).toString());
         }

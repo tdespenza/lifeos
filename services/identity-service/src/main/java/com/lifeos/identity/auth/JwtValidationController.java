@@ -6,7 +6,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Small internal validation boundary useful to protected services during the migration to a shared verifier library. */
+/**
+ * Small internal validation boundary for protected services during migration to a shared verifier
+ * library.
+ */
 @RestController
 public class JwtValidationController {
 

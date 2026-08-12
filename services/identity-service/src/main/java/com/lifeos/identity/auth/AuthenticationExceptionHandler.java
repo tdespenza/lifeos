@@ -1,5 +1,6 @@
 package com.lifeos.identity.auth;
 
+import com.lifeos.identity.account.UserAccountController;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ProblemDetail;
@@ -10,7 +11,10 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 
 /** Sanitized errors for authentication controllers outside the login controller. */
 @RestControllerAdvice(assignableTypes = {
+        UserAccountController.class,
         RefreshController.class,
+        OidcController.class,
+        PasskeyController.class,
         JwtValidationController.class
 })
 public class AuthenticationExceptionHandler {

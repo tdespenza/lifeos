@@ -13,7 +13,8 @@ flowchart LR
     Identity --> Refresh["One-time opaque refresh token"]
     Identity --> Session["PostgreSQL session and family authority"]
     Service["Protected service"] --> Verify["Signature and claims check"]
-    Verify --> SessionCheck["Durable active-session check"]
+    Verify --> IdentityVerify["Identity-service validation contract"]
+    IdentityVerify --> SessionCheck["Durable active-session check"]
     SessionCheck --> Session
     Identity --> JWKS["Public JWKS endpoint"]
     Verify --> JWKS
@@ -60,12 +61,15 @@ sequenceDiagram
     actor Client
     participant Service as Protected service
     participant JWKS as JWKS endpoint
-    participant DB as PostgreSQL
+    participant Identity as Identity service
+    participant DB as Identity PostgreSQL
 
     Client->>Service: Bearer access JWT
     Service->>JWKS: Load public key by kid
     Service->>Service: Verify signature, issuer, audience, subject, session id, and expiry
-    Service->>DB: Check session is active and digest matches
+    Service->>Identity: Validate bearer through internal auth contract
+    Identity->>DB: Check session is active and digest matches
+    Identity-->>Service: Validated subject or generic failure
     alt Active session
         Service-->>Client: Protected response
     else Invalid or revoked
@@ -76,16 +80,20 @@ sequenceDiagram
 ## Token-family lifecycle
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Active
-    Active --> Active: Successful rotation
-    Active --> RetryAvailable: Rotation committed
-    RetryAvailable --> Active: Matching retry returned once
-    RetryAvailable --> Revoked: Mismatch or second retry
-    Active --> Expired: Idle or absolute deadline
-    Active --> Revoked: Explicit revocation or replay
-    Expired --> [*]
-    Revoked --> [*]
+flowchart LR
+    subgraph Family[Token family status]
+        Active["ACTIVE"]
+        Active --> Expired["EXPIRED"]
+        Active --> Revoked["REVOKED"]
+    end
+    subgraph Replay[Replay record state]
+        Pending["PENDING"] --> Committed["COMMITTED"]
+        Committed --> RetryConsumed["RETRY_CONSUMED"]
+    end
+    Active -. "rotation commits" .-> Pending
+    Committed -. "matching retry" .-> RetryConsumed
+    Committed -. "mismatch or second retry" .-> Revoked
+    Active -. "idle or absolute deadline" .-> Expired
 ```
 
 ## Invariants

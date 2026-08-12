@@ -35,6 +35,9 @@ public class RefreshReplayRecord {
     @Column(name = "request_fingerprint", nullable = false, length = 64, updatable = false)
     private String requestFingerprint;
 
+    @Column(name = "predecessor_token_hash", nullable = false, length = 64, updatable = false)
+    private String predecessorTokenHash;
+
     @Lob
     @Column(name = "encrypted_response")
     private String encryptedResponse;
@@ -57,49 +60,103 @@ public class RefreshReplayRecord {
             UUID familyId,
             String idempotencyKey,
             String requestFingerprint,
+            String predecessorTokenHash,
             Instant expiresAt) {
         this.id = UUID.randomUUID();
         this.familyId = familyId;
         this.idempotencyKey = idempotencyKey;
         this.requestFingerprint = requestFingerprint;
+        this.predecessorTokenHash = predecessorTokenHash;
         this.expiresAt = expiresAt;
         this.state = RefreshReplayState.PENDING;
         this.retryCount = 0;
     }
 
+    /**
+     * Returns the owning token-family identifier.
+     *
+     * @return family identifier
+     */
     public UUID getFamilyId() {
         return familyId;
     }
 
+    /**
+     * Returns the client idempotency key.
+     *
+     * @return idempotency key
+     */
     public String getIdempotencyKey() {
         return idempotencyKey;
     }
 
+    /**
+     * Returns the server-derived request fingerprint.
+     *
+     * @return request fingerprint
+     */
     public String getRequestFingerprint() {
         return requestFingerprint;
     }
 
+    /**
+     * Returns the digest of the predecessor consumed by this replay record.
+     *
+     * @return predecessor token digest
+     */
+    public String getPredecessorTokenHash() {
+        return predecessorTokenHash;
+    }
+
+    /**
+     * Returns the encrypted response envelope.
+     *
+     * @return encrypted response, or {@code null} while pending
+     */
     public String getEncryptedResponse() {
         return encryptedResponse;
     }
 
+    /**
+     * Returns the durable replay state.
+     *
+     * @return replay state
+     */
     public RefreshReplayState getState() {
         return state;
     }
 
+    /**
+     * Returns the number of matching retries already consumed.
+     *
+     * @return retry count
+     */
     public int getRetryCount() {
         return retryCount;
     }
 
+    /**
+     * Returns the replay envelope expiration instant.
+     *
+     * @return expiration instant
+     */
     public Instant getExpiresAt() {
         return expiresAt;
     }
 
+    /**
+     * Stores the encrypted response and makes the record retryable.
+     *
+     * @param encryptedResponse encrypted response envelope
+     */
     public void commit(String encryptedResponse) {
         this.encryptedResponse = encryptedResponse;
         this.state = RefreshReplayState.COMMITTED;
     }
 
+    /**
+     * Consumes the one permitted matching retry.
+     */
     public void consumeRetry() {
         this.retryCount++;
     }

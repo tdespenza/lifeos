@@ -42,6 +42,7 @@ identity:
       signing-secret: ${IDENTITY_JWT_SIGNING_SECRET:}
       private-key-pem: ${IDENTITY_JWT_PRIVATE_KEY_PEM:}
       public-key-pem: ${IDENTITY_JWT_PUBLIC_KEY_PEM:}
+      # Must be an independent secret with at least 32 UTF-8 bytes; it is never derived from JWT keys.
       replay-encryption-secret: ${IDENTITY_REFRESH_REPLAY_ENCRYPTION_SECRET:}
       refresh-token-ttl: ${IDENTITY_REFRESH_TOKEN_TTL:P30D}
       refresh-family-ttl: ${IDENTITY_REFRESH_FAMILY_TTL:P90D}

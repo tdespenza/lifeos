@@ -925,66 +925,152 @@ public class IdentityAuthProperties {
             this.signingKeyId = signingKeyId;
         }
 
+        /**
+         * Returns the configured PKCS#8 RSA private key PEM.
+         *
+         * @return private key PEM, or {@code null} when HMAC signing is selected
+         */
         public String getPrivateKeyPem() {
             return privateKeyPem;
         }
 
+        /**
+         * Sets the PKCS#8 RSA private key PEM.
+         *
+         * @param privateKeyPem private key PEM
+         */
         public void setPrivateKeyPem(String privateKeyPem) {
             this.privateKeyPem = privateKeyPem;
         }
 
+        /**
+         * Returns the configured X.509 RSA public key PEM.
+         *
+         * @return public key PEM, or {@code null} when HMAC signing is selected
+         */
         public String getPublicKeyPem() {
             return publicKeyPem;
         }
 
+        /**
+         * Sets the X.509 RSA public key PEM.
+         *
+         * @param publicKeyPem public key PEM
+         */
         public void setPublicKeyPem(String publicKeyPem) {
             this.publicKeyPem = publicKeyPem;
         }
 
+        /**
+         * Returns the dedicated replay-envelope encryption secret.
+         *
+         * @return replay encryption secret
+         */
         public String getReplayEncryptionSecret() {
             return replayEncryptionSecret;
         }
 
+        /**
+         * Sets the dedicated replay-envelope encryption secret.
+         *
+         * @param replayEncryptionSecret secret with at least 32 UTF-8 bytes
+         */
         public void setReplayEncryptionSecret(String replayEncryptionSecret) {
+            if (replayEncryptionSecret == null
+                    || replayEncryptionSecret.isBlank()
+                    || replayEncryptionSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+                throw new IllegalArgumentException(
+                        "replayEncryptionSecret must contain at least 32 bytes");
+            }
             this.replayEncryptionSecret = replayEncryptionSecret;
         }
 
+        /**
+         * Returns the maximum lifetime of an individual refresh credential.
+         *
+         * @return refresh-token TTL
+         */
         public Duration getRefreshTokenTtl() {
             return refreshTokenTtl;
         }
 
+        /**
+         * Sets the maximum lifetime of an individual refresh credential.
+         *
+         * @param refreshTokenTtl refresh-token TTL
+         */
         public void setRefreshTokenTtl(Duration refreshTokenTtl) {
             this.refreshTokenTtl = positiveDuration(refreshTokenTtl, "refreshTokenTtl");
         }
 
+        /**
+         * Returns the absolute lifetime of a refresh-token family.
+         *
+         * @return family TTL
+         */
         public Duration getRefreshFamilyTtl() {
             return refreshFamilyTtl;
         }
 
+        /**
+         * Sets the absolute lifetime of a refresh-token family.
+         *
+         * @param refreshFamilyTtl family TTL
+         */
         public void setRefreshFamilyTtl(Duration refreshFamilyTtl) {
             this.refreshFamilyTtl = positiveDuration(refreshFamilyTtl, "refreshFamilyTtl");
         }
 
+        /**
+         * Returns the idle lifetime after the last successful refresh.
+         *
+         * @return idle TTL
+         */
         public Duration getRefreshIdleTtl() {
             return refreshIdleTtl;
         }
 
+        /**
+         * Sets the idle lifetime after the last successful refresh.
+         *
+         * @param refreshIdleTtl idle TTL
+         */
         public void setRefreshIdleTtl(Duration refreshIdleTtl) {
             this.refreshIdleTtl = positiveDuration(refreshIdleTtl, "refreshIdleTtl");
         }
 
+        /**
+         * Returns the lifetime of a committed idempotent retry envelope.
+         *
+         * @return replay envelope TTL
+         */
         public Duration getRefreshReplayTtl() {
             return refreshReplayTtl;
         }
 
+        /**
+         * Sets the lifetime of a committed idempotent retry envelope.
+         *
+         * @param refreshReplayTtl replay envelope TTL
+         */
         public void setRefreshReplayTtl(Duration refreshReplayTtl) {
             this.refreshReplayTtl = positiveDuration(refreshReplayTtl, "refreshReplayTtl");
         }
 
+        /**
+         * Returns the bounded replay-evidence count per family.
+         *
+         * @return maximum replay records
+         */
         public int getMaxRefreshReplayRecordsPerFamily() {
             return maxRefreshReplayRecordsPerFamily;
         }
 
+        /**
+         * Sets the bounded replay-evidence count per family.
+         *
+         * @param maxRefreshReplayRecordsPerFamily maximum replay records
+         */
         public void setMaxRefreshReplayRecordsPerFamily(int maxRefreshReplayRecordsPerFamily) {
             if (maxRefreshReplayRecordsPerFamily < 1) {
                 throw new IllegalArgumentException("maxRefreshReplayRecordsPerFamily must be positive");
@@ -992,14 +1078,29 @@ public class IdentityAuthProperties {
             this.maxRefreshReplayRecordsPerFamily = maxRefreshReplayRecordsPerFamily;
         }
 
+        /**
+         * Returns the permitted JWT timestamp clock skew.
+         *
+         * @return clock skew
+         */
         public Duration getClockSkew() {
             return clockSkew;
         }
 
+        /**
+         * Sets the permitted JWT timestamp clock skew.
+         *
+         * @param clockSkew clock skew
+         */
         public void setClockSkew(Duration clockSkew) {
             this.clockSkew = positiveDuration(clockSkew, "clockSkew");
         }
 
+        /**
+         * Validates all JWT and refresh lifetime settings.
+         *
+         * @return true when every lifetime is positive
+         */
         @AssertTrue(message = "JWT lifetime settings must be positive")
         public boolean areLifetimeSettingsPositive() {
             return isPositive(refreshTokenTtl) && isPositive(refreshFamilyTtl)
@@ -1007,12 +1108,29 @@ public class IdentityAuthProperties {
                     && isPositive(clockSkew);
         }
 
+        /**
+         * Validates that one supported JWT signing mode is configured.
+         *
+         * @return true when HMAC or a complete RSA key pair is configured
+         */
         @AssertTrue(message = "an HMAC secret or an RSA key pair must be configured")
         public boolean isSigningMaterialConfigured() {
             boolean hmacConfigured = signingSecret != null && !signingSecret.isBlank();
             boolean rsaConfigured = privateKeyPem != null && !privateKeyPem.isBlank()
                     && publicKeyPem != null && !publicKeyPem.isBlank();
             return hmacConfigured || rsaConfigured;
+        }
+
+        /**
+         * Confirms that replay envelopes have an independently configured key.
+         *
+         * @return true when the dedicated secret meets the entropy floor
+         */
+        @AssertTrue(message = "replayEncryptionSecret must contain at least 32 bytes")
+        public boolean isReplayEncryptionConfigured() {
+            return replayEncryptionSecret != null
+                    && !replayEncryptionSecret.isBlank()
+                    && replayEncryptionSecret.getBytes(StandardCharsets.UTF_8).length >= 32;
         }
 
         private Duration positiveDuration(Duration value, String name) {

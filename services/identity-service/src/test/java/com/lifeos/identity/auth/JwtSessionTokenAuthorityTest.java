@@ -47,6 +47,7 @@ class JwtSessionTokenAuthorityTest {
     @BeforeEach
     void setUp() {
         IdentityAuthProperties properties = new IdentityAuthProperties();
+        properties.getJwt().setSigningSecret("test-only-secret-that-is-at-least-32-bytes-long");
         authority = new JwtSessionTokenAuthority(
                 jwtEncoder,
                 sessionRepository,

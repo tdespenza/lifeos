@@ -11,9 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwsHeader;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,11 +34,26 @@ public class RefreshTokenService {
     private final AuthSessionRepository sessionRepository;
     private final UserAccountRepository accountRepository;
     private final JwtEncoder jwtEncoder;
+    private final JwtSigningMaterial signingMaterial;
     private final OpaqueTokenGenerator tokenGenerator;
     private final RefreshResponseCipher responseCipher;
     private final IdentityAuthProperties properties;
     private final Clock clock;
 
+    /**
+     * Creates the Spring-wired refresh authority.
+     *
+     * @param familyRepository token-family repository
+     * @param consumedRepository consumed-token repository
+     * @param replayRepository replay-record repository
+     * @param sessionRepository session repository
+     * @param accountRepository account repository
+     * @param jwtEncoder access-token encoder
+     * @param signingMaterial resolved signing material
+     * @param tokenGenerator opaque-token generator
+     * @param responseCipher encrypted retry-response cipher
+     * @param properties authentication properties
+     */
     @Autowired
     public RefreshTokenService(
             TokenFamilyRepository familyRepository,
@@ -49,14 +62,29 @@ public class RefreshTokenService {
             AuthSessionRepository sessionRepository,
             UserAccountRepository accountRepository,
             JwtEncoder jwtEncoder,
+            JwtSigningMaterial signingMaterial,
             OpaqueTokenGenerator tokenGenerator,
             RefreshResponseCipher responseCipher,
             IdentityAuthProperties properties) {
         this(familyRepository, consumedRepository, replayRepository, sessionRepository,
-                accountRepository, jwtEncoder, tokenGenerator, responseCipher, properties,
+                accountRepository, jwtEncoder, signingMaterial, tokenGenerator, responseCipher, properties,
                 Clock.systemUTC());
     }
 
+    /**
+     * Compatibility constructor for deterministic unit tests without an injected material bean.
+     *
+     * @param familyRepository token-family repository
+     * @param consumedRepository consumed-token repository
+     * @param replayRepository replay-record repository
+     * @param sessionRepository session repository
+     * @param accountRepository account repository
+     * @param jwtEncoder access-token encoder
+     * @param tokenGenerator opaque-token generator
+     * @param responseCipher encrypted retry-response cipher
+     * @param properties authentication properties
+     * @param clock time source
+     */
     public RefreshTokenService(
             TokenFamilyRepository familyRepository,
             ConsumedRefreshTokenRepository consumedRepository,
@@ -68,12 +96,45 @@ public class RefreshTokenService {
             RefreshResponseCipher responseCipher,
             IdentityAuthProperties properties,
             Clock clock) {
+        this(familyRepository, consumedRepository, replayRepository, sessionRepository,
+                accountRepository, jwtEncoder, JwtSigningMaterial.from(properties), tokenGenerator,
+                responseCipher, properties, clock);
+    }
+
+    /**
+     * Creates the refresh authority with an injectable clock.
+     *
+     * @param familyRepository token-family repository
+     * @param consumedRepository consumed-token repository
+     * @param replayRepository replay-record repository
+     * @param sessionRepository session repository
+     * @param accountRepository account repository
+     * @param jwtEncoder access-token encoder
+     * @param signingMaterial resolved signing material
+     * @param tokenGenerator opaque-token generator
+     * @param responseCipher encrypted retry-response cipher
+     * @param properties authentication properties
+     * @param clock time source
+     */
+    public RefreshTokenService(
+            TokenFamilyRepository familyRepository,
+            ConsumedRefreshTokenRepository consumedRepository,
+            RefreshReplayRecordRepository replayRepository,
+            AuthSessionRepository sessionRepository,
+            UserAccountRepository accountRepository,
+            JwtEncoder jwtEncoder,
+            JwtSigningMaterial signingMaterial,
+            OpaqueTokenGenerator tokenGenerator,
+            RefreshResponseCipher responseCipher,
+            IdentityAuthProperties properties,
+            Clock clock) {
         this.familyRepository = familyRepository;
         this.consumedRepository = consumedRepository;
         this.replayRepository = replayRepository;
         this.sessionRepository = sessionRepository;
         this.accountRepository = accountRepository;
         this.jwtEncoder = jwtEncoder;
+        this.signingMaterial = signingMaterial;
         this.tokenGenerator = tokenGenerator;
         this.responseCipher = responseCipher;
         this.properties = properties;
@@ -129,7 +190,8 @@ public class RefreshTokenService {
                     .findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), request.idempotencyKey())
                     .orElse(null);
             if (existing != null) {
-                return handleExistingReplay(family, existing, request.requestFingerprint());
+                return handleExistingReplay(
+                        family, existing, presentedHash, request.requestFingerprint());
             }
             if (!family.getActiveTokenHash().equals(presentedHash)) {
                 return revokeAndReject(family);
@@ -150,6 +212,7 @@ public class RefreshTokenService {
 
             RefreshReplayRecord replay = new RefreshReplayRecord(
                     family.getId(), request.idempotencyKey(), request.requestFingerprint(),
+                    presentedHash,
                     now.plus(properties.getJwt().getRefreshReplayTtl()));
             replayRepository.saveAndFlush(replay);
 
@@ -188,26 +251,31 @@ public class RefreshTokenService {
             session.replaceAccessTokenHash(TokenDigest.sha256(successorAccessToken));
             session.extendExpiresAt(successorAccessExpiresAt);
             sessionRepository.save(session);
-            replay.commit(responseCipher.encrypt(response));
+            replay.commit(responseCipher.encrypt(family.getId(), request.idempotencyKey(), response));
             replayRepository.save(replay);
             return response;
         } catch (AuthenticationFailureException exception) {
             throw exception;
-        } catch (DataAccessException | AuthenticationDependencyUnavailableException exception) {
-            throw new AuthenticationDependencyUnavailableException(exception);
-        } catch (RuntimeException exception) {
+        } catch (AuthenticationDependencyUnavailableException exception) {
+            throw exception;
+        } catch (DataAccessException | JwtException exception) {
             throw new AuthenticationDependencyUnavailableException(exception);
         }
     }
 
     private LoginResponse handleExistingReplay(
-            TokenFamily family, RefreshReplayRecord replay, String requestFingerprint) {
+            TokenFamily family,
+            RefreshReplayRecord replay,
+            String presentedHash,
+            String requestFingerprint) {
         Instant now = clock.instant();
         if (replay.getState() == RefreshReplayState.COMMITTED
+                && replay.getPredecessorTokenHash().equals(presentedHash)
                 && replay.getRequestFingerprint().equals(requestFingerprint)
                 && replay.getRetryCount() == 0
                 && now.isBefore(replay.getExpiresAt())) {
-            LoginResponse response = responseCipher.decrypt(replay.getEncryptedResponse());
+            LoginResponse response = responseCipher.decrypt(
+                    family.getId(), replay.getIdempotencyKey(), replay.getEncryptedResponse());
             replay.consumeRetry();
             replayRepository.save(replay);
             return response;
@@ -240,30 +308,36 @@ public class RefreshTokenService {
                 .issuer(properties.getJwt().getIssuer())
                 .audience(java.util.List.of(properties.getJwt().getAudience()))
                 .subject(account.getId().toString())
-                .id(session.getId().toString())
+                .id(UUID.randomUUID().toString())
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
                 .claim("session_id", session.getId().toString())
                 .claim("auth_method", authenticationMethod.name())
                 .build();
-        boolean rsa = properties.getJwt().getPrivateKeyPem() != null
-                && !properties.getJwt().getPrivateKeyPem().isBlank();
-        JwsHeader.Builder header = rsa
-                ? JwsHeader.with(SignatureAlgorithm.RS256)
-                : JwsHeader.with(MacAlgorithm.HS256);
-        return jwtEncoder.encode(JwtEncoderParameters.from(header
-                .keyId(properties.getJwt().getSigningKeyId())
-                .type("JWT")
-                .build(), claims)).getTokenValue();
+        return jwtEncoder.encode(JwtEncoderParameters.from(signingMaterial.jwtHeader(), claims))
+                .getTokenValue();
     }
 
     private Instant min(Instant first, Instant second) {
         return first.isBefore(second) ? first : second;
     }
 
+    /**
+     * Raw refresh credential returned only to the response boundary.
+     *
+     * @param value raw opaque credential
+     * @param expiresAt credential expiration instant
+     */
     public record IssuedRefreshToken(String value, Instant expiresAt) {
     }
 
+    /**
+     * Inputs required for one refresh rotation attempt.
+     *
+     * @param refreshToken presented raw credential
+     * @param idempotencyKey client retry key
+     * @param requestFingerprint server-derived request fingerprint
+     */
     public record RefreshRequest(
             String refreshToken,
             String idempotencyKey,
@@ -275,6 +349,9 @@ public class RefreshTokenService {
      */
     public static class FamilyStateChangedException extends AuthenticationFailureException {
 
+        /**
+         * Creates the sanitized family-state failure.
+         */
         public FamilyStateChangedException() {
             super();
         }

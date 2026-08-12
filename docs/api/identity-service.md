@@ -42,7 +42,7 @@ path as unknown accounts.
 
 | Status | Condition | Body/headers |
 | --- | --- | --- |
-| `200 OK` | Active account and active password credential verified | `LoginResponse` containing `sessionId`, signed `accessToken`, `tokenType: Bearer`, and `expiresIn` seconds |
+| `200 OK` | Active account and active password credential verified | `LoginResponse` containing `sessionId`, signed `accessToken`, `tokenType: Bearer`, `expiresIn`, one-time `refreshToken`, and `refreshExpiresIn` seconds |
 | `400 Bad Request` | Missing, malformed, or invalidly shaped input | Generic RFC 9457 problem detail; values are not echoed |
 | `401 Unauthorized` | Unknown email, missing credential, wrong password, disabled account, or disabled credential | Same generic RFC 9457 problem detail for every credential failure |
 | `409 Conflict` | Account active-session capacity reached | Generic problem detail; no session is created |
@@ -71,16 +71,32 @@ production so the one-retry response envelope has a dedicated encryption key.
 
 ## `POST /api/v1/auth/refresh`
 
-Rotates a one-time opaque refresh token. The request must include an `Idempotency-Key` header and
-may include `X-Client-Fingerprint`; the fingerprint is hashed before persistence. Browser clients may
-send the token in the `lifeos_refresh` host-only cookie, while mobile and desktop clients send the
-token in the JSON body. A successful rotation returns the shared `LoginResponse` with a new access
-JWT and successor refresh token.
+Rotates a one-time opaque refresh token. The request must include an `Idempotency-Key` header. The
+service derives retry binding from the trusted server-observed client address and user-agent, hashes
+it before persistence, and does not accept a caller-supplied fingerprint. Browser clients may send the
+token in the `lifeos_refresh` host-only cookie, while mobile and desktop clients send the token in the
+JSON body. A successful rotation returns the shared `LoginResponse` with a new access JWT and
+successor refresh token.
+
+JSON clients send the exact `refreshToken` property:
+
+```json
+{
+  "refreshToken": "<one-time opaque value, redacted>"
+}
+```
+
+When both sources are present, the non-blank JSON `refreshToken` takes precedence; a blank or
+missing body value falls back to the `lifeos_refresh` cookie. Browser responses set that host-only,
+`HttpOnly`, `Secure`, `SameSite=Lax` cookie with `Path=/api/v1/auth`. Mobile and desktop clients
+should use the JSON body and platform secure storage. Retry evidence is always bound to the
+server-observed client address and user-agent rather than a caller-controlled or shared default value.
 
 The token family row is locked for the transaction. The predecessor digest is moved to durable
-consumed-token evidence and the successor digest is stored atomically. One matching retry with the
-same idempotency key and fingerprint returns the encrypted committed response once. A mismatched,
-second, or late retry revokes the family and returns the same generic authentication failure.
+consumed-token evidence and the successor digest is stored atomically. At most one successor is
+created; one matching retry with the same idempotency key, predecessor token, and server-derived binding
+returns the encrypted committed response once. A mismatched, second, or late retry revokes the
+family and returns the same generic authentication failure.
 
 | Status | Condition |
 | --- | --- |

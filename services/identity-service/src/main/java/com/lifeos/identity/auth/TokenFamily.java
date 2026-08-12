@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -15,10 +16,10 @@ import java.util.UUID;
  * stored; raw refresh credentials never cross the persistence boundary.
  */
 @Entity
-@Table(name = "refresh_token_family", indexes = {
-        @Index(name = "ix_refresh_family_active_hash", columnList = "active_token_hash"),
-        @Index(name = "ix_refresh_family_account", columnList = "account_id")
-})
+@Table(name = "refresh_token_family",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_refresh_family_active_hash", columnNames = "active_token_hash"),
+        indexes = @Index(name = "ix_refresh_family_account", columnList = "account_id"))
 public class TokenFamily {
 
     @Id
@@ -77,42 +78,95 @@ public class TokenFamily {
         this.status = TokenFamilyStatus.ACTIVE;
     }
 
+    /**
+     * Returns the token-family identifier.
+     *
+     * @return family identifier
+     */
     public UUID getId() {
         return id;
     }
 
+    /**
+     * Returns the owning account identifier.
+     *
+     * @return account identifier
+     */
     public UUID getAccountId() {
         return accountId;
     }
 
+    /**
+     * Returns the durable access-token session identifier.
+     *
+     * @return session identifier
+     */
     public UUID getSessionId() {
         return sessionId;
     }
 
+    /**
+     * Returns the digest of the currently active refresh token.
+     *
+     * @return active token digest
+     */
     public String getActiveTokenHash() {
         return activeTokenHash;
     }
 
+    /**
+     * Returns the last successful rotation instant.
+     *
+     * @return last-use instant
+     */
     public Instant getLastUsedAt() {
         return lastUsedAt;
     }
 
+    /**
+     * Returns the current refresh-token expiration instant.
+     *
+     * @return refresh expiration instant
+     */
     public Instant getRefreshExpiresAt() {
         return refreshExpiresAt;
     }
 
+    /**
+     * Returns the absolute family expiration instant.
+     *
+     * @return family expiration instant
+     */
     public Instant getFamilyExpiresAt() {
         return familyExpiresAt;
     }
 
+    /**
+     * Returns the idle expiration instant.
+     *
+     * @return idle expiration instant
+     */
     public Instant getIdleExpiresAt() {
         return idleExpiresAt;
     }
 
+    /**
+     * Returns the terminal or active family status.
+     *
+     * @return family status
+     */
     public TokenFamilyStatus getStatus() {
         return status;
     }
 
+    /**
+     * Replaces the active credential after a successful atomic rotation.
+     *
+     * @param successorHash successor token digest
+     * @param usedAt rotation instant
+     * @param successorRefreshExpiresAt successor credential expiration
+     * @param successorIdleExpiresAt successor idle expiration
+     */
     public void rotate(
             String successorHash,
             Instant usedAt,
@@ -124,11 +178,19 @@ public class TokenFamily {
         this.idleExpiresAt = successorIdleExpiresAt;
     }
 
+    /**
+     * Permanently revokes this family.
+     */
     public void revoke() {
         this.status = TokenFamilyStatus.REVOKED;
     }
 
+    /**
+     * Marks an active family expired without overwriting a prior revocation.
+     */
     public void expire() {
-        this.status = TokenFamilyStatus.EXPIRED;
+        if (this.status == TokenFamilyStatus.ACTIVE) {
+            this.status = TokenFamilyStatus.EXPIRED;
+        }
     }
 }

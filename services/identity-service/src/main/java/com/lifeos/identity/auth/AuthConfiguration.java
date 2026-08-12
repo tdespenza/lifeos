@@ -10,7 +10,8 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
@@ -47,13 +48,10 @@ public class AuthConfiguration {
     }
 
     /**
-     * Creates an HMAC JWT encoder from an externally supplied secret.
-     *
-     * <p>The secret is intentionally mandatory. A generated or committed fallback would produce
-     * tokens that are inconsistent across instances or trivially forgeable.
+     * Creates immutable RSA-or-HMAC JWT signing material from externalized configuration.
      *
      * @param properties authentication properties
-     * @return JWT encoder
+     * @return JWT signing material
      */
     @Bean
     public JwtSigningMaterial jwtSigningMaterial(IdentityAuthProperties properties) {
@@ -91,11 +89,11 @@ public class AuthConfiguration {
                     .macAlgorithm(MacAlgorithm.HS256)
                     .build();
         }
-        OAuth2TokenValidator<Jwt> issuer = JwtValidators.createDefaultWithIssuer(
-                properties.getJwt().getIssuer());
+        OAuth2TokenValidator<Jwt> issuer = new JwtIssuerValidator(properties.getJwt().getIssuer());
+        OAuth2TokenValidator<Jwt> timestamp = new JwtTimestampValidator(properties.getJwt().getClockSkew());
         OAuth2TokenValidator<Jwt> audience = new JwtClaimValidator<List<String>>(
                 "aud", audiences -> audiences != null && audiences.contains(properties.getJwt().getAudience()));
-        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(issuer, audience));
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(timestamp, issuer, audience));
         return decoder;
     }
 }

@@ -3,6 +3,7 @@ package com.lifeos.identity.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.lifeos.identity.account.UserAccount;
 import java.time.Clock;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 
 @ExtendWith(MockitoExtension.class)
 class JwtValidationServiceTest {
@@ -64,6 +66,70 @@ class JwtValidationServiceTest {
                 .isInstanceOf(AuthenticationFailureException.class);
     }
 
+    @Test
+    void rejectsRevokedSession() {
+        AuthSession revoked = session(NOW.plusSeconds(300));
+        revoked.revoke();
+        when(jwtDecoder.decode("signed-access-token")).thenReturn(jwt("signed-access-token", NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(revoked));
+
+        assertThatThrownBy(() -> service.validate("signed-access-token"))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
+    void rejectsSessionOwnedByAnotherAccount() {
+        UUID otherAccountId = UUID.randomUUID();
+        when(jwtDecoder.decode("signed-access-token")).thenReturn(jwt("signed-access-token", NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId))
+                .thenReturn(Optional.of(sessionFor(otherAccountId, NOW.plusSeconds(300))));
+
+        assertThatThrownBy(() -> service.validate("signed-access-token"))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
+    void rejectsValidlySignedTokenThatDoesNotMatchThePersistedDigest() {
+        String rawToken = "another-signed-access-token";
+        when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+
+        assertThatThrownBy(() -> service.validate(rawToken))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
+    void rejectsTokenWithoutSessionIdClaim() {
+        when(jwtDecoder.decode("signed-access-token")).thenReturn(Jwt.withTokenValue("signed-access-token")
+                .header("alg", "HS256")
+                .claim("sub", accountId.toString())
+                .issuedAt(NOW.minusSeconds(30))
+                .expiresAt(NOW.plusSeconds(300))
+                .build());
+
+        assertThatThrownBy(() -> service.validate("signed-access-token"))
+                .isInstanceOf(AuthenticationFailureException.class);
+        verifyNoInteractions(sessionRepository);
+    }
+
+    @Test
+    void rejectsDecoderFailureWithoutExposingItsCause() {
+        when(jwtDecoder.decode("malformed")).thenThrow(new JwtException("malformed token details"));
+
+        assertThatThrownBy(() -> service.validate("malformed"))
+                .isInstanceOf(AuthenticationFailureException.class)
+                .hasMessage("The supplied credentials could not be verified.");
+    }
+
+    @Test
+    void rejectsNullAndBlankTokensBeforeDecoding() {
+        assertThatThrownBy(() -> service.validate(null))
+                .isInstanceOf(AuthenticationFailureException.class);
+        assertThatThrownBy(() -> service.validate("  "))
+                .isInstanceOf(AuthenticationFailureException.class);
+        verifyNoInteractions(jwtDecoder, sessionRepository);
+    }
+
     private Jwt jwt(String rawToken, Instant expiresAt) {
         return Jwt.withTokenValue(rawToken)
                 .header("alg", "HS256")
@@ -75,8 +141,12 @@ class JwtValidationServiceTest {
     }
 
     private AuthSession session(Instant expiresAt) {
+        return sessionFor(accountId, expiresAt);
+    }
+
+    private AuthSession sessionFor(UUID ownerId, Instant expiresAt) {
         UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
-        org.springframework.test.util.ReflectionTestUtils.setField(account, "id", accountId);
+        org.springframework.test.util.ReflectionTestUtils.setField(account, "id", ownerId);
         return new AuthSession(
                 sessionId,
                 account,

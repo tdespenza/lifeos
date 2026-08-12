@@ -88,7 +88,7 @@ class RefreshTokenServiceTest {
                 .issuedAt(NOW)
                 .expiresAt(NOW.plusSeconds(300))
                 .build());
-        when(responseCipher.encrypt(any())).thenReturn("encrypted-envelope");
+        when(responseCipher.encrypt(any(), any(), any())).thenReturn("encrypted-envelope");
 
         LoginResponse response = service.refresh(new RefreshTokenService.RefreshRequest(
                 "presented", "key", "fingerprint"));
@@ -105,7 +105,8 @@ class RefreshTokenServiceTest {
     @Test
     void matchingCommittedRetryReturnsTheSameSuccessorOnce() {
         RefreshReplayRecord replay = new RefreshReplayRecord(
-                family.getId(), "key", "fingerprint", NOW.plusSeconds(30));
+                family.getId(), "key", "fingerprint", TokenDigest.sha256("presented"),
+                NOW.plusSeconds(30));
         replay.commit("encrypted-envelope");
         LoginResponse expected = new LoginResponse(
                 session.getId(), "successor-access", "Bearer", 300,
@@ -115,7 +116,8 @@ class RefreshTokenServiceTest {
         when(familyRepository.findByIdForUpdate(family.getId())).thenReturn(Optional.of(family));
         when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
                 .thenReturn(Optional.of(replay));
-        when(responseCipher.decrypt("encrypted-envelope")).thenReturn(expected);
+        when(responseCipher.decrypt(family.getId(), "key", "encrypted-envelope"))
+                .thenReturn(expected);
 
         LoginResponse actual = service.refresh(new RefreshTokenService.RefreshRequest(
                 "presented", "key", "fingerprint"));
@@ -123,6 +125,86 @@ class RefreshTokenServiceTest {
         assertThat(actual).isEqualTo(expected);
         assertThat(replay.getRetryCount()).isEqualTo(1);
         verify(consumedRepository, never()).save(any());
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+        assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+    }
+
+    @Test
+    void rejectsConsumedTokenWhenCommittedReplayBelongsToAnotherPredecessor() {
+        RefreshReplayRecord replay = new RefreshReplayRecord(
+                family.getId(), "key", "fingerprint", TokenDigest.sha256("presented"),
+                NOW.plusSeconds(30));
+        replay.commit("encrypted-envelope");
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("consumed")))
+                .thenReturn(Optional.empty());
+        when(consumedRepository.findByTokenHash(TokenDigest.sha256("consumed")))
+                .thenReturn(Optional.of(new ConsumedRefreshToken(
+                        family.getId(), TokenDigest.sha256("consumed"), NOW.minusSeconds(1))));
+        when(familyRepository.findByIdForUpdate(family.getId())).thenReturn(Optional.of(family));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
+                .thenReturn(Optional.of(replay));
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "consumed", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+        assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+    }
+
+    @Test
+    void expiresFamilyWhenItsRefreshDeadlineHasPassed() {
+        TokenFamily expired = new TokenFamily(
+                family.getId(), account.getId(), session.getId(),
+                TokenDigest.sha256("presented"), NOW.minusSeconds(100),
+                NOW.minusSeconds(1), NOW.plusSeconds(100), NOW.plusSeconds(100));
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(expired));
+        when(familyRepository.findByIdForUpdate(expired.getId())).thenReturn(Optional.of(expired));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(expired.getId(), "key"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+        assertThat(expired.getStatus()).isEqualTo(TokenFamilyStatus.EXPIRED);
+    }
+
+    @Test
+    void revokesFamilyWhenReplayEvidenceBoundIsReached() {
+        properties.getJwt().setMaxRefreshReplayRecordsPerFamily(1);
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(family));
+        when(familyRepository.findByIdForUpdate(family.getId())).thenReturn(Optional.of(family));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
+                .thenReturn(Optional.empty());
+        when(consumedRepository.countByFamilyId(family.getId())).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(RefreshTokenService.FamilyStateChangedException.class);
+        assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
+    }
+
+    @Test
+    void rejectsRefreshWhenSessionIsRevoked() {
+        session.revoke();
+        stubRefreshBeforeSessionLookup();
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
+    void rejectsRefreshWhenAccountIsInactive() {
+        account.disable();
+        stubRefreshBeforeSessionLookup();
+
+        assertThatThrownBy(() -> service.refresh(new RefreshTokenService.RefreshRequest(
+                "presented", "key", "fingerprint")))
+                .isInstanceOf(AuthenticationFailureException.class);
     }
 
     @Test
@@ -142,5 +224,16 @@ class RefreshTokenServiceTest {
 
         assertThat(family.getStatus()).isEqualTo(TokenFamilyStatus.REVOKED);
         verify(familyRepository).save(family);
+    }
+
+    private void stubRefreshBeforeSessionLookup() {
+        when(familyRepository.findByActiveTokenHash(TokenDigest.sha256("presented")))
+                .thenReturn(Optional.of(family));
+        when(familyRepository.findByIdForUpdate(family.getId())).thenReturn(Optional.of(family));
+        when(replayRepository.findByFamilyIdAndIdempotencyKeyForUpdate(family.getId(), "key"))
+                .thenReturn(Optional.empty());
+        when(consumedRepository.countByFamilyId(family.getId())).thenReturn(0L);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        when(accountRepository.findById(account.getId())).thenReturn(Optional.of(account));
     }
 }

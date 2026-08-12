@@ -2,8 +2,7 @@ package com.lifeos.identity.auth;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,27 +13,53 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class RefreshController {
 
-    private static final String REFRESH_COOKIE = "lifeos_refresh";
     private final RefreshTokenService refreshTokenService;
+    private final ClientAddressResolver clientAddressResolver;
 
-    public RefreshController(RefreshTokenService refreshTokenService) {
+    /**
+     * Creates the refresh-token rotation boundary.
+     *
+     * @param refreshTokenService rotation authority
+     * @param clientAddressResolver trusted client-address resolver
+     */
+    public RefreshController(
+            RefreshTokenService refreshTokenService,
+            ClientAddressResolver clientAddressResolver) {
         this.refreshTokenService = refreshTokenService;
+        this.clientAddressResolver = clientAddressResolver;
     }
 
+    /**
+     * Rotates a JSON or cookie-sourced refresh credential.
+     *
+     * @param body optional JSON body
+     * @param idempotencyKey client retry key
+     * @param request servlet request used for cookie and server-observed fingerprint data
+     * @return rotated access and refresh response
+     */
     @PostMapping("/api/v1/auth/refresh")
     public ResponseEntity<LoginResponse> refresh(
-            @Valid @RequestBody(required = false) RefreshRequestBody body,
+            @RequestBody(required = false) RefreshRequestBody body,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-            @RequestHeader(value = "X-Client-Fingerprint", required = false) String clientFingerprint,
             HttpServletRequest request) {
         String refreshToken = body == null ? null : body.refreshToken();
         if (refreshToken == null || refreshToken.isBlank()) {
-            refreshToken = cookieValue(request, REFRESH_COOKIE);
+            refreshToken = cookieValue(request, RefreshCookieSupport.NAME);
         }
-        String fingerprint = TokenDigest.sha256(
-                clientFingerprint == null || clientFingerprint.isBlank() ? "default" : clientFingerprint);
-        return ResponseEntity.ok(refreshTokenService.refresh(new RefreshTokenService.RefreshRequest(
-                refreshToken, idempotencyKey, fingerprint)));
+        String address = clientAddressResolver.resolve(request);
+        String userAgent = request.getHeader(HttpHeaders.USER_AGENT);
+        if (address == null || address.isBlank()) {
+            throw new AuthenticationFailureException();
+        }
+        String fingerprintSource = address + "|" + (userAgent == null ? "" : userAgent);
+        LoginResponse response = refreshTokenService.refresh(new RefreshTokenService.RefreshRequest(
+                refreshToken, idempotencyKey, TokenDigest.sha256("refresh-client|" + fingerprintSource)));
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok();
+        var cookie = RefreshCookieSupport.from(response);
+        if (cookie != null) {
+            responseBuilder.header(HttpHeaders.SET_COOKIE, cookie.toString());
+        }
+        return responseBuilder.body(response);
     }
 
     private String cookieValue(HttpServletRequest request, String name) {
@@ -49,6 +74,11 @@ public class RefreshController {
         return null;
     }
 
-    public record RefreshRequestBody(@NotBlank String refreshToken) {
+    /**
+     * Optional JSON refresh payload. A blank value permits the secure refresh cookie fallback.
+     *
+     * @param refreshToken raw refresh credential
+     */
+    public record RefreshRequestBody(String refreshToken) {
     }
 }

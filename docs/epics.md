@@ -738,7 +738,8 @@ So that downstream services can authorize requests without sharing passwords.
 
 **Given** two concurrent refresh requests using the same refresh token
 **When** both reach the identity service
-**Then** at most one succeeds, the token rotates atomically, and reuse detection revokes the session family.
+**Then** at most one successor token is created, one matching idempotent retry may return that same
+committed response, and mismatched or repeated reuse revokes the session family.
 
 **Implementation notes:** The shared session authority issues a bounded access JWT with configured
 issuer/audience, subject, session id, authentication method, and expiry claims for password, OIDC,

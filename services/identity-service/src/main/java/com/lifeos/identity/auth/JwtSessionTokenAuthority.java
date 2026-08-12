@@ -10,9 +10,6 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwsHeader;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
@@ -36,6 +33,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     private final UserAccountRepository accountRepository;
     private final PasswordCredentialRepository credentialRepository;
     private final RefreshTokenService refreshTokenService;
+    private final JwtSigningMaterial signingMaterial;
     private final IdentityAuthProperties properties;
     private final Clock clock;
 
@@ -46,8 +44,10 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
      * @param sessionRepository durable session repository
      * @param accountRepository account repository used for capacity locking
      * @param credentialRepository credential repository used for state revalidation
+     * @param refreshTokenService refresh-family authority
+     * @param signingMaterial resolved JWT signing material
      * @param properties authentication properties
-    */
+     */
     @Autowired
     public JwtSessionTokenAuthority(
             JwtEncoder jwtEncoder,
@@ -55,15 +55,19 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             UserAccountRepository accountRepository,
             PasswordCredentialRepository credentialRepository,
             RefreshTokenService refreshTokenService,
+            JwtSigningMaterial signingMaterial,
             IdentityAuthProperties properties) {
         this(jwtEncoder, sessionRepository, accountRepository, credentialRepository, refreshTokenService,
-                properties,
+                signingMaterial, properties,
                 Clock.systemUTC());
     }
 
     /**
      * Compatibility constructor for pre-Story-1.5 unit tests and test doubles.
+     *
+     * @deprecated production wiring must use the constructor with refresh-token services
      */
+    @Deprecated
     public JwtSessionTokenAuthority(
             JwtEncoder jwtEncoder,
             AuthSessionRepository sessionRepository,
@@ -71,12 +75,15 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             PasswordCredentialRepository credentialRepository,
             IdentityAuthProperties properties) {
         this(jwtEncoder, sessionRepository, accountRepository, credentialRepository, null,
-                properties, Clock.systemUTC());
+                JwtSigningMaterial.from(properties), properties, Clock.systemUTC());
     }
 
     /**
      * Compatibility constructor with an injectable clock for the original session tests.
+     *
+     * @deprecated production wiring must use the constructor with refresh-token services
      */
+    @Deprecated
     public JwtSessionTokenAuthority(
             JwtEncoder jwtEncoder,
             AuthSessionRepository sessionRepository,
@@ -85,7 +92,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             IdentityAuthProperties properties,
             Clock clock) {
         this(jwtEncoder, sessionRepository, accountRepository, credentialRepository, null,
-                properties, clock);
+                JwtSigningMaterial.from(properties), properties, clock);
     }
 
     /**
@@ -104,6 +111,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
             UserAccountRepository accountRepository,
             PasswordCredentialRepository credentialRepository,
             RefreshTokenService refreshTokenService,
+            JwtSigningMaterial signingMaterial,
             IdentityAuthProperties properties,
             Clock clock) {
         this.jwtEncoder = jwtEncoder;
@@ -111,6 +119,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
         this.accountRepository = accountRepository;
         this.credentialRepository = credentialRepository;
         this.refreshTokenService = refreshTokenService;
+        this.signingMaterial = signingMaterial;
         this.properties = properties;
         this.clock = clock;
     }
@@ -169,7 +178,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
                     .issuer(properties.getJwt().getIssuer())
                     .audience(java.util.List.of(properties.getJwt().getAudience()))
                     .subject(lockedAccount.getId().toString())
-                    .id(sessionId.toString())
+                    .id(UUID.randomUUID().toString())
                     .issuedAt(issuedAt)
                     .expiresAt(expiresAt)
                     .claim("session_id", sessionId.toString())
@@ -197,30 +206,22 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
                     refresh == null ? 0 : java.time.Duration.between(issuedAt, refresh.expiresAt()).toSeconds());
         } catch (SessionCapacityExceededException | AuthenticationFailureException exception) {
             throw exception;
-        } catch (DataAccessException | AuthenticationDependencyUnavailableException exception) {
-            log.atError()
-                    .addKeyValue("event", "session_token_issuance_failed")
-                    .addKeyValue("dependencyException", exception.getClass().getName())
-                    .log("Session token issuance failed");
-            throw new AuthenticationDependencyUnavailableException(exception);
         } catch (RuntimeException exception) {
             log.atError()
                     .addKeyValue("event", "session_token_issuance_failed")
                     .addKeyValue("dependencyException", exception.getClass().getName())
                     .log("Session token issuance failed");
-            throw new AuthenticationDependencyUnavailableException(exception);
+            if (exception instanceof AuthenticationDependencyUnavailableException dependencyException) {
+                throw dependencyException;
+            }
+            if (exception instanceof DataAccessException dataAccessException) {
+                throw new AuthenticationDependencyUnavailableException(dataAccessException);
+            }
+            throw exception;
         }
     }
 
     private JwtEncoderParameters encoderParameters(JwtClaimsSet claims) {
-        boolean rsa = properties.getJwt().getPrivateKeyPem() != null
-                && !properties.getJwt().getPrivateKeyPem().isBlank();
-        JwsHeader.Builder header = rsa
-                ? JwsHeader.with(SignatureAlgorithm.RS256)
-                : JwsHeader.with(MacAlgorithm.HS256);
-        return JwtEncoderParameters.from(header
-                .keyId(properties.getJwt().getSigningKeyId())
-                .type("JWT")
-                .build(), claims);
+        return JwtEncoderParameters.from(signingMaterial.jwtHeader(), claims);
     }
 }

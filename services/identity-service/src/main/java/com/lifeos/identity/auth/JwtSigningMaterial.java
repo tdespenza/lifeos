@@ -15,6 +15,9 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.util.StringUtils;
 
 /**
@@ -64,6 +67,9 @@ public final class JwtSigningMaterial {
                         new PKCS8EncodedKeySpec(decodePem(privatePem, "PRIVATE KEY")));
                 RSAPublicKey publicKey = (RSAPublicKey) factory.generatePublic(
                         new X509EncodedKeySpec(decodePem(publicPem, "PUBLIC KEY")));
+                if (publicKey.getModulus().bitLength() < 2048) {
+                    throw new IllegalStateException("JWT RSA keys must be at least 2048 bits");
+                }
                 RSAKey key = new RSAKey.Builder(publicKey)
                         .privateKey(privateKey)
                         .keyID(jwt.getSigningKeyId())
@@ -92,20 +98,54 @@ public final class JwtSigningMaterial {
         return asymmetric;
     }
 
+    /**
+     * Returns the resolved RSA key pair, when asymmetric signing is configured.
+     *
+     * @return RSA key, or {@code null} for HMAC signing
+     */
     public RSAKey rsaKey() {
         return rsaKey;
     }
 
+    /**
+     * Returns the resolved HMAC key, when compatibility signing is configured.
+     *
+     * @return HMAC key, or {@code null} for RSA signing
+     */
     public SecretKey hmacKey() {
         return hmacKey;
     }
 
+    /**
+     * Returns the public RSA key used for JWT verification.
+     *
+     * @return RSA public key, or {@code null} for HMAC signing
+     */
     public RSAPublicKey rsaPublicKey() {
         return rsaPublicKey;
     }
 
+    /**
+     * Returns the configured key identifier emitted in JWT headers.
+     *
+     * @return signing key identifier
+     */
     public String keyId() {
         return keyId;
+    }
+
+    /**
+     * Creates the canonical JWT header for the resolved signing material.
+     *
+     * @return JWT header containing algorithm, key id, and type
+     */
+    public JwsHeader jwtHeader() {
+        return (asymmetric
+                ? JwsHeader.with(SignatureAlgorithm.RS256)
+                : JwsHeader.with(MacAlgorithm.HS256))
+                .keyId(keyId)
+                .type("JWT")
+                .build();
     }
 
     /**
@@ -140,11 +180,12 @@ public final class JwtSigningMaterial {
      */
     public SecretKey replayEncryptionKey(IdentityAuthProperties properties) {
         String configured = properties.getJwt().getReplayEncryptionSecret();
-        String source = StringUtils.hasText(configured)
-                ? configured
-                : (StringUtils.hasText(properties.getJwt().getSigningSecret())
-                        ? properties.getJwt().getSigningSecret()
-                        : rsaKey.getModulus().toString() + rsaKey.getPrivateExponent().toString());
+        if (!StringUtils.hasText(configured)
+                || configured.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException(
+                    "Configure a dedicated replay encryption secret of at least 32 bytes");
+        }
+        String source = "lifeos-refresh-replay-envelope-v1|" + configured;
         try {
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
                     .digest(source.getBytes(StandardCharsets.UTF_8));

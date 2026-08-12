@@ -152,6 +152,10 @@ public class OidcController {
         if (browserTransaction != null) {
             responseBuilder.header(HttpHeaders.SET_COOKIE, expiredBrowserTransactionCookie(state).toString());
         }
+        var refreshCookie = RefreshCookieSupport.from(response);
+        if (refreshCookie != null) {
+            responseBuilder.header(HttpHeaders.SET_COOKIE, refreshCookie.toString());
+        }
         return responseBuilder.body(response);
     }
 

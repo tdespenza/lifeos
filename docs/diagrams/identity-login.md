@@ -57,7 +57,7 @@ sequenceDiagram
             App->>Authority: create session
             Authority->>DB: lock account, check cap, persist token digest
             App->>DB: audit success
-            App-->>API: 200 session + short-lived access token
+            App-->>API: 200 session + access JWT + one-time refresh token and expiry
         end
     end
 ```

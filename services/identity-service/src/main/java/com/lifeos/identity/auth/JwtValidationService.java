@@ -55,6 +55,7 @@ public class JwtValidationService {
                     .orElseThrow(AuthenticationFailureException::new);
             return new AuthenticatedSubject(accountId, sessionId, session.getAuthenticationMethod().name());
         } catch (JwtException | IllegalArgumentException exception) {
+            // The cause is deliberately dropped. Decode details must not reach the caller.
             throw new AuthenticationFailureException();
         }
     }

@@ -11,6 +11,13 @@ import org.springframework.data.repository.query.Param;
 /** Atomic idempotency-record operations for refresh rotation. */
 public interface RefreshReplayRecordRepository extends JpaRepository<RefreshReplayRecord, UUID> {
 
+    /**
+     * Locks and loads one family-scoped idempotency record.
+     *
+     * @param familyId token-family identifier
+     * @param idempotencyKey client retry key
+     * @return matching record, if present
+     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select record from RefreshReplayRecord record where record.familyId = :familyId "
             + "and record.idempotencyKey = :idempotencyKey")

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.identity.account.UserAccount;
 import com.lifeos.identity.account.UserAccountRepository;
+import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +45,9 @@ class SessionControllerIntegrationTest {
 
     @Autowired
     private AuthSessionRepository sessionRepository;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @Autowired
     private TokenFamilyRepository familyRepository;
@@ -134,13 +138,18 @@ class SessionControllerIntegrationTest {
         Instant newerUse = Instant.now().plusSeconds(60);
         session.markUsedAt(newerUse);
         sessionRepository.saveAndFlush(session);
+        entityManager.clear();
+        Instant persistedNewerUse = sessionRepository.findById(session.getId())
+                .orElseThrow()
+                .getLastUsedAt();
 
         mockMvc.perform(get("/api/v1/auth/sessions")
                         .header("Authorization", "Bearer " + login.get("accessToken").asText()))
                 .andExpect(status().isOk());
 
+        entityManager.clear();
         assertThat(sessionRepository.findById(session.getId())).get()
-                .satisfies(current -> assertThat(current.getLastUsedAt()).isEqualTo(newerUse));
+                .satisfies(current -> assertThat(current.getLastUsedAt()).isEqualTo(persistedNewerUse));
     }
 
     private JsonNode login(String marker) throws Exception {

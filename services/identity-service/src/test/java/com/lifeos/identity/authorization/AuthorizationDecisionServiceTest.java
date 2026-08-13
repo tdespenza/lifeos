@@ -15,7 +15,6 @@ import com.lifeos.identity.auth.TokenDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -418,21 +417,20 @@ class AuthorizationDecisionServiceTest {
     }
 
     private AuthorizationPolicy v1Policy() {
-        Map<AuthorizationAction, java.util.Set<AuthorizationRole>> rules =
-                new EnumMap<>(AuthorizationAction.class);
-        for (AuthorizationAction action : AuthorizationAction.values()) {
-            rules.put(action, EnumSet.of(AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN));
-        }
-        return new AuthorizationPolicy("v1", rules);
+        return new AuthorizationPolicy("v1", Map.of(
+                AuthorizationAction.GOAL_CREATE, EnumSet.of(AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_LIST, EnumSet.of(AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_READ, EnumSet.of(AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_DEPENDENCY_ORDER,
+                EnumSet.of(AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN)));
     }
 
     private AuthorizationPolicy policyWithOnlyTenantAdmins() {
-        Map<AuthorizationAction, java.util.Set<AuthorizationRole>> rules =
-                new EnumMap<>(AuthorizationAction.class);
-        for (AuthorizationAction action : AuthorizationAction.values()) {
-            rules.put(action, EnumSet.of(AuthorizationRole.TENANT_ADMIN));
-        }
-        return new AuthorizationPolicy("v1", rules);
+        return new AuthorizationPolicy("v1", Map.of(
+                AuthorizationAction.GOAL_CREATE, EnumSet.of(AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_LIST, EnumSet.of(AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_READ, EnumSet.of(AuthorizationRole.TENANT_ADMIN),
+                AuthorizationAction.GOAL_DEPENDENCY_ORDER, EnumSet.of(AuthorizationRole.TENANT_ADMIN)));
     }
 
     private void assertDeny(AuthorizationDecision decision, AuthorizationDenyReason reason) {

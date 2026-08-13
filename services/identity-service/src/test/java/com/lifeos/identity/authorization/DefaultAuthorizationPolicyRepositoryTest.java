@@ -17,4 +17,18 @@ class DefaultAuthorizationPolicyRepositoryTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Unsupported authorization policy version");
     }
+
+    @Test
+    void grantsOnlyTheExplicitlyConfiguredV1Actions() {
+        AuthorizationPolicy policy = new DefaultAuthorizationPolicyRepository().loadCurrentPolicy();
+
+        assertThat(policy.allowedRoles().keySet()).containsExactlyInAnyOrder(
+                AuthorizationAction.GOAL_CREATE,
+                AuthorizationAction.GOAL_LIST,
+                AuthorizationAction.GOAL_READ,
+                AuthorizationAction.GOAL_DEPENDENCY_ORDER);
+        assertThat(policy.allowedRoles().values()).allSatisfy(roles ->
+                assertThat(roles).containsExactlyInAnyOrder(
+                        AuthorizationRole.MEMBER, AuthorizationRole.TENANT_ADMIN));
+    }
 }

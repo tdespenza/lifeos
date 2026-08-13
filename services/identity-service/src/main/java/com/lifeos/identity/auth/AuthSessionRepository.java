@@ -106,9 +106,10 @@ public interface AuthSessionRepository extends JpaRepository<AuthSession, UUID> 
      */
     @Modifying
     @Transactional
-    @Query("update AuthSession session set session.lastUsedAt = :now "
+    @Query("update AuthSession session set session.lastUsedAt = "
+            + "case when session.lastUsedAt < :now then :now else session.lastUsedAt end "
             + "where session.id = :sessionId and session.revoked = false "
-            + "and session.expiresAt > :now and session.lastUsedAt <= :now")
+            + "and session.expiresAt > :now")
     @QueryHints(@QueryHint(name = "jakarta.persistence.query.timeout", value = "2000"))
     int touchLastUsedAt(@Param("sessionId") UUID sessionId, @Param("now") Instant now);
 }

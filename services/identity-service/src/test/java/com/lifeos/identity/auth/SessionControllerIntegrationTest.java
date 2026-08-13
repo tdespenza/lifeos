@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.identity.account.UserAccount;
 import com.lifeos.identity.account.UserAccountRepository;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -118,6 +119,28 @@ class SessionControllerIntegrationTest {
 
         assertThat(sessionRepository.countActiveByAccountId(account.getId(), java.time.Instant.now()))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void acceptsAnOlderRequestAfterARecentSessionUse() throws Exception {
+        UserAccount account = accountRepository.saveAndFlush(
+                new UserAccount("session-order-" + UUID.randomUUID() + "@example.com", "Ada Lovelace"));
+        credentialRepository.saveAndFlush(new PasswordCredential(
+                account, passwordEncoder.encode("correct horse battery staple")));
+
+        JsonNode login = login("older-request");
+        AuthSession session = sessionRepository.findById(UUID.fromString(login.get("sessionId").asText()))
+                .orElseThrow();
+        Instant newerUse = Instant.now().plusSeconds(60);
+        session.markUsedAt(newerUse);
+        sessionRepository.saveAndFlush(session);
+
+        mockMvc.perform(get("/api/v1/auth/sessions")
+                        .header("Authorization", "Bearer " + login.get("accessToken").asText()))
+                .andExpect(status().isOk());
+
+        assertThat(sessionRepository.findById(session.getId())).get()
+                .satisfies(current -> assertThat(current.getLastUsedAt()).isEqualTo(newerUse));
     }
 
     private JsonNode login(String marker) throws Exception {

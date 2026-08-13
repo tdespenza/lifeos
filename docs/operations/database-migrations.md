@@ -116,6 +116,20 @@ WITH expected AS (
             'CREATE INDEX ix_auth_session_account_cursor ON %I.auth_session USING btree (account_id, last_used_at, created_at, id)',
             current_schema()
         ) AS v4_index_definition
+), metadata_contract AS (
+    SELECT
+        count(*) = 5 AS all_metadata_columns,
+        COALESCE(bool_and(column_attribute.attnotnull), false) AS all_metadata_non_null
+    FROM pg_attribute column_attribute
+    JOIN pg_class session_relation ON session_relation.oid = column_attribute.attrelid
+    JOIN pg_namespace session_schema ON session_schema.oid = session_relation.relnamespace
+    WHERE session_schema.nspname = current_schema()
+      AND session_relation.relname = 'auth_session'
+      AND column_attribute.attnum > 0
+      AND NOT column_attribute.attisdropped
+      AND column_attribute.attname IN (
+          'last_used_at', 'device_label', 'platform', 'browser_family', 'coarse_location'
+      )
 )
 SELECT
     actual.index_schema,
@@ -124,13 +138,18 @@ SELECT
     actual.index_definition,
     actual.index_predicate,
     expected.v4_index_definition,
+    metadata_contract.all_metadata_columns,
+    metadata_contract.all_metadata_non_null,
     COALESCE(
         actual.indisvalid
             AND actual.index_definition = expected.v4_index_definition
             AND actual.index_predicate IS NULL,
         false
-    ) AS v4_contract_valid
+    )
+        AND metadata_contract.all_metadata_columns
+        AND metadata_contract.all_metadata_non_null AS v4_contract_valid
 FROM expected
+CROSS JOIN metadata_contract
 LEFT JOIN LATERAL (
     SELECT
         index_schema.nspname AS index_schema,

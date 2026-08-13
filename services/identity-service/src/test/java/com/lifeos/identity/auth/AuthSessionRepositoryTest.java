@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.lifeos.identity.account.UserAccount;
 import com.lifeos.identity.account.UserAccountRepository;
+import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -25,8 +26,11 @@ class AuthSessionRepositoryTest {
     @Autowired
     private UserAccountRepository accountRepository;
 
+    @Autowired
+    private EntityManager entityManager;
+
     @Test
-    void touchLastUsedAtAcceptsAnEqualTimestampForAnActiveSession() {
+    void touchLastUsedAtPreservesNewerTimestampAndReportsActiveRow() {
         UserAccount account = accountRepository.saveAndFlush(
                 new UserAccount("session-repository@example.com", "Session Repository"));
         UUID sessionId = UUID.randomUUID();
@@ -38,8 +42,10 @@ class AuthSessionRepositoryTest {
                 NOW,
                 NOW.plusSeconds(300)));
 
+        assertThat(sessionRepository.touchLastUsedAt(sessionId, NOW.plusSeconds(10))).isEqualTo(1);
         assertThat(sessionRepository.touchLastUsedAt(sessionId, NOW)).isEqualTo(1);
+        entityManager.clear();
         assertThat(sessionRepository.findById(sessionId)).get()
-                .satisfies(session -> assertThat(session.getLastUsedAt()).isEqualTo(NOW));
+                .satisfies(session -> assertThat(session.getLastUsedAt()).isEqualTo(NOW.plusSeconds(10)));
     }
 }

@@ -47,7 +47,9 @@ class JwtValidationServiceTest {
     void validatesSignatureClaimsAndDurableSessionState() {
         String rawToken = "signed-access-token";
         when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
-        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+        when(sessionRepository.findById(sessionId))
+                .thenReturn(Optional.of(sessionAt(NOW, NOW.plusSeconds(300))));
+        when(sessionRepository.touchLastUsedAt(sessionId, NOW)).thenReturn(1);
 
         AuthenticatedSubject subject = service.validate(rawToken);
 
@@ -100,6 +102,17 @@ class JwtValidationServiceTest {
     }
 
     @Test
+    void rejectsWhenLastUseUpdateObservesAConcurrentRevocation() {
+        String rawToken = "signed-access-token";
+        when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+        when(sessionRepository.touchLastUsedAt(sessionId, NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.validate(rawToken))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
     void rejectsTokenWithoutSessionIdClaim() {
         when(jwtDecoder.decode("signed-access-token")).thenReturn(Jwt.withTokenValue("signed-access-token")
                 .header("alg", "HS256")
@@ -142,10 +155,18 @@ class JwtValidationServiceTest {
     }
 
     private AuthSession session(Instant expiresAt) {
-        return sessionFor(accountId, expiresAt);
+        return sessionAt(NOW.minusSeconds(30), expiresAt);
     }
 
     private AuthSession sessionFor(UUID ownerId, Instant expiresAt) {
+        return sessionAt(ownerId, NOW.minusSeconds(30), expiresAt);
+    }
+
+    private AuthSession sessionAt(Instant createdAt, Instant expiresAt) {
+        return sessionAt(accountId, createdAt, expiresAt);
+    }
+
+    private AuthSession sessionAt(UUID ownerId, Instant createdAt, Instant expiresAt) {
         UserAccount account = new UserAccount("ada@example.com", "Ada Lovelace");
         org.springframework.test.util.ReflectionTestUtils.setField(account, "id", ownerId);
         return new AuthSession(
@@ -153,7 +174,7 @@ class JwtValidationServiceTest {
                 account,
                 SessionAuthenticationMethod.PASSWORD,
                 TokenDigest.sha256("signed-access-token"),
-                NOW.minusSeconds(30),
+                createdAt,
                 expiresAt);
     }
 }

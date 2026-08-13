@@ -14,6 +14,9 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    # Production adds the PostgreSQL online-completion location, while tests select an H2
+    # equivalent because H2 cannot parse CREATE INDEX CONCURRENTLY.
+    locations: classpath:db/migration,classpath:db/migration-postgresql
     # Existing Hibernate-managed installations must enable this only for their first controlled
     # migration after taking a verified backup; see docs/operations/database-migrations.md.
     baseline-on-migrate: ${IDENTITY_FLYWAY_BASELINE_ON_MIGRATE:false}
@@ -31,6 +34,8 @@ identity:
     trusted-proxy-addresses: []
     access-token-ttl: ${IDENTITY_ACCESS_TOKEN_TTL:PT5M}
     max-sessions-per-account: ${IDENTITY_MAX_SESSIONS_PER_ACCOUNT:10}
+    default-session-page-size: ${IDENTITY_DEFAULT_SESSION_PAGE_SIZE:20}
+    max-session-page-size: ${IDENTITY_MAX_SESSION_PAGE_SIZE:100}
     rate-limit:
       max-attempts: ${IDENTITY_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:5}
       window: ${IDENTITY_LOGIN_RATE_LIMIT_WINDOW:PT1M}

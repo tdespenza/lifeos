@@ -613,7 +613,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), JWT issuance/refresh verification (FR10), and the initial RBAC/ABAC decision boundary (FR11) exist in `identity-service`; passkey credential registration/provisioning and user-facing session management are not yet built.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), JWT issuance/refresh verification (FR10), the initial RBAC/ABAC decision boundary (FR11), and user-facing session management (FR12) exist in `identity-service`; passkey credential registration/provisioning remains a later story.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.
@@ -781,7 +781,7 @@ transport is a bounded, workload-authenticated internal REST adapter; the target
 from ADR-007 remains a later platform change. See
 [`docs/diagrams/identity-authorization.md`](diagrams/identity-authorization.md).
 
-### Story 1.7: Device and session management
+### Story 1.7: Device and session management [DONE]
 
 As an authenticated user,
 I want to view and revoke my active devices and sessions,
@@ -802,6 +802,14 @@ So that I can recover quickly from a lost device or suspicious login.
 **Given** a repeated or concurrent revoke request
 **When** it is processed
 **Then** the operation is idempotent, bounded by explicit timeouts, and produces one coherent audit outcome.
+
+**Implementation notes:** `identity-service` exposes bearer-authenticated cursor pagination plus
+single-session and revoke-others mutations. PostgreSQL stores ownership, safe coarse device
+metadata, last-use timestamps, and monotonic revocation state. Redis contains only bounded negative
+revocation markers; cache misses, restart, and outage fall back to PostgreSQL. Account/session row
+locks use explicit timeouts, and redacted revocation outcomes commit with the durable mutation. See
+[`docs/diagrams/identity-sessions.md`](diagrams/identity-sessions.md) and
+[`docs/api/identity-service.md`](api/identity-service.md).
 
 ### Epic 2: Unified Platform Gateway
 

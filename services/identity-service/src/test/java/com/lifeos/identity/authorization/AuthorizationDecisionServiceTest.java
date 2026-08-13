@@ -173,6 +173,7 @@ class AuthorizationDecisionServiceTest {
                 NOW.minusSeconds(30),
                 durableExpiry);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(durableSession));
+        when(sessionRepository.touchLastUsedAt(any(), any())).thenReturn(1);
         when(accountRepository.findById(subjectId)).thenReturn(Optional.of(durableAccount));
         when(policyRepository.loadCurrentPolicy()).thenReturn(v1Policy());
         when(membershipRepository.findByAccountIdAndTenantIdAndActiveTrue(subjectId, subjectId.toString()))

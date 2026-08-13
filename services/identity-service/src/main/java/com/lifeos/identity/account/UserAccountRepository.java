@@ -38,7 +38,10 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
      * @return locked account when present
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "1000"))
+    @QueryHints({
+        @QueryHint(name = "jakarta.persistence.lock.timeout", value = "1000"),
+        @QueryHint(name = "jakarta.persistence.query.timeout", value = "2000")
+    })
     @Query("select account from UserAccount account where account.id = :id")
     Optional<UserAccount> findByIdForUpdate(@Param("id") UUID id);
 }

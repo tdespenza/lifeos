@@ -43,8 +43,23 @@ public class AuthSession {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "last_used_at", nullable = false)
+    private Instant lastUsedAt;
+
     @Column(nullable = false)
     private Instant expiresAt;
+
+    @Column(name = "device_label", nullable = false, length = 64)
+    private String deviceLabel;
+
+    @Column(nullable = false, length = 32)
+    private String platform;
+
+    @Column(name = "browser_family", nullable = false, length = 32)
+    private String browserFamily;
+
+    @Column(name = "coarse_location", nullable = false, length = 64)
+    private String coarseLocation;
 
     @Column(nullable = false)
     private boolean revoked;
@@ -69,12 +84,35 @@ public class AuthSession {
     public AuthSession(UUID sessionId, UserAccount account, SessionAuthenticationMethod authenticationMethod,
             String accessTokenHash,
             Instant createdAt, Instant expiresAt) {
+        this(sessionId, account, authenticationMethod, accessTokenHash, createdAt, expiresAt,
+                DeviceMetadata.unknown());
+    }
+
+    /**
+     * Creates an active session with safe, coarse device metadata.
+     *
+     * @param sessionId stable session identifier
+     * @param account owning account
+     * @param authenticationMethod verified factor that established this session
+     * @param accessTokenHash SHA-256 digest of the issued access token
+     * @param createdAt creation timestamp
+     * @param expiresAt expiry timestamp
+     * @param deviceMetadata bounded device classification
+     */
+    public AuthSession(UUID sessionId, UserAccount account, SessionAuthenticationMethod authenticationMethod,
+            String accessTokenHash, Instant createdAt, Instant expiresAt, DeviceMetadata deviceMetadata) {
         this.id = sessionId;
         this.accountId = account.getId();
         this.authenticationMethod = Objects.requireNonNull(authenticationMethod, "authenticationMethod");
         this.accessTokenHash = accessTokenHash;
         this.createdAt = createdAt;
+        this.lastUsedAt = createdAt;
         this.expiresAt = expiresAt;
+        DeviceMetadata metadata = deviceMetadata == null ? DeviceMetadata.unknown() : deviceMetadata;
+        this.deviceLabel = metadata.label();
+        this.platform = metadata.platform();
+        this.browserFamily = metadata.browserFamily();
+        this.coarseLocation = metadata.coarseLocation();
         this.revoked = false;
     }
 
@@ -94,6 +132,24 @@ public class AuthSession {
      */
     public UUID getAccountId() {
         return accountId;
+    }
+
+    /**
+     * Returns the creation timestamp.
+     *
+     * @return creation instant
+     */
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    /**
+     * Returns the most recent successful use recorded by the identity boundary.
+     *
+     * @return last-use instant
+     */
+    public Instant getLastUsedAt() {
+        return lastUsedAt;
     }
 
     /**
@@ -124,6 +180,54 @@ public class AuthSession {
      */
     public Instant getExpiresAt() {
         return expiresAt;
+    }
+
+    /**
+     * Returns the safe display label for the device.
+     *
+     * @return bounded device label
+     */
+    public String getDeviceLabel() {
+        return deviceLabel;
+    }
+
+    /**
+     * Returns the coarse platform family.
+     *
+     * @return platform classification
+     */
+    public String getPlatform() {
+        return platform;
+    }
+
+    /**
+     * Returns the coarse browser family.
+     *
+     * @return browser classification
+     */
+    public String getBrowserFamily() {
+        return browserFamily;
+    }
+
+    /**
+     * Returns the coarse location label.
+     *
+     * @return location classification
+     */
+    public String getCoarseLocation() {
+        return coarseLocation;
+    }
+
+    /**
+     * Advances last-use metadata monotonically.
+     *
+     * @param usedAt successful-use timestamp
+     */
+    public void markUsedAt(Instant usedAt) {
+        Objects.requireNonNull(usedAt, "usedAt");
+        if (lastUsedAt == null || usedAt.isAfter(lastUsedAt)) {
+            lastUsedAt = usedAt;
+        }
     }
 
     /**

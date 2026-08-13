@@ -77,6 +77,20 @@ public class SecurityAuditService {
         persist(eventType, accountId, clientAddress, null);
     }
 
+    /**
+     * Persists a bounded session-management outcome in the revocation transaction.
+     *
+     * @param eventType session security event
+     * @param accountId authenticated account
+     * @param clientAddress request source used only to derive a digest
+     * @param outcomeCode bounded outcome classification
+     */
+    @Transactional
+    public void recordOutcomeWithinCurrentTransaction(
+            SecurityAuditEventType eventType, UUID accountId, String clientAddress, String outcomeCode) {
+        persist(eventType, accountId, clientAddress, validatedOutcomeCode(outcomeCode));
+    }
+
     private void persist(SecurityAuditEventType eventType, UUID accountId, String clientAddress, String outcomeCode) {
         String correlationId = RequestContext.CORRELATION_ID.isBound()
                 ? RequestContext.CORRELATION_ID.get()

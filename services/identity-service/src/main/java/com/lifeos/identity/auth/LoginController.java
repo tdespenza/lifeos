@@ -55,7 +55,10 @@ public class LoginController {
     @PostMapping("/api/v1/auth/login")
     public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
-        LoginResponse response = loginService.login(request, clientAddressResolver.resolve(servletRequest));
+        LoginResponse response = loginService.login(
+                request,
+                clientAddressResolver.resolve(servletRequest),
+                DeviceMetadataResolver.fromUserAgent(servletRequest.getHeader(HttpHeaders.USER_AGENT)));
         ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, "no-store");
         var cookie = RefreshCookieSupport.from(response);

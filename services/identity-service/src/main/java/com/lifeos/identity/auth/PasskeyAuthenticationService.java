@@ -153,6 +153,22 @@ public class PasskeyAuthenticationService {
      */
     @Transactional
     public LoginResponse complete(PasskeyAuthenticationRequest request, String clientAddress) {
+        return complete(request, clientAddress, DeviceMetadata.unknown());
+    }
+
+    /**
+     * Completes a passkey ceremony and stores only coarse device metadata with the new session.
+     *
+     * @param request challenge handle and browser assertion
+     * @param clientAddress source used only for keyed audit fingerprinting
+     * @param deviceMetadata safe device classification
+     * @return shared session/token response
+     */
+    @Transactional
+    public LoginResponse complete(
+            PasskeyAuthenticationRequest request,
+            String clientAddress,
+            DeviceMetadata deviceMetadata) {
         try {
             rateLimiter.check(PASSKEY_RATE_LIMIT_KEY, clientAddress);
             WebAuthnChallengeId challengeId = validateRequest(request);
@@ -187,8 +203,10 @@ public class PasskeyAuthenticationService {
             }
 
             UserAccount account = credential.getAccount();
-            LoginResponse response = sessionTokenAuthority.createSession(
-                    account, SessionAuthenticationMethod.PASSKEY);
+            LoginResponse response = deviceMetadata == null || deviceMetadata.isUnknown()
+                    ? sessionTokenAuthority.createSession(account, SessionAuthenticationMethod.PASSKEY)
+                    : sessionTokenAuthority.createSession(
+                            account, SessionAuthenticationMethod.PASSKEY, deviceMetadata);
             recordSuccessfulAudit(account, clientAddress);
             return response;
         } catch (SessionCapacityExceededException exception) {

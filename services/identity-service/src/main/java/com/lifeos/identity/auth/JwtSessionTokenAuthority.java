@@ -136,7 +136,7 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     @Override
     @Transactional
     public LoginResponse createSession(UserAccount account) {
-        return createSession(account, SessionAuthenticationMethod.PASSWORD);
+        return createSession(account, SessionAuthenticationMethod.PASSWORD, DeviceMetadata.unknown());
     }
 
     /**
@@ -151,6 +151,23 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
     @Transactional
     public LoginResponse createSession(
             UserAccount account, SessionAuthenticationMethod authenticationMethod) {
+        return createSession(account, authenticationMethod, DeviceMetadata.unknown());
+    }
+
+    /**
+     * Creates a session with safe device classifications derived at the HTTP boundary.
+     *
+     * @param account account selected by the verified authentication result
+     * @param authenticationMethod authentication method already verified at the protocol boundary
+     * @param deviceMetadata bounded device metadata
+     * @return signed access-token result
+     */
+    @Override
+    @Transactional
+    public LoginResponse createSession(
+            UserAccount account,
+            SessionAuthenticationMethod authenticationMethod,
+            DeviceMetadata deviceMetadata) {
         try {
             if (authenticationMethod == null) {
                 throw new AuthenticationFailureException();
@@ -195,7 +212,8 @@ public class JwtSessionTokenAuthority implements SessionTokenAuthority {
                     authenticationMethod,
                     TokenDigest.sha256(accessToken),
                     issuedAt,
-                    expiresAt);
+                    expiresAt,
+                    deviceMetadata);
             sessionRepository.saveAndFlush(session);
             RefreshTokenService.IssuedRefreshToken refresh = refreshTokenService == null
                     ? null

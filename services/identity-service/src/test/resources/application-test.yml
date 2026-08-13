@@ -12,6 +12,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: false
+    locations: classpath:db/migration,classpath:db/migration-h2
 
 management:
   server:

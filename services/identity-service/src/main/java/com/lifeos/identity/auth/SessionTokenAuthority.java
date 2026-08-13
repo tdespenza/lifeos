@@ -31,4 +31,22 @@ public interface SessionTokenAuthority {
             UserAccount account, SessionAuthenticationMethod authenticationMethod) {
         return createSession(account);
     }
+
+    /**
+     * Creates a session while retaining only safe, coarse device metadata.
+     *
+     * <p>The default preserves compatibility with authentication test doubles and callers that do
+     * not have a browser request, while the production authority persists the metadata.
+     *
+     * @param account active authenticated account
+     * @param authenticationMethod verified authentication method
+     * @param deviceMetadata bounded device classification
+     * @return session/token result
+     */
+    default LoginResponse createSession(
+            UserAccount account,
+            SessionAuthenticationMethod authenticationMethod,
+            DeviceMetadata deviceMetadata) {
+        return createSession(account, authenticationMethod);
+    }
 }

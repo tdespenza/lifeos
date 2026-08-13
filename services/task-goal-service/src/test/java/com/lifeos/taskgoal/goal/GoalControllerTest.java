@@ -32,6 +32,9 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(GoalController.class)
 class GoalControllerTest {
 
+    private static final String ACCESS_TOKEN_PROOF =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -48,7 +51,7 @@ class GoalControllerTest {
 
     @BeforeEach
     void setUp() {
-        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password", ACCESS_TOKEN_PROOF);
         when(accessService.authenticate(any())).thenReturn(subject);
     }
 
@@ -117,6 +120,7 @@ class GoalControllerTest {
         mockMvc.perform(get("/api/v1/goals/{goalId}", UUID.randomUUID())
                         .header("Authorization", "Bearer test-token"))
                 .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
                 .andExpect(jsonPath("$.error").value("Authorization temporarily unavailable"));
     }
 }

@@ -31,7 +31,7 @@ authorization decisions are encrypted whenever they leave the local host.
 | --- | --- | --- |
 | `401 Unauthorized` | Missing, malformed, expired, revoked, or invalid bearer credential; the identity validation adapter deliberately uses the same response when it rejects the calling workload | `{ "error": "Authentication required" }` plus `WWW-Authenticate: Bearer` |
 | `403 Forbidden` | Any policy deny, including a different user's goal or a goal that does not exist | `{ "error": "Access denied" }` |
-| `503 Service Unavailable` | Identity validation/decision transport, rate-limit, audit, or policy dependency cannot complete safely | `{ "error": "Authorization temporarily unavailable" }` |
+| `503 Service Unavailable` | Identity validation/decision transport, rate-limit, audit, or policy dependency cannot complete safely | `{ "error": "Authorization temporarily unavailable" }` plus `Retry-After: 1` |
 
 The `403` representation is deliberately identical for an existing goal owned by someone else and
 a non-existent goal. Do not use it to infer resource existence. Neither endpoint returns raw bearer
@@ -140,5 +140,7 @@ PostgreSQL database `lifeos_task_goal`, table `goal`:
 | `tenant_id` | Immutable tenant scope derived from the owner subject |
 
 The `(owner_account_id, tenant_id)` index supports owner-scoped list queries without a full table
-scan. Hibernate `ddl-auto: update` remains a Phase 1 shortcut; migrate to an explicit tool such as
-Flyway before production schema evolution.
+scan. Flyway owns schema evolution and Hibernate runs with `ddl-auto: validate`; see the
+[database migration runbook](../operations/database-migrations.md) for deployment and rollback
+procedures. Existing ownerless rows are intentionally not backfilled because no safe ownership fact
+exists; they remain fail-closed.

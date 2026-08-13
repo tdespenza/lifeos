@@ -107,7 +107,6 @@ public class AuthorizationDecisionController {
         } catch (RuntimeException auditFailure) {
             log.atError()
                     .addKeyValue("event", "authorization_audit_unavailable")
-                    .addKeyValue("dependencyException", auditFailure.getClass().getName())
                     .log("Authorization audit persistence failed");
             throw new AuthorizationDependencyUnavailableException(auditFailure);
         }

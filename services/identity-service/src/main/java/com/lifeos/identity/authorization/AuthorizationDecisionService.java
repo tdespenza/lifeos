@@ -3,6 +3,7 @@ package com.lifeos.identity.authorization;
 import com.lifeos.identity.account.UserAccountRepository;
 import com.lifeos.identity.auth.AuthSession;
 import com.lifeos.identity.auth.AuthSessionRepository;
+import com.lifeos.identity.auth.TokenDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -11,8 +12,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +29,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AuthorizationDecisionService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthorizationDecisionService.class);
     private static final String UNKNOWN_POLICY_VERSION = "unknown";
     private static final String GOAL_RESOURCE_TYPE = "goal";
     private static final String OWNER_ACCOUNT_ID = "ownerAccountId";
     private static final String RESOURCE_EXISTS = "resourceExists";
     private static final int MAX_ACTION_LENGTH = 64;
     private static final int MAX_POLICY_VERSION_LENGTH = 64;
-    private static final int MAX_TENANT_LENGTH = 128;
     private static final int MAX_RESOURCE_ID_LENGTH = 128;
     private static final int MAX_ATTRIBUTES = 16;
     private static final int MAX_ATTRIBUTE_KEY_LENGTH = 64;
@@ -124,9 +126,11 @@ public class AuthorizationDecisionService {
         SubjectState subjectState;
         try {
             subjectState = loadActiveSubject(request, now);
-        } catch (DataAccessException exception) {
-            return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION, now);
         } catch (RuntimeException exception) {
+            log.atWarn()
+                    .addKeyValue("event", "authorization_subject_lookup_unavailable")
+                    .setCause(exception)
+                    .log("Authorization subject verification failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION, now);
         }
         if (subjectState == null) {
@@ -142,6 +146,10 @@ public class AuthorizationDecisionService {
                         subjectState.expiresAt(), verifiedSubjectId);
             }
         } catch (RuntimeException exception) {
+            log.atWarn()
+                    .addKeyValue("event", "authorization_policy_unavailable")
+                    .setCause(exception)
+                    .log("Authorization policy lookup failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION,
                     subjectState.expiresAt(), verifiedSubjectId);
         }
@@ -159,10 +167,11 @@ public class AuthorizationDecisionService {
         Set<AuthorizationRole> roles;
         try {
             roles = effectiveRoles(verifiedSubjectId, request.resource().tenantId());
-        } catch (DataAccessException exception) {
-            return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, policy.version(),
-                    subjectState.expiresAt(), verifiedSubjectId);
         } catch (RuntimeException exception) {
+            log.atWarn()
+                    .addKeyValue("event", "authorization_membership_lookup_unavailable")
+                    .setCause(exception)
+                    .log("Authorization membership lookup failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, policy.version(),
                     subjectState.expiresAt(), verifiedSubjectId);
         }
@@ -191,7 +200,8 @@ public class AuthorizationDecisionService {
         if (session.isEmpty()
                 || !session.get().getAccountId().equals(request.subjectId())
                 || session.get().isRevoked()
-                || !session.get().getExpiresAt().isAfter(now)) {
+                || !session.get().getExpiresAt().isAfter(now)
+                || !TokenDigest.matches(session.get().getAccessTokenHash(), request.accessTokenProof())) {
             return null;
         }
         boolean accountActive = accountRepository.findById(request.subjectId())
@@ -262,6 +272,7 @@ public class AuthorizationDecisionService {
         return request != null
                 && request.subjectId() != null
                 && request.sessionId() != null
+                && TokenDigest.isSha256Hex(request.accessTokenProof())
                 && hasBoundedText(request.action(), MAX_ACTION_LENGTH)
                 && hasBoundedText(request.expectedPolicyVersion(), MAX_POLICY_VERSION_LENGTH)
                 && request.resource() != null;
@@ -269,7 +280,7 @@ public class AuthorizationDecisionService {
 
     private boolean isResourceShapeValidForAction(AuthorizationResource resource, AuthorizationAction action) {
         if (!GOAL_RESOURCE_TYPE.equals(resource.resourceType())
-                || !hasBoundedText(resource.tenantId(), MAX_TENANT_LENGTH)
+                || !hasBoundedText(resource.tenantId(), AuthorizationMembership.MAX_TENANT_ID_LENGTH)
                 || resource.attributes() == null
                 || resource.attributes().size() > MAX_ATTRIBUTES
                 || !boundedAttributes(resource.attributes())) {

@@ -4,14 +4,14 @@ Let me be upfront: "production" for LifeOS today means a local docker-compose en
 
 ## Today's reality
 
-Right now I have exactly two tools: Spring Boot Actuator's `/actuator/health` endpoint (both `identity-service` and `task-goal-service` expose only `health` and `info`, nothing else) and whatever gets printed to stdout by default Spring Boot logging. There's no structured JSON logging, no correlation/trace IDs threaded through requests, no metrics endpoint exposed, and no log aggregation — if something breaks, I'm reading raw console output from a single process.
+The two services are at different observability stages. `identity-service` emits ECS-structured logs, records Micrometer/Prometheus metrics, and exports OpenTelemetry traces from its private management topology. `task-goal-service` still exposes only `health` and `info` and uses standard Spring logging. There is no deployed collector, log aggregation, dashboard, or end-to-end trace across the Task/Goal-to-Identity authorization call yet, so most cross-service investigation still means comparing bounded local logs and timestamps.
 
 Given that, my actual debugging workflow today is:
 
 1. **Confirm the process is alive and the dependency it needs is reachable.** `/actuator/health` tells me if the JVM is up and — since it aggregates the datasource health indicator — whether Postgres is reachable. That's the first fork in the road: is this a "service is down" problem or a "service is up but returning wrong/slow answers" problem?
-2. **Reproduce against the actual endpoint.** Both services are small enough (identity is registration-only, task-goal is goal CRUD plus the Kahn's-algorithm dependency-ordering endpoint) that I can usually hit the same request with curl and watch stdout in real time.
-3. **Read the stack trace and correlate it manually.** Without trace IDs, if I need to correlate a failure across identity-service and task-goal-service, I'm eyeballing timestamps across two terminal windows. That's fine at two services; it stops being fine well before eleven.
-4. **Check the database directly.** With Postgres as the system of record and Hibernate `ddl-auto: update`, a decent chunk of "weird state" bugs are schema or data issues I can just query for.
+2. **Reproduce against the actual endpoint.** Both services are small enough that I can exercise the same request locally: identity owns login, durable session validation, and authorization decisions; Task/Goal owns authenticated, owner/tenant-scoped goal access and dependency ordering.
+3. **Correlate the boundary safely.** Identity's structured logs and traces help diagnose its own work, but Task/Goal has not yet received the same instrumentation or a deployed tracing backend. For the current two-service path I compare timestamps and bounded event/reason fields, never bearer tokens, proofs, or resource contents.
+4. **Check the database and migration history directly.** Postgres is the system of record, Flyway owns schema evolution, and Hibernate runs `ddl-auto: validate`. I check `flyway_schema_history`, the expected schema version, and application readiness before treating a surprising state as an application-data bug.
 
 The honest failure mode here: cross-service issues, intermittent issues, and anything that isn't reproducible on demand are genuinely hard to debug with this toolset. That's not an accident I'm ignoring — it's the reason ADR-018 exists.
 

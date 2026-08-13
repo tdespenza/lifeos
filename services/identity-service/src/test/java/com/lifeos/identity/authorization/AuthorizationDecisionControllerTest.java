@@ -1,5 +1,7 @@
 package com.lifeos.identity.authorization;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
@@ -83,7 +85,9 @@ class AuthorizationDecisionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("ALLOW"))
                 .andExpect(jsonPath("$.reasonCode").value("ALLOWED"))
-                .andExpect(jsonPath("$.policyVersion").value("v1"));
+                .andExpect(jsonPath("$.policyVersion").value("v1"))
+                .andExpect(jsonPath("$.subjectId").doesNotExist())
+                .andExpect(jsonPath("$.verifiedSubjectId").doesNotExist());
 
         verify(metrics).record(any());
         verify(auditService).recordAuthorizationOutcome(
@@ -96,6 +100,7 @@ class AuthorizationDecisionControllerTest {
     @Test
     void returnsAndAuditsDeterministicDenialWithoutResourceDetails() throws Exception {
         UUID subjectId = UUID.randomUUID();
+        UUID goalId = UUID.randomUUID();
         authenticatedWorkload();
         auditableRequest();
         when(decisionService.decideForAudit(any())).thenReturn(evaluation(
@@ -107,10 +112,11 @@ class AuthorizationDecisionControllerTest {
 
         mockMvc.perform(post("/api/v1/internal/authorization/decisions")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson(subjectId)))
+                        .content(requestJson(subjectId, goalId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("DENY"))
-                .andExpect(jsonPath("$.reasonCode").value("OWNER_MISMATCH"));
+                .andExpect(jsonPath("$.reasonCode").value("OWNER_MISMATCH"))
+                .andExpect(content().string(not(containsString(goalId.toString()))));
 
         verify(metrics).record(any());
         verify(auditService).recordAuthorizationOutcome(
@@ -152,6 +158,27 @@ class AuthorizationDecisionControllerTest {
     }
 
     @Test
+    void failsClosedWithAGenericResponseWhenAuditPersistenceCannotRecordADenial() throws Exception {
+        authenticatedWorkload();
+        auditableRequest();
+        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+                AuthorizationDecision.deny(
+                        AuthorizationDenyReason.OWNER_MISMATCH,
+                        "v1",
+                        Instant.parse("2026-08-13T12:05:00Z")),
+                UUID.randomUUID()));
+        doThrow(new IllegalStateException("audit persistence unavailable")).when(auditService)
+                .recordAuthorizationOutcome(any(), any(), anyString(), anyString());
+
+        mockMvc.perform(post("/api/v1/internal/authorization/decisions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestJson(UUID.randomUUID())))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string(containsString("Authorization is temporarily unavailable.")))
+                .andExpect(content().string(not(containsString("audit persistence unavailable"))));
+    }
+
+    @Test
     void staleSubjectDenialIsAuditedWithoutCallerSuppliedSubjectAttribution() throws Exception {
         authenticatedWorkload();
         auditableRequest();
@@ -189,8 +216,11 @@ class AuthorizationDecisionControllerTest {
     }
 
     private String requestJson(UUID subjectId) {
+        return requestJson(subjectId, UUID.randomUUID());
+    }
+
+    private String requestJson(UUID subjectId, UUID goalId) {
         UUID sessionId = UUID.randomUUID();
-        UUID goalId = UUID.randomUUID();
         return """
                 {
                   "subjectId":"%s",

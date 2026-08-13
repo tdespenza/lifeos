@@ -54,6 +54,7 @@ class JwtValidationServiceTest {
         assertThat(subject.accountId()).isEqualTo(accountId);
         assertThat(subject.sessionId()).isEqualTo(sessionId);
         assertThat(subject.authenticationMethod()).isEqualTo("PASSWORD");
+        assertThat(subject.accessTokenProof()).isEqualTo(TokenDigest.sha256(rawToken));
     }
 
     @Test

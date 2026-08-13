@@ -27,6 +27,8 @@ import java.util.UUID;
                 columnNames = {"account_id", "tenant_id", "role"}))
 public class AuthorizationMembership {
 
+    static final int MAX_TENANT_ID_LENGTH = 128;
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -34,7 +36,7 @@ public class AuthorizationMembership {
     @Column(name = "account_id", nullable = false, updatable = false)
     private UUID accountId;
 
-    @Column(name = "tenant_id", nullable = false, length = 128, updatable = false)
+    @Column(name = "tenant_id", nullable = false, length = MAX_TENANT_ID_LENGTH, updatable = false)
     private String tenantId;
 
     @Enumerated(EnumType.STRING)
@@ -58,8 +60,9 @@ public class AuthorizationMembership {
      */
     public AuthorizationMembership(UUID accountId, String tenantId, AuthorizationRole role) {
         this.accountId = Objects.requireNonNull(accountId, "accountId must not be null");
-        if (tenantId == null || tenantId.isBlank() || tenantId.length() > 128) {
-            throw new IllegalArgumentException("tenantId must be between 1 and 128 characters");
+        if (tenantId == null || tenantId.isBlank() || tenantId.length() > MAX_TENANT_ID_LENGTH) {
+            throw new IllegalArgumentException(
+                    "tenantId must be between 1 and " + MAX_TENANT_ID_LENGTH + " characters");
         }
         this.tenantId = tenantId;
         this.role = Objects.requireNonNull(role, "role must not be null");

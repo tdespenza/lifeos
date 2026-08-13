@@ -131,7 +131,36 @@ public class TaskGoalIdentityProperties {
         if (host.indexOf(':') >= 0) {
             return host.matches("[0-9A-Fa-f:.]+");
         }
-        return host.matches("\\d{1,3}(?:\\.\\d{1,3}){3}");
+        return isStrictIpv4Literal(host);
+    }
+
+    /**
+     * Accepts only canonical dotted-decimal IPv4 text. Rejecting out-of-range octets and leading
+     * zero forms prevents implementation-specific address parsing from broadening HTTP's local
+     * development exception.
+     */
+    private static boolean isStrictIpv4Literal(String host) {
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4) {
+            return false;
+        }
+        for (String octet : octets) {
+            if (octet.isEmpty() || octet.length() > 3 || (octet.length() > 1 && octet.charAt(0) == '0')) {
+                return false;
+            }
+            int value = 0;
+            for (int index = 0; index < octet.length(); index++) {
+                char character = octet.charAt(index);
+                if (character < '0' || character > '9') {
+                    return false;
+                }
+                value = value * 10 + (character - '0');
+            }
+            if (value > 255) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @AssertTrue(message = "connectTimeout must be positive")

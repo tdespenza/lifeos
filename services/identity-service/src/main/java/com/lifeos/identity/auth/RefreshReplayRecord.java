@@ -38,6 +38,11 @@ public class RefreshReplayRecord {
     @Column(name = "predecessor_token_hash", nullable = false, length = 64, updatable = false)
     private String predecessorTokenHash;
 
+    /**
+     * Preserve the established PostgreSQL large-object representation for replay envelopes.
+     * Existing Hibernate-managed deployments can contain OID-backed values, so changing this to
+     * {@code text} would require a separately reviewed data migration.
+     */
     @Lob
     @Column(name = "encrypted_response")
     private String encryptedResponse;

@@ -23,6 +23,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 @ExtendWith(MockitoExtension.class)
 class JwtValidationControllerTest {
 
+    private static final String ACCESS_TOKEN_PROOF =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     @Mock
     private JwtValidationService validationService;
 
@@ -49,7 +52,7 @@ class JwtValidationControllerTest {
         UUID accountId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         when(validationService.validate("signed-access-token"))
-                .thenReturn(new AuthenticatedSubject(accountId, sessionId, "PASSWORD"));
+                .thenReturn(new AuthenticatedSubject(accountId, sessionId, "PASSWORD", ACCESS_TOKEN_PROOF));
 
         mockMvc.perform(get("/api/v1/auth/validate")
                         .header(InternalWorkloadIdentityVerifier.IDENTITY_HEADER, "task-goal-service")
@@ -59,7 +62,8 @@ class JwtValidationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
                 .andExpect(jsonPath("$.sessionId").value(sessionId.toString()))
-                .andExpect(jsonPath("$.authenticationMethod").value("PASSWORD"));
+                .andExpect(jsonPath("$.authenticationMethod").value("PASSWORD"))
+                .andExpect(jsonPath("$.accessTokenProof").value(ACCESS_TOKEN_PROOF));
 
         verify(validationService).validate("signed-access-token");
         verify(workloadRateLimiter).check("task-goal-service");

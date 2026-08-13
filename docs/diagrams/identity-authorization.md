@@ -43,13 +43,14 @@ flowchart LR
 workload. Before Spring binds JSON, a servlet filter verifies the workload identity, charges its
 separate distributed request budget, and limits the body to 16 KiB. An unauthenticated caller never
 causes an unbounded attributes-map allocation or a durable audit write. The protected service then
-supplies the subject and session returned by the immediately preceding validation call, an exact
-action, and resource facts from its database:
+supplies the subject, session, and opaque validation proof returned by the immediately preceding
+validation call, an exact action, and resource facts from its database:
 
 ```json
 {
   "subjectId": "5e7af000-0000-4000-8000-000000000001",
   "sessionId": "7a4cf000-0000-4000-8000-000000000002",
+  "accessTokenProof": "<opaque internal proof, redacted>",
   "action": "goal:read",
   "resource": {
     "resourceType": "goal",
@@ -114,7 +115,7 @@ sequenceDiagram
     Goal->>Validate: validate(token) + authenticated workload identity
     Validate->>DB: Verify JWT/session ownership, expiry, revocation
     DB-->>Validate: Active subject or failure
-    Validate-->>Goal: subjectId + sessionId only
+    Validate-->>Goal: subjectId + sessionId + authentication method + opaque proof
     Goal->>Goal: Load goal and derive owner/tenant facts
     Goal->>Authz: decide(subject, action, facts, policy version)
     Authz->>DB: Revalidate session, account, and memberships
@@ -144,6 +145,7 @@ classDiagram
     class AuthorizationRequest {
         UUID subjectId
         UUID sessionId
+        String accessTokenProof
         String action
         AuthorizationResource resource
         String expectedPolicyVersion

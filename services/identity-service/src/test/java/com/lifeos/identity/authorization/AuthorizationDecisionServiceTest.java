@@ -6,8 +6,10 @@ import static org.mockito.Mockito.when;
 
 import com.lifeos.identity.account.UserAccount;
 import com.lifeos.identity.account.UserAccountRepository;
+import com.lifeos.identity.auth.AuthenticatedSubject;
 import com.lifeos.identity.auth.AuthSession;
 import com.lifeos.identity.auth.AuthSessionRepository;
+import com.lifeos.identity.auth.JwtValidationService;
 import com.lifeos.identity.auth.SessionAuthenticationMethod;
 import com.lifeos.identity.auth.TokenDigest;
 import java.time.Clock;
@@ -24,6 +26,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** Decision-table tests for deterministic RBAC and ABAC behavior. */
@@ -34,6 +38,9 @@ class AuthorizationDecisionServiceTest {
 
     @Mock
     private AuthSessionRepository sessionRepository;
+
+    @Mock
+    private JwtDecoder jwtDecoder;
 
     @Mock
     private UserAccountRepository accountRepository;
@@ -82,6 +89,7 @@ class AuthorizationDecisionServiceTest {
         AuthorizationDecision allowed = service.decide(new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 AuthorizationAction.GOAL_CREATE.value(),
                 new AuthorizationResource(
                         "goal",
@@ -94,6 +102,7 @@ class AuthorizationDecisionServiceTest {
         AuthorizationDecision denied = service.decide(new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 AuthorizationAction.GOAL_CREATE.value(),
                 new AuthorizationResource(
                         "goal",
@@ -152,6 +161,41 @@ class AuthorizationDecisionServiceTest {
     }
 
     @Test
+    void deniesAuthorizationWhenTheAccessTokenRotatesAfterValidation() {
+        String validatedRawToken = "validated-access-token";
+        Instant durableExpiry = Instant.parse("2099-01-01T00:00:00Z");
+        AuthSession durableSession = new AuthSession(
+                sessionId,
+                account(subjectId),
+                SessionAuthenticationMethod.PASSWORD,
+                TokenDigest.sha256(validatedRawToken),
+                NOW.minusSeconds(30),
+                durableExpiry);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(durableSession));
+        when(jwtDecoder.decode(validatedRawToken)).thenReturn(Jwt.withTokenValue(validatedRawToken)
+                .header("alg", "HS256")
+                .claim("sub", subjectId.toString())
+                .claim("session_id", sessionId.toString())
+                .issuedAt(NOW.minusSeconds(30))
+                .expiresAt(durableExpiry)
+                .build());
+
+        AuthenticatedSubject validated = new JwtValidationService(jwtDecoder, sessionRepository)
+                .validate(validatedRawToken);
+
+        durableSession.replaceAccessTokenHash(TokenDigest.sha256("rotated-successor-access-token"));
+        AuthorizationDecision decision = service.decide(new AuthorizationRequest(
+                validated.accountId(),
+                validated.sessionId(),
+                validated.accessTokenProof(),
+                AuthorizationAction.GOAL_LIST.value(),
+                new AuthorizationResource("goal", null, subjectId.toString(), Map.of()),
+                "v1"));
+
+        assertDeny(decision, AuthorizationDenyReason.STALE_SUBJECT);
+    }
+
+    @Test
     void deniesPolicyVersionMismatchAndUnknownActionDeterministically() {
         activeSubject(subjectId, sessionId, NOW.plusSeconds(300));
         when(policyRepository.loadCurrentPolicy()).thenReturn(v1Policy());
@@ -204,6 +248,7 @@ class AuthorizationDecisionServiceTest {
         AuthorizationDecision decision = service.decide(new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 AuthorizationAction.GOAL_READ.value(),
                 new AuthorizationResource(
                         "goal",
@@ -265,6 +310,7 @@ class AuthorizationDecisionServiceTest {
         AuthorizationRequest malformed = new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 "goal:read",
                 new AuthorizationResource("goal", null, subjectId.toString(), Map.of("ownerAccountId", subjectId.toString())),
                 "v1");
@@ -289,6 +335,7 @@ class AuthorizationDecisionServiceTest {
         AuthorizationDecisionEvaluation stale = service.decideForAudit(new AuthorizationRequest(
                 UUID.randomUUID(),
                 sessionId,
+                proofFor(sessionId),
                 "goal:read",
                 new AuthorizationResource(
                         "goal",
@@ -317,6 +364,7 @@ class AuthorizationDecisionServiceTest {
         return new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 action,
                 new AuthorizationResource("goal", null, tenantId, Map.of()),
                 "v1");
@@ -327,6 +375,7 @@ class AuthorizationDecisionServiceTest {
         return new AuthorizationRequest(
                 subjectId,
                 sessionId,
+                proofFor(sessionId),
                 action,
                 new AuthorizationResource(
                         "goal",
@@ -353,9 +402,13 @@ class AuthorizationDecisionServiceTest {
                 id,
                 account(accountId),
                 SessionAuthenticationMethod.PASSWORD,
-                TokenDigest.sha256("test-token-" + id),
+                proofFor(id),
                 NOW.minusSeconds(30),
                 expiresAt);
+    }
+
+    private String proofFor(UUID session) {
+        return TokenDigest.sha256("test-token-" + session);
     }
 
     private UserAccount account(UUID id) {

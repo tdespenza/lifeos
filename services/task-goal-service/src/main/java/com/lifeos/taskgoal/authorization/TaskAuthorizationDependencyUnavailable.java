@@ -6,4 +6,14 @@ public class TaskAuthorizationDependencyUnavailable extends RuntimeException {
     public TaskAuthorizationDependencyUnavailable() {
         super();
     }
+
+    /**
+     * Retains diagnostic causality without deriving this boundary exception's message from a
+     * potentially sensitive downstream exception.
+     *
+     * @param cause original failure
+     */
+    public TaskAuthorizationDependencyUnavailable(Throwable cause) {
+        super(null, cause);
+    }
 }

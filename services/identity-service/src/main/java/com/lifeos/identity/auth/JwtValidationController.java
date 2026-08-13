@@ -51,6 +51,7 @@ public class JwtValidationController {
         return Map.of(
                 "accountId", subject.accountId(),
                 "sessionId", subject.sessionId(),
-                "authenticationMethod", subject.authenticationMethod());
+                "authenticationMethod", subject.authenticationMethod(),
+                "accessTokenProof", subject.accessTokenProof());
     }
 }

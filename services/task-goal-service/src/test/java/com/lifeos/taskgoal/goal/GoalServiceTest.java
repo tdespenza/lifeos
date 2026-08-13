@@ -29,6 +29,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class GoalServiceTest {
 
+    private static final String ACCESS_TOKEN_PROOF =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     @Mock
     private GoalRepository repository;
 
@@ -44,7 +47,7 @@ class GoalServiceTest {
     @BeforeEach
     void setUp() {
         service = new GoalService(repository, topologicalSortService, accessService);
-        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password", ACCESS_TOKEN_PROOF);
     }
 
     @Test

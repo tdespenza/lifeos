@@ -1,5 +1,6 @@
 package com.lifeos.identity.auth;
 
+import com.lifeos.identity.authorization.DefaultAuthorizationPolicyRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -352,6 +353,9 @@ public class IdentityAuthProperties {
         public void setPolicyVersion(String policyVersion) {
             if (policyVersion == null || policyVersion.isBlank() || policyVersion.length() > 64) {
                 throw new IllegalArgumentException("policyVersion must be between 1 and 64 characters");
+            }
+            if (!DefaultAuthorizationPolicyRepository.isSupportedPolicyVersion(policyVersion)) {
+                throw new IllegalArgumentException("policyVersion is not implemented by this authorization authority");
             }
             this.policyVersion = policyVersion;
         }

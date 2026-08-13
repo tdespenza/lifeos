@@ -10,8 +10,15 @@ spring:
     password: lifeos
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
+  flyway:
+    enabled: true
+    # Existing Hibernate-managed installations must enable this only for their first controlled
+    # migration after taking a verified backup; see docs/operations/database-migrations.md.
+    baseline-on-migrate: ${TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE:false}
+    baseline-version: ${TASK_GOAL_FLYWAY_BASELINE_VERSION:1}
+    validate-migration-naming: true
 
 server:
   port: 8082

@@ -140,9 +140,15 @@ TLS/mTLS or an equivalent workload-identity control.
 {
   "accountId": "5e7af000-0000-4000-8000-000000000001",
   "sessionId": "7a4cf000-0000-4000-8000-000000000002",
-  "authenticationMethod": "PASSWORD"
+  "authenticationMethod": "PASSWORD",
+  "accessTokenProof": "<opaque internal proof, redacted>"
 }
 ```
+
+`accessTokenProof` is returned only to an authenticated workload so it can make the immediately
+following authorization request. It binds that request to the exact bearer token that identity
+validated. It is opaque contract data: it is never sent to a browser or public client and is never
+written to logs, audit rows, metric labels, or public API documentation as a real value.
 
 | Status | Condition |
 | --- | --- |
@@ -174,6 +180,7 @@ supports the four goal actions `goal:create`, `goal:list`, `goal:read`, and
 {
   "subjectId": "5e7af000-0000-4000-8000-000000000001",
   "sessionId": "7a4cf000-0000-4000-8000-000000000002",
+  "accessTokenProof": "<opaque internal proof, redacted>",
   "action": "goal:read",
   "resource": {
     "resourceType": "goal",
@@ -200,8 +207,10 @@ supports the four goal actions `goal:create`, `goal:list`, `goal:read`, and
 ```
 
 `outcome` is always `ALLOW` or `DENY`. Reason codes are bounded and intentionally omit resource
-identifiers and contents. A decision is tied to the subject, session, action, resource facts,
-tenant, and policy version; the returned expiry is no later than the active session expiry.
+identifiers and contents. A decision is tied to the subject, session, opaque validation proof,
+action, resource facts, tenant, and policy version; the returned expiry is no later than the
+active session expiry. The proof is accepted only from an authenticated workload and is never
+persisted in authorization audits or exposed in a public response.
 
 | Status | Condition |
 | --- | --- |
@@ -409,7 +418,8 @@ PostgreSQL, database `lifeos_identity`, with these identity-owned tables:
 | `auth_session` | Durable session metadata and SHA-256 access-token digest for revocation authority. |
 | `external_identity` | Verified provider/subject to LifeOS-account mappings; no provider tokens. |
 | `security_audit_event` | Redacted authentication outcomes and correlation metadata. |
+| `authorization_membership` | Explicit active role grants scoped to an account and tenant; personal `MEMBER` remains implicit. |
 
-See [`UserAccount`](../../services/identity-service/src/main/java/com/lifeos/identity/account/UserAccount.java), [`PasswordCredential`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/PasswordCredential.java), and [`AuthSession`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/AuthSession.java). Schema is currently managed by Hibernate's `ddl-auto: update` — this is a known Phase 1 shortcut; a real migration tool (e.g. Flyway) should replace it before this goes further, per the persistence-model tradeoff called out in [ADR-008](../adr/ADR-008-use-postgresql-as-system-of-record.md).
+See [`UserAccount`](../../services/identity-service/src/main/java/com/lifeos/identity/account/UserAccount.java), [`PasswordCredential`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/PasswordCredential.java), and [`AuthSession`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/AuthSession.java). Flyway owns schema evolution and Hibernate runs with `ddl-auto: validate`, so an unexpected production schema fails startup instead of being changed implicitly. Follow the [database migration runbook](../operations/database-migrations.md) for fresh deployments, existing Hibernate-managed databases, and rollback discipline.
 
 For deployed environments, set `IDENTITY_DATASOURCE_URL`, `IDENTITY_DATASOURCE_USERNAME`, and `IDENTITY_DATASOURCE_PASSWORD` rather than relying on the local-development defaults in `application.yml`.

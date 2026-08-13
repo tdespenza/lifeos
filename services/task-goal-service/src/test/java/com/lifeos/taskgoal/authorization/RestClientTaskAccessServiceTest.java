@@ -2,6 +2,7 @@ package com.lifeos.taskgoal.authorization;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -19,10 +20,13 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 class RestClientTaskAccessServiceTest {
 
     private static final String IDENTITY_URL = "https://identity.test";
+    private static final String ACCESS_TOKEN_PROOF =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     private MockRestServiceServer identityServer;
     private RestClientTaskAccessService accessService;
@@ -51,14 +55,15 @@ class RestClientTaskAccessServiceTest {
                 .andExpect(header("X-LifeOS-Workload-Token", "test-workload-token"))
                 .andRespond(withSuccess(
                         """
-                        {"accountId":"%s","sessionId":"%s","authenticationMethod":"password"}
-                        """.formatted(accountId, sessionId),
+                        {"accountId":"%s","sessionId":"%s","authenticationMethod":"password","accessTokenProof":"%s"}
+                        """.formatted(accountId, sessionId, ACCESS_TOKEN_PROOF),
                         MediaType.APPLICATION_JSON));
 
         TaskSubject subject = accessService.authenticate("Bearer raw-access-token");
 
         assertThat(subject.accountId()).isEqualTo(accountId);
         assertThat(subject.sessionId()).isEqualTo(sessionId);
+        assertThat(subject.accessTokenProof()).isEqualTo(ACCESS_TOKEN_PROOF);
         identityServer.verify();
     }
 
@@ -72,21 +77,26 @@ class RestClientTaskAccessServiceTest {
     void rejectedBearerBecomesAuthenticationFailureWhileRateLimitIsUnavailable() {
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
                 .andRespond(withUnauthorizedRequest());
-        assertThatThrownBy(() -> accessService.authenticate("Bearer rejected"))
-                .isInstanceOf(TaskAuthenticationFailure.class);
+        TaskAuthenticationFailure rejectedBearer = catchThrowableOfType(
+                () -> accessService.authenticate("Bearer rejected"), TaskAuthenticationFailure.class);
+        assertThat(rejectedBearer.getCause()).isInstanceOf(RestClientResponseException.class);
+        assertThat(rejectedBearer.getMessage()).isNull();
         identityServer.verify();
 
         identityServer.reset();
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
                 .andRespond(withTooManyRequests());
-        assertThatThrownBy(() -> accessService.authenticate("Bearer rate-limited"))
-                .isInstanceOf(TaskAuthorizationDependencyUnavailable.class);
+        TaskAuthorizationDependencyUnavailable rateLimited = catchThrowableOfType(
+                () -> accessService.authenticate("Bearer rate-limited"),
+                TaskAuthorizationDependencyUnavailable.class);
+        assertThat(rateLimited.getCause()).isInstanceOf(RestClientResponseException.class);
+        assertThat(rateLimited.getMessage()).isNull();
         identityServer.verify();
     }
 
     @Test
     void decisionSendsTrustedFactsAndFailsClosedOnDenyOrServerFailure() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forExistingGoal(
                 UUID.randomUUID(), subject.accountId(), subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
@@ -98,6 +108,7 @@ class RestClientTaskAccessServiceTest {
                         {
                           "subjectId":"%s",
                           "sessionId":"%s",
+                          "accessTokenProof":"%s",
                           "action":"goal:read",
                           "resource":{
                             "resourceType":"goal",
@@ -110,6 +121,7 @@ class RestClientTaskAccessServiceTest {
                         """.formatted(
                         subject.accountId(),
                         subject.sessionId(),
+                        subject.accessTokenProof(),
                         resource.resourceId(),
                         subject.tenantId(),
                         subject.accountId())))
@@ -136,14 +148,31 @@ class RestClientTaskAccessServiceTest {
         identityServer.reset();
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andRespond(withServerError());
-        assertThatThrownBy(() -> accessService.authorize(subject, GoalAuthorizationActions.READ, resource))
-                .isInstanceOf(TaskAuthorizationDependencyUnavailable.class);
+        TaskAuthorizationDependencyUnavailable unavailable = catchThrowableOfType(
+                () -> accessService.authorize(subject, GoalAuthorizationActions.READ, resource),
+                TaskAuthorizationDependencyUnavailable.class);
+        assertThat(unavailable.getCause()).isInstanceOf(RestClientResponseException.class);
+        assertThat(unavailable.getMessage()).isNull();
         identityServer.verify();
     }
 
     @Test
+    void boundaryExceptionsKeepCausesWithoutCopyingPotentialCredentialTextIntoTheirMessages() {
+        RuntimeException cause = new RuntimeException("Bearer raw-access-token");
+
+        TaskAuthenticationFailure authenticationFailure = new TaskAuthenticationFailure(cause);
+        TaskAuthorizationDependencyUnavailable dependencyUnavailable =
+                new TaskAuthorizationDependencyUnavailable(cause);
+
+        assertThat(authenticationFailure.getCause()).isSameAs(cause);
+        assertThat(authenticationFailure.getMessage()).isNull();
+        assertThat(dependencyUnavailable.getCause()).isSameAs(cause);
+        assertThat(dependencyUnavailable.getMessage()).isNull();
+    }
+
+    @Test
     void policyUnavailableDecisionMapsToDependencyUnavailable() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andRespond(withSuccess(
@@ -159,7 +188,7 @@ class RestClientTaskAccessServiceTest {
 
     @Test
     void staleSubjectDecisionWithUnknownPolicyAndImmediateExpiryRemainsAGenericDeny() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andRespond(withSuccess(
@@ -175,7 +204,7 @@ class RestClientTaskAccessServiceTest {
 
     @Test
     void malformedDecisionOutcomeFailsClosedAsDependencyUnavailable() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andRespond(withSuccess(
@@ -191,7 +220,7 @@ class RestClientTaskAccessServiceTest {
 
     @Test
     void acceptsAnAllowOnlyWhenItsReasonAndPolicyVersionMatchTheContract() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andRespond(withSuccess(
@@ -231,13 +260,14 @@ class RestClientTaskAccessServiceTest {
 
     @Test
     void collectionDecisionSendsTenantScopeWithoutOwnerAttribute() {
-        TaskSubject subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        TaskSubject subject = subject();
         GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
         identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
                 .andExpect(content().json("""
                         {
                           "subjectId":"%s",
                           "sessionId":"%s",
+                          "accessTokenProof":"%s",
                           "action":"goal:list",
                           "resource":{
                             "resourceType":"goal",
@@ -247,7 +277,8 @@ class RestClientTaskAccessServiceTest {
                           },
                           "expectedPolicyVersion":"v1"
                         }
-                        """.formatted(subject.accountId(), subject.sessionId(), subject.tenantId())))
+                        """.formatted(
+                        subject.accountId(), subject.sessionId(), subject.accessTokenProof(), subject.tenantId())))
                 .andRespond(withSuccess(
                         """
                         {"outcome":"ALLOW","reasonCode":"ALLOWED","policyVersion":"v1","expiresAt":"2099-01-01T00:00:00Z"}
@@ -257,5 +288,9 @@ class RestClientTaskAccessServiceTest {
         accessService.authorize(subject, GoalAuthorizationActions.LIST, resource);
 
         identityServer.verify();
+    }
+
+    private static TaskSubject subject() {
+        return new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password", ACCESS_TOKEN_PROOF);
     }
 }

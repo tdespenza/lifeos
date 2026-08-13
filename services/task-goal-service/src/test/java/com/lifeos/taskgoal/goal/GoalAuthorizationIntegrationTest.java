@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,13 +37,16 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
-    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.jpa.hibernate.ddl-auto=validate",
+    "spring.flyway.enabled=true",
     "identity.workload-token=integration-test-workload-token"
 })
 @AutoConfigureMockMvc
 class GoalAuthorizationIntegrationTest {
 
     private static final String BEARER = "Bearer integration-test-token";
+    private static final String ACCESS_TOKEN_PROOF =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     @Autowired
     private MockMvc mockMvc;
@@ -62,7 +66,7 @@ class GoalAuthorizationIntegrationTest {
     void setUp() {
         repository.deleteAll();
         reset(accessService);
-        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password");
+        subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password", ACCESS_TOKEN_PROOF);
         when(accessService.authenticate(anyString())).thenReturn(subject);
     }
 
@@ -144,6 +148,7 @@ class GoalAuthorizationIntegrationTest {
 
         mockMvc.perform(get("/api/v1/goals").header("Authorization", BEARER))
                 .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
                 .andExpect(jsonPath("$.error").value("Authorization temporarily unavailable"));
     }
 }

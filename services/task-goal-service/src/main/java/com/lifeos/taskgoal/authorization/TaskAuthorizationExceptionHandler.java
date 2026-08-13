@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class TaskAuthorizationExceptionHandler {
 
+    private static final String AUTHORIZATION_RETRY_AFTER_SECONDS = "1";
+
     private static final AuthorizationErrorResponse AUTHENTICATION_FAILURE =
             new AuthorizationErrorResponse("Authentication required");
     private static final AuthorizationErrorResponse AUTHORIZATION_DENIED =
@@ -32,7 +34,9 @@ public class TaskAuthorizationExceptionHandler {
     @ExceptionHandler(TaskAuthorizationDependencyUnavailable.class)
     public ResponseEntity<AuthorizationErrorResponse> authorizationUnavailable(
             TaskAuthorizationDependencyUnavailable exception) {
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(AUTHORIZATION_UNAVAILABLE);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, AUTHORIZATION_RETRY_AFTER_SECONDS)
+                .body(AUTHORIZATION_UNAVAILABLE);
     }
 
     public record AuthorizationErrorResponse(String error) {

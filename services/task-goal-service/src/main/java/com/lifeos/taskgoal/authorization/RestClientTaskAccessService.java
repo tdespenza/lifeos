@@ -63,11 +63,11 @@ public class RestClientTaskAccessService implements TaskAccessService {
             throw exception;
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 401) {
-                throw new TaskAuthenticationFailure();
+                throw new TaskAuthenticationFailure(exception);
             }
-            throw new TaskAuthorizationDependencyUnavailable();
+            throw new TaskAuthorizationDependencyUnavailable(exception);
         } catch (RuntimeException exception) {
-            throw new TaskAuthorizationDependencyUnavailable();
+            throw new TaskAuthorizationDependencyUnavailable(exception);
         }
     }
 
@@ -82,6 +82,7 @@ public class RestClientTaskAccessService implements TaskAccessService {
                     .body(new AuthorizationDecisionRequest(
                             subject.accountId(),
                             subject.sessionId(),
+                            subject.accessTokenProof(),
                             action,
                             new DecisionResource(
                                     resource.resourceType(),
@@ -103,7 +104,7 @@ public class RestClientTaskAccessService implements TaskAccessService {
         } catch (TaskAuthorizationDenied | TaskAuthorizationDependencyUnavailable exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            throw new TaskAuthorizationDependencyUnavailable();
+            throw new TaskAuthorizationDependencyUnavailable(exception);
         }
     }
 
@@ -135,13 +136,18 @@ public class RestClientTaskAccessService implements TaskAccessService {
         if (response == null
                 || response.accountId() == null
                 || response.sessionId() == null
-                || !StringUtils.hasText(response.authenticationMethod())) {
+                || !StringUtils.hasText(response.authenticationMethod())
+                || !isFixedFormatAccessTokenProof(response.accessTokenProof())) {
             throw new TaskAuthorizationDependencyUnavailable();
         }
         try {
-            return new TaskSubject(response.accountId(), response.sessionId(), response.authenticationMethod());
+            return new TaskSubject(
+                    response.accountId(),
+                    response.sessionId(),
+                    response.authenticationMethod(),
+                    response.accessTokenProof());
         } catch (IllegalArgumentException exception) {
-            throw new TaskAuthorizationDependencyUnavailable();
+            throw new TaskAuthorizationDependencyUnavailable(exception);
         }
     }
 
@@ -164,16 +170,40 @@ public class RestClientTaskAccessService implements TaskAccessService {
                 && response.expiresAt().isAfter(Instant.now());
     }
 
+    private static boolean isFixedFormatAccessTokenProof(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ValidatedSubjectResponse(UUID accountId, UUID sessionId, String authenticationMethod) {
+    record ValidatedSubjectResponse(
+            UUID accountId, UUID sessionId, String authenticationMethod, String accessTokenProof) {
+
+        @Override
+        public String toString() {
+            return "ValidatedSubjectResponse[accountId=" + accountId
+                    + ", sessionId=" + sessionId
+                    + ", authenticationMethod=" + authenticationMethod
+                    + ", accessTokenProof=[redacted]]";
+        }
     }
 
     record AuthorizationDecisionRequest(
             UUID subjectId,
             UUID sessionId,
+            String accessTokenProof,
             String action,
             DecisionResource resource,
             String expectedPolicyVersion) {
+
+        @Override
+        public String toString() {
+            return "AuthorizationDecisionRequest[subjectId=" + subjectId
+                    + ", sessionId=" + sessionId
+                    + ", accessTokenProof=[redacted]"
+                    + ", action=" + action
+                    + ", resource=" + resource
+                    + ", expectedPolicyVersion=" + expectedPolicyVersion + ']';
+        }
     }
 
     record DecisionResource(String resourceType, String resourceId, String tenantId, Map<String, String> attributes) {

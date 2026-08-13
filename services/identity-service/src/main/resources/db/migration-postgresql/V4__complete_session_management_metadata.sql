@@ -1,6 +1,7 @@
 -- PostgreSQL-only online completion for Story 1.7.
--- The adjacent Flyway configuration disables the enclosing transaction so the cursor index can
--- be built concurrently without blocking session reads and writes.
+-- The adjacent Flyway configuration disables the enclosing transaction so the backfill can commit
+-- each bounded batch and the cursor index can be built concurrently without blocking session
+-- reads and writes.
 
 DO $$
 DECLARE
@@ -43,6 +44,7 @@ BEGIN
 
         GET DIAGNOSTICS updated_rows = ROW_COUNT;
         EXIT WHEN updated_rows = 0;
+        COMMIT;
     END LOOP;
 END $$;
 

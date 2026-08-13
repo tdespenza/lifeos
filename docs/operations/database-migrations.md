@@ -180,8 +180,10 @@ commit, stop rollout, inspect the failed history row, restore or repair only acc
 documented procedure, and rerun on a clone before retrying production. Task/Goal V3 is
 non-transactional: an interrupted PostgreSQL concurrent index build can leave an invalid index, so
 inspect it and perform only a reviewed repair before marking Flyway history repaired or retrying.
-Identity V4 is also non-transactional: an interrupted bounded backfill or concurrent index build
-requires the same inspected, reviewed repair path before retrying.
+Identity V4 is also non-transactional: the PostgreSQL backfill commits each bounded batch before
+selecting the next batch, so completed batches remain on interruption and a retry is idempotent.
+An interrupted constraint validation or concurrent index build still requires the same inspected,
+reviewed repair path before retrying.
 The V3 statement intentionally does not use `IF NOT EXISTS`; a leftover invalid index must cause a
 visible failure until an operator removes or repairs it deliberately.
 If a migration commits but the application fails validation or readiness, stop traffic advancement

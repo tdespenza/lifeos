@@ -17,7 +17,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
         OidcController.class,
         PasskeyController.class,
         JwtValidationController.class,
-        AuthorizationDecisionController.class
+        AuthorizationDecisionController.class,
+        SessionController.class
 })
 public class AuthenticationExceptionHandler {
 
@@ -112,6 +113,20 @@ public class AuthenticationExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ProblemDetail> validationFailure() {
         return problem(HttpStatus.BAD_REQUEST, "Authentication request failed.");
+    }
+
+    /**
+     * Maps malformed session cursors, UUIDs, and page bounds without echoing caller input.
+     *
+     * @return generic bad-request problem detail
+     */
+    @ExceptionHandler({
+        SessionRequestValidationException.class,
+        org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+        org.springframework.web.bind.MissingServletRequestParameterException.class
+    })
+    public ResponseEntity<ProblemDetail> sessionValidationFailure() {
+        return problem(HttpStatus.BAD_REQUEST, "Session request failed.");
     }
 
     private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {

@@ -11,7 +11,7 @@ The initial controlled migration set is deliberately split:
 
 | Service | Version 1 | Version 2 | Version 3 |
 | --- | --- | --- | --- |
-| Identity | Baseline for every mapped identity entity | `security_audit_event.outcome_code`, `authorization_membership`, and its scoped lookup index | — |
+| Identity | Baseline for every mapped identity entity | `security_audit_event.outcome_code`, `authorization_membership`, and its scoped lookup index | Session last-use/device metadata and the account cursor index |
 | Task/Goal | Baseline `goal` table | Nullable `owner_account_id`, nullable `tenant_id` | Non-transactional PostgreSQL `CREATE INDEX CONCURRENTLY` for `idx_goal_owner_tenant` |
 
 Version 2 is an expand-only change. It never invents an owner or tenant for a legacy goal; rows
@@ -47,8 +47,9 @@ on a staging clone and choose one of these guarded paths:
 
 | Observed schema | Required environment for the one-time migration | Result |
 | --- | --- | --- |
-| Existing pre-Story-1.6 schema matches V1 but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=1`; `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=1` | Identity applies V2; Task/Goal applies V2 and V3. |
-| Identity schema already includes its V2 objects but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=2` | Records Identity's current version; no historical SQL is reapplied. |
+| Existing pre-Story-1.6 schema matches V1 but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=1`; `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=1` | Identity applies V2 and V3; Task/Goal applies V2 and V3. |
+| Identity schema already includes its V2 objects but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=2` | Records Identity V2, then applies the session-management V3 migration. |
+| Identity schema already includes the session-management V3 columns/index but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=3` | Records Identity's current version; no historical SQL is reapplied. |
 | Task/Goal schema already has V2 columns but needs the online index | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=2` | Records V2, then applies Task/Goal V3 only. |
 | Task/Goal schema already includes the V3 index but has no Flyway history | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=3` | Records Task/Goal's current version; no historical SQL is reapplied. |
 | Schema differs from the expected V1/V2/V3 shape | Do not start the application or baseline it. | Reconcile with an explicitly reviewed, forward-only migration first. |
@@ -113,6 +114,8 @@ For each service, confirm:
 - For Task/Goal, legacy null-owner rows remain excluded and newly created goals have both scope
   columns populated.
 - For Identity, authorization decisions can read active scoped memberships without a full scan.
+- For Identity, `auth_session.last_used_at`, the four safe device metadata columns, and
+  `ix_auth_session_account_cursor` exist and legacy rows contain the documented unknown values.
 
 Use a rolling deployment only after the database migration is complete. V2 remains compatible with
 the prior application because its added goal columns are nullable and its audit column and

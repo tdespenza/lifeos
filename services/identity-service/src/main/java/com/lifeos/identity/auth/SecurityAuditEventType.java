@@ -54,5 +54,8 @@ public enum SecurityAuditEventType {
     AUTHORIZATION_DENIED,
 
     /** A required authorization dependency could not complete safely. */
-    AUTHORIZATION_DEPENDENCY_UNAVAILABLE
+    AUTHORIZATION_DEPENDENCY_UNAVAILABLE,
+
+    /** A user requested a single-session or bulk session revocation outcome. */
+    SESSION_REVOKED
 }

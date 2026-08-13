@@ -249,6 +249,40 @@ public class OidcAuthenticationService {
             String providerError,
             String browserTransaction,
             String clientAddress) {
+        return callback(
+                providerName,
+                code,
+                state,
+                codeVerifier,
+                providerError,
+                browserTransaction,
+                clientAddress,
+                DeviceMetadata.unknown());
+    }
+
+    /**
+     * Consumes a provider callback and stores only coarse device metadata with the new session.
+     *
+     * @param providerName allow-listed provider name
+     * @param code provider authorization code
+     * @param state callback state
+     * @param codeVerifier client PKCE verifier
+     * @param providerError provider error, if any
+     * @param browserTransaction browser transaction binding
+     * @param clientAddress source used only for keyed audit fingerprinting
+     * @param deviceMetadata safe device classification
+     * @return shared session/token result
+     */
+    @Transactional
+    public LoginResponse callback(
+            String providerName,
+            String code,
+            String state,
+            String codeVerifier,
+            String providerError,
+            String browserTransaction,
+            String clientAddress,
+            DeviceMetadata deviceMetadata) {
         try {
             IdentityAuthProperties.Provider provider = provider(providerName);
             validateProviderTransport(provider);
@@ -272,8 +306,10 @@ public class OidcAuthenticationService {
             OidcIdentity identity = providerClient.exchangeAndValidate(
                     provider, code, effectiveCodeVerifier, authorizationState.nonce());
             UserAccount account = resolveAccount(providerName, identity);
-            LoginResponse response = sessionTokenAuthority.createSession(
-                    account, SessionAuthenticationMethod.OIDC);
+            LoginResponse response = deviceMetadata == null || deviceMetadata.isUnknown()
+                    ? sessionTokenAuthority.createSession(account, SessionAuthenticationMethod.OIDC)
+                    : sessionTokenAuthority.createSession(
+                            account, SessionAuthenticationMethod.OIDC, deviceMetadata);
             recordSuccessfulAudit(account, clientAddress);
             return response;
         } catch (SessionCapacityExceededException exception) {

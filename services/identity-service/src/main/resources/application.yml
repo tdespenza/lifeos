@@ -31,6 +31,8 @@ identity:
     trusted-proxy-addresses: []
     access-token-ttl: ${IDENTITY_ACCESS_TOKEN_TTL:PT5M}
     max-sessions-per-account: ${IDENTITY_MAX_SESSIONS_PER_ACCOUNT:10}
+    default-session-page-size: ${IDENTITY_DEFAULT_SESSION_PAGE_SIZE:20}
+    max-session-page-size: ${IDENTITY_MAX_SESSION_PAGE_SIZE:100}
     rate-limit:
       max-attempts: ${IDENTITY_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:5}
       window: ${IDENTITY_LOGIN_RATE_LIMIT_WINDOW:PT1M}

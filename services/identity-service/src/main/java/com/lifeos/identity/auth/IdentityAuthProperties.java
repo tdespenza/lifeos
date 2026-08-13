@@ -48,6 +48,10 @@ public class IdentityAuthProperties {
     private Duration accessTokenTtl = Duration.ofMinutes(5);
     @Min(value = 1, message = "maxSessionsPerAccount must be positive")
     private int maxSessionsPerAccount = 10;
+    @Min(value = 1, message = "defaultSessionPageSize must be positive")
+    private int defaultSessionPageSize = 20;
+    @Min(value = 1, message = "maxSessionPageSize must be positive")
+    private int maxSessionPageSize = 100;
 
     /**
      * Creates authentication properties with safe development defaults.
@@ -184,6 +188,48 @@ public class IdentityAuthProperties {
     }
 
     /**
+     * Returns the default session-list page size.
+     *
+     * @return default session page size
+     */
+    public int getDefaultSessionPageSize() {
+        return defaultSessionPageSize;
+    }
+
+    /**
+     * Sets the default session-list page size.
+     *
+     * @param defaultSessionPageSize page size
+     */
+    public void setDefaultSessionPageSize(int defaultSessionPageSize) {
+        if (defaultSessionPageSize < 1) {
+            throw new IllegalArgumentException("defaultSessionPageSize must be positive");
+        }
+        this.defaultSessionPageSize = defaultSessionPageSize;
+    }
+
+    /**
+     * Returns the maximum accepted session-list page size.
+     *
+     * @return maximum session page size
+     */
+    public int getMaxSessionPageSize() {
+        return maxSessionPageSize;
+    }
+
+    /**
+     * Sets the maximum accepted session-list page size.
+     *
+     * @param maxSessionPageSize maximum page size
+     */
+    public void setMaxSessionPageSize(int maxSessionPageSize) {
+        if (maxSessionPageSize < 1) {
+            throw new IllegalArgumentException("maxSessionPageSize must be positive");
+        }
+        this.maxSessionPageSize = maxSessionPageSize;
+    }
+
+    /**
      * Confirms that the access-token lifetime is strictly positive during property validation.
      *
      * @return {@code true} when issued tokens have a usable lifetime
@@ -191,6 +237,18 @@ public class IdentityAuthProperties {
     @AssertTrue(message = "accessTokenTtl must be positive")
     public boolean isAccessTokenTtlPositive() {
         return accessTokenTtl != null && !accessTokenTtl.isZero() && !accessTokenTtl.isNegative();
+    }
+
+    /**
+     * Ensures the default page cannot exceed the configured hard response bound.
+     *
+     * @return {@code true} when page defaults are internally consistent
+     */
+    @AssertTrue(message = "defaultSessionPageSize must not exceed maxSessionPageSize")
+    public boolean isSessionPageSizeConfigurationValid() {
+        return defaultSessionPageSize > 0
+                && maxSessionPageSize > 0
+                && defaultSessionPageSize <= maxSessionPageSize;
     }
 
     /**

@@ -140,14 +140,26 @@ public class OidcController {
             @RequestParam(required = false) String error,
             HttpServletRequest servletRequest) {
         String browserTransaction = browserTransaction(servletRequest, state);
-        LoginResponse response = authenticationService.callback(
-                provider,
-                code,
-                state,
-                headerCodeVerifier,
-                error,
-                browserTransaction,
-                clientAddressResolver.resolve(servletRequest));
+        String clientAddress = clientAddressResolver.resolve(servletRequest);
+        String userAgent = servletRequest.getHeader(HttpHeaders.USER_AGENT);
+        LoginResponse response = userAgent == null || userAgent.isBlank()
+                ? authenticationService.callback(
+                        provider,
+                        code,
+                        state,
+                        headerCodeVerifier,
+                        error,
+                        browserTransaction,
+                        clientAddress)
+                : authenticationService.callback(
+                        provider,
+                        code,
+                        state,
+                        headerCodeVerifier,
+                        error,
+                        browserTransaction,
+                        clientAddress,
+                        DeviceMetadataResolver.fromUserAgent(userAgent));
         ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, "no-store");
         if (browserTransaction != null) {

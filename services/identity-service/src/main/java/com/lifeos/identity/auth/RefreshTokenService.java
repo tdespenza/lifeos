@@ -216,7 +216,7 @@ public class RefreshTokenService {
                     now.plus(properties.getJwt().getRefreshReplayTtl()));
             replayRepository.saveAndFlush(replay);
 
-            AuthSession session = sessionRepository.findById(family.getSessionId())
+            AuthSession session = findSessionForRefresh(family.getSessionId())
                     .orElseThrow(AuthenticationFailureException::new);
             UserAccount account = accountRepository.findById(family.getAccountId())
                     .orElseThrow(AuthenticationFailureException::new);
@@ -280,7 +280,7 @@ public class RefreshTokenService {
                 || !now.isBefore(family.getFamilyExpiresAt())) {
             return revokeAndReject(family);
         }
-        AuthSession session = sessionRepository.findById(family.getSessionId()).orElse(null);
+        AuthSession session = findSessionForRefresh(family.getSessionId()).orElse(null);
         UserAccount account = accountRepository.findById(family.getAccountId()).orElse(null);
         if (session == null || account == null || session.isRevoked() || !account.isActive()) {
             return revokeAndReject(family);
@@ -303,6 +303,19 @@ public class RefreshTokenService {
         family.revoke();
         familyRepository.save(family);
         throw new FamilyStateChangedException();
+    }
+
+    /**
+     * Locks the durable session before refresh mutates its access-token digest. The fallback keeps
+     * older isolated test doubles and migration adapters compatible; production repositories use
+     * the bounded pessimistic-lock query.
+     *
+     * @param sessionId durable session identifier
+     * @return locked session when present
+     */
+    private java.util.Optional<AuthSession> findSessionForRefresh(UUID sessionId) {
+        java.util.Optional<AuthSession> locked = sessionRepository.findByIdForUpdate(sessionId);
+        return locked.isPresent() ? locked : sessionRepository.findById(sessionId);
     }
 
     private void validateRequest(RefreshRequest request) {

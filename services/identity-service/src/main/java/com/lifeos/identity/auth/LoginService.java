@@ -80,6 +80,19 @@ public class LoginService {
      */
     @Transactional
     public LoginResponse login(LoginRequest request, String clientAddress) {
+        return login(request, clientAddress, DeviceMetadata.unknown());
+    }
+
+    /**
+     * Authenticates credentials and retains only coarse device metadata for session management.
+     *
+     * @param request validated login request
+     * @param clientAddress source address used only for bounded audit fingerprinting
+     * @param deviceMetadata safe device classification
+     * @return signed access-token result
+     */
+    @Transactional
+    public LoginResponse login(LoginRequest request, String clientAddress, DeviceMetadata deviceMetadata) {
         String normalizedEmail = EmailAddressNormalizer.normalize(request.email());
         try {
             rateLimiter.check(normalizedEmail, clientAddress);
@@ -121,7 +134,10 @@ public class LoginService {
         }
 
         try {
-            LoginResponse response = sessionTokenAuthority.createSession(account.get());
+            LoginResponse response = deviceMetadata == null || deviceMetadata.isUnknown()
+                    ? sessionTokenAuthority.createSession(account.get())
+                    : sessionTokenAuthority.createSession(
+                            account.get(), SessionAuthenticationMethod.PASSWORD, deviceMetadata);
             recordSuccessfulAudit(account.get().getId(), clientAddress);
             return response;
         } catch (SessionCapacityExceededException exception) {

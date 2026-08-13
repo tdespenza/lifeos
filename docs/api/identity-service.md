@@ -4,7 +4,7 @@ Base URL (local): `http://localhost:8081`
 
 Management URL (local): `http://localhost:9081`
 
-Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT issuance, JWKS publication, durable JWT/session validation, one-time refresh-token rotation, and deterministic RBAC/ABAC authorization decisions are implemented. User-facing session management remains a planned story. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
+Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT issuance, JWKS publication, durable JWT/session validation, one-time refresh-token rotation, deterministic RBAC/ABAC authorization decisions, and user-facing session listing/revocation are implemented. The session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md) and [the session diagrams](../diagrams/identity-sessions.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
 
 The story-level first-party login diagrams are in
 [`docs/diagrams/identity-login.md`](../diagrams/identity-login.md), and the OAuth2/OIDC use-case,
@@ -114,6 +114,52 @@ HMAC-SHA-256 digests of normalized email plus the request source address, using 
 client fingerprints use a separate `IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET`. Both secrets must be
 supplied by a secret manager and must not reuse the JWT signing key. The account's active-session
 limit is ten by default.
+
+## `GET /api/v1/auth/sessions`
+
+Lists the authenticated account's unexpired sessions. The endpoint validates the bearer JWT and
+then queries PostgreSQL with the authenticated account id; it never trusts a client-supplied account
+or session owner. Results are cursor-paginated with a default page size of 20 and a maximum of 100.
+The response contains only safe device classifications, authentication method, created/last-used/
+expiry timestamps, `current`, and `revoked` state. It excludes token material, raw user agents,
+addresses, and cookies.
+
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "7a4cf000-0000-4000-8000-000000000002",
+      "deviceLabel": "chrome on macos",
+      "platform": "macos",
+      "browserFamily": "chrome",
+      "coarseLocation": "unknown",
+      "authenticationMethod": "PASSWORD",
+      "createdAt": "2026-08-13T17:00:00Z",
+      "lastUsedAt": "2026-08-13T17:02:00Z",
+      "expiresAt": "2026-08-13T17:05:00Z",
+      "current": true,
+      "revoked": false
+    }
+  ],
+  "nextCursor": "<opaque cursor or null>"
+}
+```
+
+## `POST /api/v1/auth/sessions/{sessionId}/revoke`
+
+Revokes one session owned by the caller and returns `204 No Content`. The operation locks the
+account and target row with bounded database timeouts, sets durable `revoked=true`, records one
+redacted audit outcome in the same transaction, and publishes a Redis revocation marker only after
+the commit. Missing, foreign, already-revoked, and repeated targets return the same `204` result;
+they never reveal ownership.
+
+## `POST /api/v1/auth/sessions/revoke-others`
+
+Revokes every active session for the caller's account except the current bearer session and returns
+`204 No Content`. The account lock makes the bulk operation deterministic with concurrent session
+creation and revocation. Subsequent access validation and refresh attempts for revoked sessions
+fail from durable PostgreSQL state even after Redis restart; the preserved current session and
+unrelated accounts remain valid.
 
 ## `GET /api/v1/auth/validate` (internal)
 

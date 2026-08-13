@@ -12,11 +12,10 @@ import java.util.UUID;
 public record AuthenticatedSubject(
         UUID accountId, UUID sessionId, String authenticationMethod, String accessTokenProof) {
 
+    private static final String REDACTED_REPRESENTATION = "AuthenticatedSubject[redacted]";
+
     @Override
     public String toString() {
-        return "AuthenticatedSubject[accountId=" + accountId
-                + ", sessionId=" + sessionId
-                + ", authenticationMethod=" + authenticationMethod
-                + ", accessTokenProof=[redacted]]";
+        return REDACTED_REPRESENTATION;
     }
 }

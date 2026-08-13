@@ -39,6 +39,8 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.password=",
     "spring.jpa.hibernate.ddl-auto=validate",
     "spring.flyway.enabled=true",
+    // H2 has no CREATE INDEX CONCURRENTLY; use the test-only equivalent of the production V3.
+    "spring.flyway.locations=classpath:db/migration-h2",
     "identity.workload-token=integration-test-workload-token"
 })
 @AutoConfigureMockMvc

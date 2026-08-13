@@ -12,6 +12,8 @@ import java.util.UUID;
  */
 public record TaskSubject(UUID accountId, UUID sessionId, String authenticationMethod, String accessTokenProof) {
 
+    private static final String REDACTED_REPRESENTATION = "TaskSubject[redacted]";
+
     public TaskSubject {
         Objects.requireNonNull(accountId, "accountId must not be null");
         Objects.requireNonNull(sessionId, "sessionId must not be null");
@@ -34,9 +36,6 @@ public record TaskSubject(UUID accountId, UUID sessionId, String authenticationM
 
     @Override
     public String toString() {
-        return "TaskSubject[accountId=" + accountId
-                + ", sessionId=" + sessionId
-                + ", authenticationMethod=" + authenticationMethod
-                + ", accessTokenProof=[redacted]]";
+        return REDACTED_REPRESENTATION;
     }
 }

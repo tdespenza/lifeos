@@ -9,10 +9,10 @@ schema but never changes it. Migration files are immutable, ordered SQL under ea
 
 The initial controlled migration set is deliberately split:
 
-| Service | Version 1 | Version 2 |
-| --- | --- | --- |
-| Identity | Baseline for every mapped identity entity | `security_audit_event.outcome_code`, `authorization_membership`, and its scoped lookup index |
-| Task/Goal | Baseline `goal` table | Nullable `owner_account_id`, nullable `tenant_id`, and owner/tenant index |
+| Service | Version 1 | Version 2 | Version 3 |
+| --- | --- | --- | --- |
+| Identity | Baseline for every mapped identity entity | `security_audit_event.outcome_code`, `authorization_membership`, and its scoped lookup index | — |
+| Task/Goal | Baseline `goal` table | Nullable `owner_account_id`, nullable `tenant_id` | Non-transactional PostgreSQL `CREATE INDEX CONCURRENTLY` for `idx_goal_owner_tenant` |
 
 Version 2 is an expand-only change. It never invents an owner or tenant for a legacy goal; rows
 without those facts remain inaccessible through the fail-closed authorization path.
@@ -36,7 +36,9 @@ does not alter the shipped migration SQL.
    verify readiness and `ddl-auto: validate` startup before increasing traffic.
 
 Fresh empty databases use the defaults: `*_FLYWAY_BASELINE_ON_MIGRATE=false`, so Flyway applies
-V1 and V2. CI exercises that path with Flyway followed by Hibernate validation.
+every version listed above. CI uses an explicit H2-equivalent migration location for Task/Goal
+because H2 does not implement PostgreSQL's `CREATE INDEX CONCURRENTLY`; production uses the
+default PostgreSQL migration location.
 
 ## Existing Hibernate-managed databases
 
@@ -45,9 +47,11 @@ on a staging clone and choose one of these guarded paths:
 
 | Observed schema | Required environment for the one-time migration | Result |
 | --- | --- | --- |
-| Existing pre-Story-1.6 schema matches V1 but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=1`; `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=1` | Records baseline V1, then applies V2 only. |
-| Schema already includes the V2 objects and indexes, but has no Flyway history | Same `*_FLYWAY_BASELINE_ON_MIGRATE=true` with `*_FLYWAY_BASELINE_VERSION=2` | Records V2; no historical SQL is reapplied. |
-| Schema differs from the expected V1/V2 shape | Do not start the application or baseline it. | Reconcile with an explicitly reviewed, forward-only migration first. |
+| Existing pre-Story-1.6 schema matches V1 but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=1`; `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=1` | Identity applies V2; Task/Goal applies V2 and V3. |
+| Identity schema already includes its V2 objects but has no Flyway history | `IDENTITY_FLYWAY_BASELINE_ON_MIGRATE=true`, `IDENTITY_FLYWAY_BASELINE_VERSION=2` | Records Identity's current version; no historical SQL is reapplied. |
+| Task/Goal schema already has V2 columns but needs the online index | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=2` | Records V2, then applies Task/Goal V3 only. |
+| Task/Goal schema already includes the V3 index but has no Flyway history | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=3` | Records Task/Goal's current version; no historical SQL is reapplied. |
+| Schema differs from the expected V1/V2/V3 shape | Do not start the application or baseline it. | Reconcile with an explicitly reviewed, forward-only migration first. |
 
 Unset the one-time `*_FLYWAY_BASELINE_ON_MIGRATE` switch after history is established. `baseline`
 is metadata; it does not alter an existing schema. The post-migration application startup validation
@@ -58,7 +62,7 @@ is the final guard against baselining the wrong shape.
 For each service, confirm:
 
 - Flyway reports the expected current version and no failed migration.
-- The relevant V2 table/columns/index exist.
+- The relevant V2 table/columns and V3 index exist.
 - Hibernate validation starts successfully.
 - Readiness is healthy before traffic moves to the new instances.
 - For Task/Goal, legacy null-owner rows remain excluded and newly created goals have both scope
@@ -66,16 +70,22 @@ For each service, confirm:
 - For Identity, authorization decisions can read active scoped memberships without a full scan.
 
 Use a rolling deployment only after the database migration is complete. V2 remains compatible with
-the prior application because its added goal columns are nullable and its audit column, membership
-table, and indexes are additive.
+the prior application because its added goal columns are nullable and its audit column and
+membership table are additive. Task/Goal V3 runs without an enclosing transaction so PostgreSQL
+can build the index concurrently; Flyway uses a session-level advisory lock
+(`spring.flyway.postgresql.transactional-lock=false`) to keep concurrent migration deployers out.
 
 ## Failure and rollback
 
 Flyway migration scripts are never edited or deleted after a release. If a migration fails before
 commit, stop rollout, inspect the failed history row, restore or repair only according to Flyway's
-documented procedure, and rerun on a clone before retrying production. If a migration commits but
-the application fails validation or readiness, stop traffic advancement and roll application
-instances back to the prior compatible version.
+documented procedure, and rerun on a clone before retrying production. Task/Goal V3 is
+non-transactional: an interrupted PostgreSQL concurrent index build can leave an invalid index, so
+inspect it and perform only a reviewed repair before marking Flyway history repaired or retrying.
+The V3 statement intentionally does not use `IF NOT EXISTS`; a leftover invalid index must cause a
+visible failure until an operator removes or repairs it deliberately.
+If a migration commits but the application fails validation or readiness, stop traffic advancement
+and roll application instances back to the prior compatible version.
 
 For a data-impacting or non-compatible future migration, use a new forward-only corrective
 migration. Restoring the verified preflight backup is the database rollback path for this initial

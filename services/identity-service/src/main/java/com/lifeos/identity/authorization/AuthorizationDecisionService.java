@@ -126,10 +126,9 @@ public class AuthorizationDecisionService {
         SubjectState subjectState;
         try {
             subjectState = loadActiveSubject(request, now);
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException ignored) {
             log.atWarn()
                     .addKeyValue("event", "authorization_subject_lookup_unavailable")
-                    .setCause(exception)
                     .log("Authorization subject verification failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION, now);
         }
@@ -145,10 +144,9 @@ public class AuthorizationDecisionService {
                 return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION,
                         subjectState.expiresAt(), verifiedSubjectId);
             }
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException ignored) {
             log.atWarn()
                     .addKeyValue("event", "authorization_policy_unavailable")
-                    .setCause(exception)
                     .log("Authorization policy lookup failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, UNKNOWN_POLICY_VERSION,
                     subjectState.expiresAt(), verifiedSubjectId);
@@ -167,10 +165,9 @@ public class AuthorizationDecisionService {
         Set<AuthorizationRole> roles;
         try {
             roles = effectiveRoles(verifiedSubjectId, request.resource().tenantId());
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException ignored) {
             log.atWarn()
                     .addKeyValue("event", "authorization_membership_lookup_unavailable")
-                    .setCause(exception)
                     .log("Authorization membership lookup failed closed");
             return deny(AuthorizationDenyReason.POLICY_UNAVAILABLE, policy.version(),
                     subjectState.expiresAt(), verifiedSubjectId);

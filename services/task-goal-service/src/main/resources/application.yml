@@ -19,6 +19,10 @@ spring:
     baseline-on-migrate: ${TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE:false}
     baseline-version: ${TASK_GOAL_FLYWAY_BASELINE_VERSION:1}
     validate-migration-naming: true
+    # V3 creates the owner/tenant index concurrently. A session advisory lock remains held while
+    # that non-transactional migration runs, preventing another Flyway deployer from racing it.
+    postgresql:
+      transactional-lock: false
 
 server:
   port: 8082

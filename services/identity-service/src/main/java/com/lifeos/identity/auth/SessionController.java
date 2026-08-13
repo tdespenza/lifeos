@@ -53,9 +53,9 @@ public class SessionController {
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) Integer limit,
             HttpServletRequest request) {
+        AuthenticatedSubject subject = authenticate(request);
         int pageSize = limit == null ? properties.getDefaultSessionPageSize() : limit;
         validatePageSize(pageSize);
-        AuthenticatedSubject subject = authenticate(request);
         SessionPage page = sessionService.listOwnedSessions(
                 subject, cursor == null || cursor.isBlank() ? null : cursor, pageSize);
         return ResponseEntity.ok()

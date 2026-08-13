@@ -2,6 +2,7 @@ package com.lifeos.identity.auth;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -66,11 +67,15 @@ class SessionControllerTest {
     }
 
     @Test
-    void rejectsUnboundedPageSizeWithoutCallingAuthentication() throws Exception {
+    void authenticatesBeforeRejectingUnboundedPageSize() throws Exception {
+        when(validationService.validate("signed-token")).thenReturn(subject);
+
         mockMvc.perform(get("/api/v1/auth/sessions")
                         .param("limit", "101")
                         .header("Authorization", "Bearer signed-token"))
                 .andExpect(status().isBadRequest());
+
+        verify(validationService).validate("signed-token");
     }
 
     @Test
@@ -82,5 +87,25 @@ class SessionControllerTest {
                         .header("Authorization", "Bearer signed-token"))
                 .andExpect(status().isNoContent())
                 .andExpect(header().string("Cache-Control", "no-store"));
+    }
+
+    @Test
+    void revokesOtherSessionsAndPassesTheResolvedAddress() throws Exception {
+        when(validationService.validate("signed-token")).thenReturn(subject);
+        when(clientAddressResolver.resolve(any())).thenReturn("127.0.0.1");
+
+        mockMvc.perform(post("/api/v1/auth/sessions/revoke-others")
+                        .header("Authorization", "Bearer signed-token"))
+                .andExpect(status().isNoContent())
+                .andExpect(header().string("Cache-Control", "no-store"));
+
+        verify(sessionService).revokeOtherSessions(subject, "127.0.0.1");
+    }
+
+    @Test
+    void rejectsMalformedSessionIdWithGenericBadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/sessions/not-a-uuid/revoke")
+                        .header("Authorization", "Bearer signed-token"))
+                .andExpect(status().isBadRequest());
     }
 }

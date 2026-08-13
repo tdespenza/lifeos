@@ -30,18 +30,11 @@ CREATE TABLE IF NOT EXISTS auth_session (
     authentication_method VARCHAR(16),
     access_token_hash VARCHAR(64) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    last_used_at TIMESTAMP WITH TIME ZONE NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    device_label VARCHAR(64) NOT NULL,
-    platform VARCHAR(32) NOT NULL,
-    browser_family VARCHAR(32) NOT NULL,
-    coarse_location VARCHAR(64) NOT NULL,
     revoked BOOLEAN NOT NULL,
     CONSTRAINT pk_auth_session PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_auth_session_token_hash ON auth_session (access_token_hash);
-CREATE INDEX IF NOT EXISTS ix_auth_session_account_cursor
-    ON auth_session (account_id, last_used_at, created_at, id);
 
 CREATE TABLE IF NOT EXISTS refresh_token_family (
     id UUID NOT NULL,

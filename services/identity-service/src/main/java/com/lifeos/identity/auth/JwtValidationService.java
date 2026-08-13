@@ -92,7 +92,9 @@ public class JwtValidationService {
                 throw new AuthenticationFailureException();
             }
             try {
-                sessionRepository.touchLastUsedAt(session.getId(), now);
+                if (sessionRepository.touchLastUsedAt(session.getId(), now) != 1) {
+                    throw new AuthenticationFailureException();
+                }
             } catch (DataAccessException exception) {
                 // Last-use metadata is not an authorization input. A transient write failure must
                 // not turn an otherwise valid, durably checked bearer token into a 500 response.

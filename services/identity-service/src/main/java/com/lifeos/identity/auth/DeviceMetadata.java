@@ -50,7 +50,7 @@ public record DeviceMetadata(String platform, String browserFamily, String coars
         if (UNKNOWN.equals(platform)) {
             return browserFamily;
         }
-        return browserFamily + " on " + platform;
+        return normalize(browserFamily + " on " + platform, 64);
     }
 
     /**

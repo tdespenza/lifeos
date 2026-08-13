@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 /** Verifies the supported one-time baseline path for a pre-Story-1.6 identity schema. */
 class IdentityFlywayMigrationTest {
 
+    private static final String H2_MIGRATION_LOCATION = "classpath:db/migration-h2";
+
     @Test
     void appliesV2ToAnExistingV1BaselinedSchema() throws Exception {
         String databaseUrl = h2Url("identity-flyway-v2");
@@ -40,7 +42,7 @@ class IdentityFlywayMigrationTest {
 
         Flyway.configure()
                 .dataSource(databaseUrl, "sa", "")
-                .locations("classpath:db/migration")
+                .locations("classpath:db/migration", H2_MIGRATION_LOCATION)
                 .baselineOnMigrate(true)
                 .baselineVersion("1")
                 .load()
@@ -64,7 +66,7 @@ class IdentityFlywayMigrationTest {
 
         Flyway.configure()
                 .dataSource(databaseUrl, "sa", "")
-                .locations("classpath:db/migration")
+                .locations("classpath:db/migration", H2_MIGRATION_LOCATION)
                 .load()
                 .migrate();
 
@@ -72,6 +74,9 @@ class IdentityFlywayMigrationTest {
             assertThat(columnExists(connection, "REFRESH_REPLAY_RECORD", "ENCRYPTED_RESPONSE"))
                     .isTrue();
             assertThat(tableExists(connection, "AUTHORIZATION_MEMBERSHIP")).isTrue();
+            assertThat(columnExists(connection, "AUTH_SESSION", "LAST_USED_AT")).isTrue();
+            assertThat(indexExists(connection, "AUTH_SESSION", "IX_AUTH_SESSION_ACCOUNT_CURSOR"))
+                    .isTrue();
         }
     }
 
@@ -90,6 +95,17 @@ class IdentityFlywayMigrationTest {
         try (ResultSet tables = connection.getMetaData().getTables(null, null, null, null)) {
             while (tables.next()) {
                 if (tableName.equalsIgnoreCase(tables.getString("TABLE_NAME"))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private boolean indexExists(Connection connection, String tableName, String indexName) throws Exception {
+        try (ResultSet indexes = connection.getMetaData().getIndexInfo(null, null, tableName, false, false)) {
+            while (indexes.next()) {
+                if (indexName.equalsIgnoreCase(indexes.getString("INDEX_NAME"))) {
                     return true;
                 }
             }

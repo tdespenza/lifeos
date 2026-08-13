@@ -48,6 +48,7 @@ class JwtValidationServiceTest {
         String rawToken = "signed-access-token";
         when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+        when(sessionRepository.touchLastUsedAt(sessionId, NOW)).thenReturn(1);
 
         AuthenticatedSubject subject = service.validate(rawToken);
 
@@ -94,6 +95,17 @@ class JwtValidationServiceTest {
         String rawToken = "another-signed-access-token";
         when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+
+        assertThatThrownBy(() -> service.validate(rawToken))
+                .isInstanceOf(AuthenticationFailureException.class);
+    }
+
+    @Test
+    void rejectsWhenLastUseUpdateObservesAConcurrentRevocation() {
+        String rawToken = "signed-access-token";
+        when(jwtDecoder.decode(rawToken)).thenReturn(jwt(rawToken, NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session(NOW.plusSeconds(300))));
+        when(sessionRepository.touchLastUsedAt(sessionId, NOW)).thenReturn(0);
 
         assertThatThrownBy(() -> service.validate(rawToken))
                 .isInstanceOf(AuthenticationFailureException.class);

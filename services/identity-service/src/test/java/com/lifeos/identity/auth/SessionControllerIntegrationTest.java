@@ -113,7 +113,8 @@ class SessionControllerIntegrationTest {
         mockMvc.perform(get("/api/v1/auth/sessions")
                         .header("Authorization", "Bearer " + first.get("accessToken").asText()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sessions[1].revoked").value(true));
+                .andExpect(jsonPath("$.sessions[?(@.sessionId == '"
+                        + second.get("sessionId").asText() + "')].revoked").value(true));
 
         assertThat(sessionRepository.countActiveByAccountId(account.getId(), java.time.Instant.now()))
                 .isEqualTo(1);

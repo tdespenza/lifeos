@@ -82,7 +82,7 @@ class SessionManagementServiceTest {
     }
 
     @Test
-    void repeatedSingleRevokeIsIdempotentAndPublishesOnlyAfterDurableMutation() {
+    void repeatedSingleRevokeIsIdempotentAndPublishesOneRevocationMarker() {
         UUID targetId = UUID.randomUUID();
         AuthSession target = session(targetId, NOW.minusSeconds(10), NOW.plusSeconds(300));
         when(accountRepository.findByIdForUpdate(accountId)).thenReturn(Optional.of(account));
@@ -115,6 +115,9 @@ class SessionManagementServiceTest {
         assertThat(outcome.affectedCount()).isZero();
         assertThat(foreign.isRevoked()).isFalse();
         verify(sessionRepository, never()).saveAndFlush(any());
+        verify(auditService).recordOutcomeWithinCurrentTransaction(
+                SecurityAuditEventType.SESSION_REVOKED, accountId, "127.0.0.1", "NOOP");
+        verify(revocationCache, never()).markRevoked(any(), any());
     }
 
     @Test

@@ -126,7 +126,7 @@ public class SessionManagementService {
             if (changed) {
                 target.revoke();
                 sessionRepository.saveAndFlush(target);
-                scheduleCachePopulation(target);
+                scheduleCachePopulation(List.of(target));
             }
             auditService.recordOutcomeWithinCurrentTransaction(
                     SecurityAuditEventType.SESSION_REVOKED,
@@ -161,7 +161,7 @@ public class SessionManagementService {
             targets.forEach(AuthSession::revoke);
             if (!targets.isEmpty()) {
                 sessionRepository.saveAllAndFlush(targets);
-                targets.forEach(this::scheduleCachePopulation);
+                scheduleCachePopulation(targets);
             }
             auditService.recordOutcomeWithinCurrentTransaction(
                     SecurityAuditEventType.SESSION_REVOKED,
@@ -181,8 +181,10 @@ public class SessionManagementService {
                 .orElseThrow(AuthenticationFailureException::new);
     }
 
-    private void scheduleCachePopulation(AuthSession session) {
-        Runnable publish = () -> revocationCache.markRevoked(session.getId(), session.getExpiresAt());
+    private void scheduleCachePopulation(List<AuthSession> sessions) {
+        List<AuthSession> published = List.copyOf(sessions);
+        Runnable publish = () -> published.forEach(session ->
+                revocationCache.markRevoked(session.getId(), session.getExpiresAt()));
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override

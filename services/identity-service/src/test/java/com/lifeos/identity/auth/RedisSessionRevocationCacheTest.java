@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -41,6 +42,8 @@ class RedisSessionRevocationCacheTest {
 
         new RedisSessionRevocationCache(template).markRevoked(sessionId, expiry);
 
-        verify(values).set(anyString(), eq("1"), any(Duration.class));
+        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
+        verify(values).set(anyString(), eq("1"), ttl.capture());
+        assertThat(ttl.getValue()).isPositive().isLessThanOrEqualTo(Duration.ofSeconds(60));
     }
 }

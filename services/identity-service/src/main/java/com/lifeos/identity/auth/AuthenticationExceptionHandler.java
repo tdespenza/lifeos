@@ -120,13 +120,22 @@ public class AuthenticationExceptionHandler {
      *
      * @return generic bad-request problem detail
      */
+    @ExceptionHandler(SessionRequestValidationException.class)
+    public ResponseEntity<ProblemDetail> sessionValidationFailure() {
+        return problem(HttpStatus.BAD_REQUEST, "Session request failed.");
+    }
+
+    /**
+     * Maps malformed or missing request parameters to the generic authentication 400 response.
+     *
+     * @return generic bad-request problem detail
+     */
     @ExceptionHandler({
-        SessionRequestValidationException.class,
         org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
         org.springframework.web.bind.MissingServletRequestParameterException.class
     })
-    public ResponseEntity<ProblemDetail> sessionValidationFailure() {
-        return problem(HttpStatus.BAD_REQUEST, "Session request failed.");
+    public ResponseEntity<ProblemDetail> parameterFailure() {
+        return problem(HttpStatus.BAD_REQUEST, "Authentication request failed.");
     }
 
     private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {

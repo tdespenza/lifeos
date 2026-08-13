@@ -14,6 +14,9 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    # Production adds the PostgreSQL online-completion location, while tests select an H2
+    # equivalent because H2 cannot parse CREATE INDEX CONCURRENTLY.
+    locations: classpath:db/migration,classpath:db/migration-postgresql
     # Existing Hibernate-managed installations must enable this only for their first controlled
     # migration after taking a verified backup; see docs/operations/database-migrations.md.
     baseline-on-migrate: ${IDENTITY_FLYWAY_BASELINE_ON_MIGRATE:false}

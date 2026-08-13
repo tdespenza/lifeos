@@ -53,6 +53,17 @@ on a staging clone and choose one of these guarded paths:
 | Task/Goal schema already includes the V3 index but has no Flyway history | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=3` | Records Task/Goal's current version; no historical SQL is reapplied. |
 | Schema differs from the expected V1/V2/V3 shape | Do not start the application or baseline it. | Reconcile with an explicitly reviewed, forward-only migration first. |
 
+Before recording Task/Goal baseline version 3, verify that the existing index is valid—not merely
+named correctly. This query must return `idx_goal_owner_tenant` with `indisvalid = true`; otherwise
+repair the index first and do not baseline V3:
+
+```sql
+SELECT c.relname, i.indisvalid
+FROM pg_class c
+JOIN pg_index i ON i.indexrelid = c.oid
+WHERE c.relname = 'idx_goal_owner_tenant';
+```
+
 Unset the one-time `*_FLYWAY_BASELINE_ON_MIGRATE` switch after history is established. `baseline`
 is metadata; it does not alter an existing schema. The post-migration application startup validation
 is the final guard against baselining the wrong shape.
@@ -62,7 +73,8 @@ is the final guard against baselining the wrong shape.
 For each service, confirm:
 
 - Flyway reports the expected current version and no failed migration.
-- The relevant V2 table/columns and V3 index exist.
+- The relevant V2 table/columns exist; for Task/Goal V3, the query above returns
+  `idx_goal_owner_tenant` with `indisvalid = true`.
 - Hibernate validation starts successfully.
 - Readiness is healthy before traffic moves to the new instances.
 - For Task/Goal, legacy null-owner rows remain excluded and newly created goals have both scope

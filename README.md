@@ -12,11 +12,11 @@ Early-stage. Phase 1 of the roadmap is underway: two backend services are built 
 
 ## What's Actually Built
 
-* **identity-service** — account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT/JWKS validation, and one-time refresh-token rotation over PostgreSQL, with Redis-backed rate limiting and single-use callback state. See [`docs/api/identity-service.md`](docs/api/identity-service.md).
-* **task-goal-service** — goal create/list (no update or delete yet) plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
-* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis is used by identity-service for login rate limiting.
+* **identity-service** — account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT/JWKS validation, one-time refresh-token rotation, and deterministic RBAC/ABAC policy decisions over PostgreSQL, with Redis-backed rate limiting and single-use callback state. See [`docs/api/identity-service.md`](docs/api/identity-service.md) and [`docs/diagrams/identity-authorization.md`](docs/diagrams/identity-authorization.md).
+* **task-goal-service** — authenticated owner/tenant-scoped goal create/list/read plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. It validates bearer sessions and enforces identity authorization decisions before object access. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
+* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis is used by identity-service for login and authenticated-workload rate limiting.
 
-Authorization enforcement, other services, clients (web/desktop/mobile), event bus, and deployed observability remain planned. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
+An API gateway, production gRPC/mTLS contracts, other services, clients (web/desktop/mobile), event bus, and deployed observability remain planned. The current internal authorization adapter is bounded and workload-authenticated, but its infrastructure mTLS rollout follows the future gateway/gRPC work. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
 
 ## Target Feature Set
 

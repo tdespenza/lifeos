@@ -38,6 +38,14 @@ public class SecurityAuditEvent {
     @Column(name = "client_fingerprint", nullable = false, length = 64)
     private String clientFingerprint;
 
+    /**
+     * Bounded, non-sensitive authorization classification. Authentication events leave this
+     * unset; authorization events use a stable enum-like reason rather than a resource identifier
+     * or request content.
+     */
+    @Column(name = "outcome_code", length = 64)
+    private String outcomeCode;
+
     @Column(nullable = false, updatable = false)
     private Instant occurredAt;
 
@@ -59,10 +67,26 @@ public class SecurityAuditEvent {
      */
     public SecurityAuditEvent(SecurityAuditEventType eventType, UUID accountId,
             String correlationId, String clientFingerprint, Instant occurredAt) {
+        this(eventType, accountId, correlationId, clientFingerprint, null, occurredAt);
+    }
+
+    /**
+     * Creates a redacted security audit event with an optional bounded outcome classification.
+     *
+     * @param eventType outcome classification
+     * @param accountId known account, or {@code null} when no account was identified
+     * @param correlationId request correlation identifier
+     * @param clientFingerprint one-way client fingerprint
+     * @param outcomeCode bounded reason code, or {@code null} for authentication events
+     * @param occurredAt event timestamp
+     */
+    public SecurityAuditEvent(SecurityAuditEventType eventType, UUID accountId,
+            String correlationId, String clientFingerprint, String outcomeCode, Instant occurredAt) {
         this.eventType = eventType;
         this.accountId = accountId;
         this.correlationId = correlationId;
         this.clientFingerprint = clientFingerprint;
+        this.outcomeCode = outcomeCode;
         this.occurredAt = occurredAt;
     }
 
@@ -91,5 +115,14 @@ public class SecurityAuditEvent {
      */
     public String getCorrelationId() {
         return correlationId;
+    }
+
+    /**
+     * Returns the bounded non-sensitive authorization classification, if present.
+     *
+     * @return authorization reason code or {@code null} for authentication events
+     */
+    public String getOutcomeCode() {
+        return outcomeCode;
     }
 }

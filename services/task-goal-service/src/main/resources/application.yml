@@ -21,3 +21,14 @@ management:
     web:
       exposure:
         include: health,info
+
+identity:
+  # Non-loopback identity endpoints must use HTTPS. HTTP is only valid for local loopback development.
+  base-url: ${LIFEOS_IDENTITY_BASE_URL:http://localhost:8081}
+  workload-identity: ${LIFEOS_WORKLOAD_IDENTITY:task-goal-service}
+  # Must match identity.auth.authorization.workload-identities.task-goal-service.
+  # There is deliberately no default: an unconfigured workload fails closed at startup.
+  workload-token: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN}
+  connect-timeout: 2s
+  read-timeout: 3s
+  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}

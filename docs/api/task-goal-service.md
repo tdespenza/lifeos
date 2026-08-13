@@ -2,30 +2,67 @@
 
 Base URL (local): `http://localhost:8082`
 
-Status: goal CRUD (create/list) plus a real graph-algorithm endpoint for dependency ordering. Tasks, habits, routines, and milestones from the Task and Goal Service scope in `REQUIREMENTS.md` are not modeled yet — only `Goal` exists so far.
+Status: authenticated, owner- and tenant-scoped goal create/list/read plus a real graph-algorithm
+endpoint for dependency ordering. Tasks, habits, routines, and milestones from the Task and Goal
+Service scope are not modeled yet.
+
+## Authorization boundary
+
+Every `/api/v1/goals` operation requires an access-token bearer header:
+
+```text
+Authorization: Bearer <short-lived LifeOS access token>
+```
+
+The service calls the identity service's internal validation endpoint, which checks JWT claims and
+the durable session/revocation state. It then loads or derives goal owner/tenant facts and requests
+a separate identity authorization decision. This service, rather than a gateway, remains responsible
+for enforcing the object-level result.
+
+Goals created under this version persist the validated account as `ownerAccountId` and its personal
+tenant UUID string as `tenantId`. Neither comes from request JSON. Ownerless legacy rows fail closed
+during a rolling upgrade and are not exposed. Internal identity calls use deployment-managed workload
+credentials, bounded 2-second connection / 3-second read timeouts, and no permissive fallback.
+The configured identity `base-url` must use HTTPS unless it targets a local loopback development
+endpoint (for example, `localhost`, `127.0.0.1`, or `[::1]`), so workload credentials and
+authorization decisions are encrypted whenever they leave the local host.
+
+| Status | Condition | Body |
+| --- | --- | --- |
+| `401 Unauthorized` | Missing, malformed, expired, revoked, or invalid bearer credential; the identity validation adapter deliberately uses the same response when it rejects the calling workload | `{ "error": "Authentication required" }` plus `WWW-Authenticate: Bearer` |
+| `403 Forbidden` | Any policy deny, including a different user's goal or a goal that does not exist | `{ "error": "Access denied" }` |
+| `503 Service Unavailable` | Identity validation/decision transport, rate-limit, audit, or policy dependency cannot complete safely | `{ "error": "Authorization temporarily unavailable" }` |
+
+The `403` representation is deliberately identical for an existing goal owned by someone else and
+a non-existent goal. Do not use it to infer resource existence. Neither endpoint returns raw bearer
+values, workload credentials, policy records, owner IDs, or tenant IDs.
 
 ## `POST /api/v1/goals`
 
-Create a goal.
+Create a goal owned by the validated subject. The identity policy action is `goal:create`; it requires
+both a permitted role and attributes showing the subject owns its personal tenant.
 
-### Request Body
+### Request body
 
 ```json
 { "title": "Land a Staff Engineer role" }
 ```
 
-`title` must be non-blank (enforced on [`CreateGoalRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/CreateGoalRequest.java)).
+`title` must be non-blank. Owner and tenant fields are intentionally absent from the public contract.
 
 ### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |
-| `201 Created` | Goal created | `GoalResponse`, `Location` header set to `/api/v1/goals/{id}` |
-| `400 Bad Request` | Blank title | Spring's default validation error body |
+| `201 Created` | Authenticated subject is allowed to create its personal goal | `GoalResponse`; `Location: /api/v1/goals/{id}` |
+| `400 Bad Request` | Blank title | Spring validation error body; values must not be treated as authorization facts |
+| `401`, `403`, `503` | Authorization-boundary failures | Generic body defined above |
 
 ## `GET /api/v1/goals`
 
-List all goals.
+List only goals owned by the validated subject in that subject's tenant. It does not return goals
+owned by another account, even if a caller guesses their identifiers. The identity policy action is
+`goal:list`.
 
 ### Response (`200 OK`)
 
@@ -39,11 +76,29 @@ List all goals.
 ]
 ```
 
+## `GET /api/v1/goals/{goalId}`
+
+Read one goal after loading its trusted persisted owner and tenant facts and obtaining a
+`goal:read` decision. Members can read their own goal; a scoped tenant administrator may be allowed
+by the identity policy for another owner in its explicit tenant scope.
+
+For a non-existent goal, task-goal-service submits trusted `resourceExists=false` facts to the
+policy boundary, receives an auditable bounded denial, and still returns the exact same generic
+`403` representation as an unauthorized existing goal.
+
+| Status | Condition | Body |
+| --- | --- | --- |
+| `200 OK` | Authenticated and allowed | `GoalResponse` |
+| `401`, `403`, `503` | Authorization-boundary failures | Generic body defined above |
+
 ## `POST /api/v1/goals/dependency-order`
 
-Resolve a valid execution order for a set of goals given their dependencies, via topological sort. See [`docs/algorithms/topological-sort-goal-dependencies.md`](../algorithms/topological-sort-goal-dependencies.md) for the algorithm itself.
+Resolve a valid execution order for a supplied graph after the authenticated subject passes the
+`goal:dependency-order` authorization decision. The algorithm does not fetch or mutate persisted
+goals; it operates only on the supplied graph. See
+[`docs/algorithms/topological-sort-goal-dependencies.md`](../algorithms/topological-sort-goal-dependencies.md).
 
-### Request Body
+### Request body
 
 ```json
 {
@@ -57,25 +112,33 @@ Resolve a valid execution order for a set of goals given their dependencies, via
 }
 ```
 
-`goals` must be non-empty (see [`DependencyOrderRequest`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/dto/DependencyOrderRequest.java)); `dependencies` may be omitted or empty. Any goal name that appears only inside `dependencies` (not in the `goals` list) is still accepted and included in the returned `order` — the algorithm collects every node it sees across both inputs (see [`TopologicalSortService`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortService.java)).
-
-### Responses
+`goals` must be non-empty; `dependencies` may be omitted or empty. A goal name appearing only in
+`dependencies` is included in the returned order because the algorithm collects nodes from both
+inputs.
 
 | Status | Condition | Body |
 | --- | --- | --- |
-| `200 OK` | Valid DAG | `{ "order": [...] }`, a valid topological order |
-| `409 Conflict` | Dependencies contain a cycle | Plain-text message naming the unresolved goals |
-
-**Example response (200)** for the request above:
-
-```json
-{ "order": ["Learn DSA", "Build Portfolio Project", "System Design Practice", "Apply to FAANG"] }
-```
+| `200 OK` | Authorized valid DAG | `{ "order": [...] }` |
+| `409 Conflict` | Dependencies contain a cycle | Plain-text message naming unresolved input nodes |
+| `401`, `403`, `503` | Authorization-boundary failures | Generic body defined above |
 
 ## `GET /actuator/health`
 
-Same as [identity-service](identity-service.md#get-actuatorhealth) — only `health` and `info` are exposed.
+Same as [identity-service](identity-service.md#operational-endpoints) — only `health` and `info`
+are exposed.
 
 ## Data store
 
-PostgreSQL, database `lifeos_task_goal`, table `goal` (id, title, createdAt). See [`Goal`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/Goal.java). Same `ddl-auto: update` caveat as identity-service applies here.
+PostgreSQL database `lifeos_task_goal`, table `goal`:
+
+| Column | Purpose |
+| --- | --- |
+| `id` | Application-generated goal UUID |
+| `title` | Goal title |
+| `created_at` | Creation timestamp |
+| `owner_account_id` | Immutable authenticated owner for newly created rows |
+| `tenant_id` | Immutable tenant scope derived from the owner subject |
+
+The `(owner_account_id, tenant_id)` index supports owner-scoped list queries without a full table
+scan. Hibernate `ddl-auto: update` remains a Phase 1 shortcut; migrate to an explicit tool such as
+Flyway before production schema evolution.

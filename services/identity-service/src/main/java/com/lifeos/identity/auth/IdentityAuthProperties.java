@@ -40,6 +40,8 @@ public class IdentityAuthProperties {
     private final Oidc oidc = new Oidc();
     @Valid
     private final WebAuthn webauthn = new WebAuthn();
+    @Valid
+    private final Authorization authorization = new Authorization();
     private Set<String> trustedProxyAddresses = new LinkedHashSet<>();
     @NotNull(message = "accessTokenTtl must be configured")
     private Duration accessTokenTtl = Duration.ofMinutes(5);
@@ -124,6 +126,18 @@ public class IdentityAuthProperties {
      */
     public WebAuthn getWebauthn() {
         return webauthn;
+    }
+
+    /**
+     * Returns the internal authorization-decision settings.
+     *
+     * <p>Workload credentials are intentionally externalized. An unconfigured workload identity
+     * is rejected at the internal boundary rather than falling back to caller-controlled headers.
+     *
+     * @return authorization settings
+     */
+    public Authorization getAuthorization() {
+        return authorization;
     }
 
     /**
@@ -297,6 +311,136 @@ public class IdentityAuthProperties {
          */
         public void setRateLimitKeySecret(String rateLimitKeySecret) {
             this.rateLimitKeySecret = rateLimitKeySecret;
+        }
+    }
+
+    /**
+     * Versioned internal authorization settings.
+     *
+     * <p>Each workload credential is supplied by deployment configuration or a secret manager.
+     * The empty default deliberately authorizes no workload; this prevents an internal endpoint
+     * from becoming public when a deployment omits a secret.
+     */
+    public static class Authorization {
+
+        @NotBlank(message = "policyVersion must be configured")
+        private String policyVersion = "v1";
+        @Valid
+        private final WorkloadRateLimit workloadRateLimit = new WorkloadRateLimit();
+        private Map<String, String> workloadIdentities = new LinkedHashMap<>();
+
+        /**
+         * Creates settings with the initial policy version and no trusted workloads.
+         */
+        public Authorization() {
+        }
+
+        /**
+         * Returns the policy version a protected service must request.
+         *
+         * @return policy version
+         */
+        public String getPolicyVersion() {
+            return policyVersion;
+        }
+
+        /**
+         * Sets the active policy version from deployment configuration.
+         *
+         * @param policyVersion stable policy version
+         */
+        public void setPolicyVersion(String policyVersion) {
+            if (policyVersion == null || policyVersion.isBlank() || policyVersion.length() > 64) {
+                throw new IllegalArgumentException("policyVersion must be between 1 and 64 characters");
+            }
+            this.policyVersion = policyVersion;
+        }
+
+        /**
+         * Returns the bounded per-workload rate limit used by internal validation and decision
+         * adapters. It is intentionally independent of the five-attempt user login limiter.
+         *
+         * @return internal workload rate-limit settings
+         */
+        public WorkloadRateLimit getWorkloadRateLimit() {
+            return workloadRateLimit;
+        }
+
+        /**
+         * Returns a defensive copy of configured workload credential mappings.
+         *
+         * @return workload identity to secret mapping
+         */
+        public Map<String, String> getWorkloadIdentities() {
+            return Map.copyOf(workloadIdentities);
+        }
+
+        /**
+         * Replaces the configured workload credential mappings during configuration binding.
+         *
+         * <p>Values are credentials and must never be logged or returned from an endpoint.
+         *
+         * @param workloadIdentities workload identity to secret mapping
+         */
+        public void setWorkloadIdentities(Map<String, String> workloadIdentities) {
+            this.workloadIdentities = workloadIdentities == null
+                    ? new LinkedHashMap<>()
+                    : new LinkedHashMap<>(workloadIdentities);
+        }
+
+        /**
+         * Looks up one configured workload credential without exposing mappings to callers.
+         *
+         * @param workloadIdentity caller workload identity
+         * @return configured credential, or {@code null} when the workload is not trusted
+         */
+        public String workloadCredential(String workloadIdentity) {
+            return workloadIdentity == null ? null : workloadIdentities.get(workloadIdentity);
+        }
+
+        /** Rate-limit settings for authenticated internal workloads. */
+        public static class WorkloadRateLimit {
+
+            @Min(value = 1, message = "maxRequests must be positive")
+            private int maxRequests = 60_000;
+            @NotNull(message = "window must be configured")
+            private Duration window = Duration.ofMinutes(1);
+
+            /** Creates a rate limit sized for protected-service traffic, not login attempts. */
+            public WorkloadRateLimit() {
+            }
+
+            /** @return maximum requests per configured window for one workload */
+            public int getMaxRequests() {
+                return maxRequests;
+            }
+
+            /** @param maxRequests maximum requests per configured window */
+            public void setMaxRequests(int maxRequests) {
+                if (maxRequests < 1) {
+                    throw new IllegalArgumentException("maxRequests must be positive");
+                }
+                this.maxRequests = maxRequests;
+            }
+
+            /** @return bounded rate-limit window */
+            public Duration getWindow() {
+                return window;
+            }
+
+            /** @param window bounded rate-limit window */
+            public void setWindow(Duration window) {
+                if (window == null || window.isZero() || window.isNegative()) {
+                    throw new IllegalArgumentException("window must be positive");
+                }
+                this.window = window;
+            }
+
+            /** @return whether the configured window is usable */
+            @AssertTrue(message = "window must be positive")
+            public boolean isWindowPositive() {
+                return window != null && !window.isZero() && !window.isNegative();
+            }
         }
     }
 

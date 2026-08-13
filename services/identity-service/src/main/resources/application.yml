@@ -53,6 +53,17 @@ identity:
     fingerprint:
       audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
       rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}
+    authorization:
+      policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}
+      workload-rate-limit:
+        # Internal protected-service traffic has its own budget; never reuse the credential
+        # login attempt limit, which would throttle normal authorized application traffic.
+        max-requests: ${IDENTITY_WORKLOAD_RATE_LIMIT_MAX_REQUESTS:60000}
+        window: ${IDENTITY_WORKLOAD_RATE_LIMIT_WINDOW:PT1M}
+      # Internal adapters deny every caller until its deployment-managed workload secret is set.
+      # Production traffic must also be isolated behind TLS/mTLS or an equivalent service mesh.
+      workload-identities:
+        task-goal-service: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN:}
     oidc:
       callback-state-ttl: ${IDENTITY_OIDC_CALLBACK_STATE_TTL:PT5M}
       provider-connect-timeout: ${IDENTITY_OIDC_PROVIDER_CONNECT_TIMEOUT:PT2S}

@@ -43,7 +43,24 @@ public class SecurityAuditService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
-        persist(eventType, accountId, clientAddress);
+        persist(eventType, accountId, clientAddress, null);
+    }
+
+    /**
+     * Persists a redacted authorization decision with its bounded reason classification.
+     *
+     * <p>Only enum-like outcome codes are accepted. Resource identifiers, attributes, token
+     * values, and free-form request input are deliberately excluded from the audit schema.
+     *
+     * @param eventType authorization outcome
+     * @param accountId known authorization subject, or {@code null}
+     * @param clientAddress request source used only to derive a digest
+     * @param outcomeCode bounded decision reason, or {@code null} for an allow
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordAuthorizationOutcome(
+            SecurityAuditEventType eventType, UUID accountId, String clientAddress, String outcomeCode) {
+        persist(eventType, accountId, clientAddress, validatedOutcomeCode(outcomeCode));
     }
 
     /**
@@ -57,10 +74,10 @@ public class SecurityAuditService {
     @Transactional
     public void recordWithinCurrentTransaction(
             SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
-        persist(eventType, accountId, clientAddress);
+        persist(eventType, accountId, clientAddress, null);
     }
 
-    private void persist(SecurityAuditEventType eventType, UUID accountId, String clientAddress) {
+    private void persist(SecurityAuditEventType eventType, UUID accountId, String clientAddress, String outcomeCode) {
         String correlationId = RequestContext.CORRELATION_ID.isBound()
                 ? RequestContext.CORRELATION_ID.get()
                 : "unbound";
@@ -69,10 +86,21 @@ public class SecurityAuditService {
                 accountId,
                 correlationId,
                 clientFingerprint.digest(clientAddress == null ? "unknown" : clientAddress),
+                outcomeCode,
                 Instant.now()));
         log.atInfo()
                 .addKeyValue("event", eventType.name().toLowerCase())
-                .log("Authentication security outcome recorded");
+                .log("Security outcome recorded");
+    }
+
+    private String validatedOutcomeCode(String outcomeCode) {
+        if (outcomeCode == null) {
+            return null;
+        }
+        if (!outcomeCode.matches("[A-Z_]{1,64}")) {
+            throw new IllegalArgumentException("Authorization outcome code must be a bounded enum value");
+        }
+        return outcomeCode;
     }
 
 }

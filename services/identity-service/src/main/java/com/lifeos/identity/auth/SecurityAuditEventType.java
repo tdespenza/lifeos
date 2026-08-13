@@ -45,5 +45,14 @@ public enum SecurityAuditEventType {
     PASSKEY_DEPENDENCY_UNAVAILABLE,
 
     /** A passkey session could not be created because account capacity was reached. */
-    PASSKEY_SESSION_CAPACITY_REACHED
+    PASSKEY_SESSION_CAPACITY_REACHED,
+
+    /** A trusted workload received an authorization allow decision. */
+    AUTHORIZATION_ALLOWED,
+
+    /** A trusted workload received a deterministic authorization denial. */
+    AUTHORIZATION_DENIED,
+
+    /** A required authorization dependency could not complete safely. */
+    AUTHORIZATION_DEPENDENCY_UNAVAILABLE
 }

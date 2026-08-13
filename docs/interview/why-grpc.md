@@ -1,6 +1,6 @@
 # Why gRPC for internal service-to-service calls?
 
-Worth saying up front: this isn't implemented yet. Right now there are only two services — identity-service and task-goal-service — and neither one calls the other, so there's no internal RPC traffic to speak of today. This is the plan for once services actually need to talk to each other, and I want to be upfront that it hasn't been exercised in real code.
+Worth saying up front: gRPC itself is not implemented yet. The two current services do communicate now: task-goal-service uses a deliberately narrow, workload-authenticated REST adapter for durable bearer validation and RBAC/ABAC decisions. That migration bridge is bounded, fail-closed, and documented in the authorization design; it is not a substitute for the versioned gRPC contracts and production mTLS rollout described by ADR-007. This is the plan for the broader internal-RPC surface once more services need to talk to each other.
 
 The reasoning is about what happens once the service count grows toward the ~11 planned in the roadmap — things like the AI orchestrator calling the algorithm engine per user action, or the task service asking the calendar service to resolve a scheduling conflict. Those are synchronous, request/response calls where the caller genuinely needs an answer before it can proceed, so it's a different problem from the async eventing Kafka/Pulsar will handle.
 

@@ -1,6 +1,7 @@
 package com.lifeos.identity.auth;
 
 import com.lifeos.identity.account.UserAccountController;
+import com.lifeos.identity.authorization.AuthorizationDecisionController;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ProblemDetail;
@@ -15,7 +16,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
         RefreshController.class,
         OidcController.class,
         PasskeyController.class,
-        JwtValidationController.class
+        JwtValidationController.class,
+        AuthorizationDecisionController.class
 })
 public class AuthenticationExceptionHandler {
 
@@ -40,6 +42,30 @@ public class AuthenticationExceptionHandler {
     }
 
     /**
+     * Maps a missing, unknown, or mismatched internal workload to one generic unauthorized
+     * response. The same shape prevents external callers from distinguishing configured service
+     * identities or credentials.
+     *
+     * @return generic internal-caller failure
+     */
+    @ExceptionHandler(InternalWorkloadAuthenticationException.class)
+    public ResponseEntity<ProblemDetail> internalWorkloadFailure() {
+        return problem(HttpStatus.UNAUTHORIZED, "Internal authorization request failed.",
+                "Internal authorization request failed");
+    }
+
+    /**
+     * Maps a required authorization audit or policy dependency failure to a safe temporary error.
+     *
+     * @return generic authorization dependency failure
+     */
+    @ExceptionHandler(AuthorizationDependencyUnavailableException.class)
+    public ResponseEntity<ProblemDetail> authorizationDependencyFailure() {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "Authorization is temporarily unavailable.",
+                "Internal authorization request failed");
+    }
+
+    /**
      * Maps validation-endpoint throttling to 429.
      *
      * @param exception rate-limit exception
@@ -51,6 +77,21 @@ public class AuthenticationExceptionHandler {
                 .header(HttpHeaders.RETRY_AFTER, Long.toString(exception.getRetryAfterSeconds()))
                 .body(problemDetail(HttpStatus.TOO_MANY_REQUESTS,
                         "Authentication attempts are temporarily limited."));
+    }
+
+    /**
+     * Maps authenticated-workload rate limiting to a generic retryable result.
+     *
+     * @param exception workload limit result
+     * @return generic rate-limit problem detail
+     */
+    @ExceptionHandler(InternalWorkloadRateLimitExceededException.class)
+    public ResponseEntity<ProblemDetail> internalWorkloadRateLimit(
+            InternalWorkloadRateLimitExceededException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(exception.getRetryAfterSeconds()))
+                .body(problemDetail(HttpStatus.TOO_MANY_REQUESTS,
+                        "Internal authorization requests are temporarily limited."));
     }
 
     /**
@@ -75,6 +116,12 @@ public class AuthenticationExceptionHandler {
 
     private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {
         return ResponseEntity.status(status).body(problemDetail(status, detail));
+    }
+
+    private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail, String title) {
+        ProblemDetail problem = problemDetail(status, detail);
+        problem.setTitle(title);
+        return ResponseEntity.status(status).body(problem);
     }
 
     private ProblemDetail problemDetail(HttpStatus status, String detail) {

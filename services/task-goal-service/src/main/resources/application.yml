@@ -10,8 +10,19 @@ spring:
     password: lifeos
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
+  flyway:
+    enabled: true
+    # Existing Hibernate-managed installations must enable this only for their first controlled
+    # migration after taking a verified backup; see docs/operations/database-migrations.md.
+    baseline-on-migrate: ${TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE:false}
+    baseline-version: ${TASK_GOAL_FLYWAY_BASELINE_VERSION:1}
+    validate-migration-naming: true
+    # V3 creates the owner/tenant index concurrently. A session advisory lock remains held while
+    # that non-transactional migration runs, preventing another Flyway deployer from racing it.
+    postgresql:
+      transactional-lock: false
 
 server:
   port: 8082
@@ -21,3 +32,14 @@ management:
     web:
       exposure:
         include: health,info
+
+identity:
+  # Non-loopback identity endpoints must use HTTPS. HTTP is only valid for local loopback development.
+  base-url: ${LIFEOS_IDENTITY_BASE_URL:http://localhost:8081}
+  workload-identity: ${LIFEOS_WORKLOAD_IDENTITY:task-goal-service}
+  # Must match identity.auth.authorization.workload-identities.task-goal-service.
+  # There is deliberately no default: an unconfigured workload fails closed at startup.
+  workload-token: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN}
+  connect-timeout: 2s
+  read-timeout: 3s
+  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}

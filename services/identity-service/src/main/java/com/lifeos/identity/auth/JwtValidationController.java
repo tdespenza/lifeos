@@ -14,23 +14,23 @@ import org.springframework.web.bind.annotation.RestController;
 public class JwtValidationController {
 
     private final JwtValidationService validationService;
-    private final LoginRateLimiter rateLimiter;
-    private final ClientAddressResolver clientAddressResolver;
+    private final InternalWorkloadIdentityVerifier workloadIdentityVerifier;
+    private final InternalWorkloadRateLimiter workloadRateLimiter;
 
     /**
      * Creates the protected-service validation boundary.
      *
      * @param validationService durable JWT/session validator
-     * @param rateLimiter distributed request limiter
-     * @param clientAddressResolver trusted client-address resolver
+     * @param workloadIdentityVerifier authenticated internal-workload verifier
+     * @param workloadRateLimiter distributed workload request limiter
      */
     public JwtValidationController(
             JwtValidationService validationService,
-            LoginRateLimiter rateLimiter,
-            ClientAddressResolver clientAddressResolver) {
+            InternalWorkloadIdentityVerifier workloadIdentityVerifier,
+            InternalWorkloadRateLimiter workloadRateLimiter) {
         this.validationService = validationService;
-        this.rateLimiter = rateLimiter;
-        this.clientAddressResolver = clientAddressResolver;
+        this.workloadIdentityVerifier = workloadIdentityVerifier;
+        this.workloadRateLimiter = workloadRateLimiter;
     }
 
     /**
@@ -41,7 +41,8 @@ public class JwtValidationController {
      */
     @GetMapping("/api/v1/auth/validate")
     public Map<String, Object> validate(HttpServletRequest request) {
-        rateLimiter.check("jwt-validation", clientAddressResolver.resolve(request));
+        String workloadIdentity = workloadIdentityVerifier.verify(request);
+        workloadRateLimiter.check(workloadIdentity);
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header == null || !header.regionMatches(true, 0, "Bearer ", 0, 7)) {
             throw new AuthenticationFailureException();
@@ -50,6 +51,7 @@ public class JwtValidationController {
         return Map.of(
                 "accountId", subject.accountId(),
                 "sessionId", subject.sessionId(),
-                "authenticationMethod", subject.authenticationMethod());
+                "authenticationMethod", subject.authenticationMethod(),
+                "accessTokenProof", subject.accessTokenProof());
     }
 }

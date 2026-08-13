@@ -14,6 +14,18 @@ LifeOS is decomposed into ~11 Spring Boot microservices (identity, profile, task
 
 Use gRPC (Protocol Buffers + HTTP/2) for all synchronous internal service-to-service calls, with shared `.proto` contracts versioned in a dedicated `grpc-contracts` module. REST remains the external, resource-oriented API; GraphQL remains the external aggregation layer for clients; Kafka/Pulsar remains the async event backbone. gRPC only replaces internal HTTP/JSON calls between services.
 
+### Transitional exception
+
+The `grpc-contracts` module and production service-mesh mTLS rollout do not yet exist in this
+repository. Story 1.6 therefore uses one narrow internal REST/JSON bridge between
+`task-goal-service` and `identity-service` for durable JWT validation and authorization
+decisions. It is explicitly a migration seam, not a new default for internal calls: it uses
+versioned request/decision DTOs, authenticated workload identity, bounded client timeouts,
+fail-closed dependency behavior, and a transport-independent policy domain. Production deployment
+must restrict that route to internal TLS/mTLS (or an equivalent workload-identity control). The
+bridge must move to generated `grpc-contracts` stubs when that module is introduced; no additional
+internal REST integrations should treat this exception as precedent.
+
 ## Why
 
 Proto-defined contracts are compiled, not merely documented — a breaking change to a request/response message fails the build for both caller and callee before it ships, which matters when 11 services are evolving independently. Protobuf's binary encoding plus HTTP/2 multiplexing gives materially lower serialization cost and latency than JSON/HTTP/1.1 on the calls we expect to be hottest (AI orchestrator → algorithm engine can be invoked many times per user interaction). Native streaming (client, server, and bidirectional) is a direct fit for algorithm-engine workloads that may need to stream partial results, and for future document-verification flows that stream proof chains rather than returning a single blob. Codegen also gives us typed clients across our JVM services for free, with a clear extension path if additional runtimes are added later.

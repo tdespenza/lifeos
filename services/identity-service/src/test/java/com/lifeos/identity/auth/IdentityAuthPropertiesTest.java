@@ -1,5 +1,6 @@
 package com.lifeos.identity.auth;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
@@ -53,5 +54,17 @@ class IdentityAuthPropertiesTest {
         assertThatThrownBy(() -> provider.setScope("profile email"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("scope must be non-blank and include openid");
+    }
+
+    @Test
+    void acceptsOnlyPolicyVersionsImplementedByTheAuthorizationAuthority() {
+        IdentityAuthProperties.Authorization authorization = new IdentityAuthProperties.Authorization();
+
+        authorization.setPolicyVersion("v1");
+
+        assertThat(authorization.getPolicyVersion()).isEqualTo("v1");
+        assertThatThrownBy(() -> authorization.setPolicyVersion("v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("policyVersion is not implemented by this authorization authority");
     }
 }

@@ -1,6 +1,6 @@
 # How Does This System Scale?
 
-Let me be upfront about what "scale" means here today: nothing has been load-tested, there's no production traffic, and I have exactly two services running — identity-service (account registration) and task-goal-service (goal CRUD plus a topological-sort endpoint). So what I can actually talk about is design intent and the reasoning behind it, not measured throughput. If an interviewer pushes on numbers, the honest answer is "I haven't run that benchmark yet," not a made-up p99.
+Let me be upfront about what "scale" means here today: nothing has been load-tested, there's no production traffic, and I have exactly two services running — identity-service (authentication, durable session validation, and authorization decisions) and task-goal-service (authenticated owner/tenant-scoped goal operations plus a topological-sort endpoint). So what I can actually talk about is design intent and the reasoning behind it, not measured throughput. If an interviewer pushes on numbers, the honest answer is "I haven't run that benchmark yet," not a made-up p99.
 
 The design has a few scaling levers baked in from day one, even though most aren't under any real load yet.
 

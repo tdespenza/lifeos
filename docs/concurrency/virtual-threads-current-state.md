@@ -14,7 +14,7 @@ No code in the repository uses structured concurrency (`StructuredTaskScope` or 
 
 ## Scoped values — not yet used
 
-No code uses scoped values yet, for the same reason: there's no request-scoped context (user identity, correlation ID, tenant) being propagated through nested calls today, because there's no authentication and no internal service-to-service calls. This becomes relevant once identity-service issues real request context that other services need to read (e.g. a correlation ID threaded through a gRPC call), per [ADR-004](../adr/ADR-004-use-scoped-values.md).
+No code uses scoped values yet. The first authenticated internal call now exists: task-goal-service explicitly passes verified subject and tenant facts to identity-service for a bounded authorization decision. It does not need implicit context propagation or concurrent fan-out yet. Scoped values become relevant once a request context must flow through nested work or multi-service fan-out (for example, a correlation ID threaded through a future gRPC call), per [ADR-004](../adr/ADR-004-use-scoped-values.md).
 
 ## Why this is being tracked honestly rather than assumed
 

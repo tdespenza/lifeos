@@ -36,7 +36,7 @@ inputDocuments:
 
 This document provides the epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored), the current architecture, API contracts, and ADR-001 through ADR-020 into 18 epics with full FR coverage. Story-level detail is now included below: each story is sized for one implementation session, names its user value, and carries testable acceptance criteria. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
 
-**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration plus first-party email/password login) and `task-goal-service` (goal create/list + a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
+**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration, supported login flows, durable session validation, and the initial RBAC/ABAC decision boundary) and `task-goal-service` (authenticated, owner/tenant-scoped goal create/list/read plus a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
 
 ## Requirements Inventory
 
@@ -57,7 +57,7 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 - FR8: Support OAuth2/OIDC login
 - FR9: Support passkey/WebAuthn login
 - FR10: Issue JWTs for authenticated sessions
-- FR11: Enforce RBAC/ABAC authorization decisions
+- FR11: Enforce RBAC/ABAC authorization decisions [DONE — initial identity/Task Goal decision boundary]
 - FR12: Allow a user to view and revoke their active devices/sessions
 
 #### Profile Service
@@ -292,7 +292,7 @@ The baseline UX contract is in [`docs/ux-designs/DESIGN.md`](ux-designs/DESIGN.m
 - FR8: Epic 1 - OAuth2/OIDC login
 - FR9: Epic 1 - Passkey/WebAuthn login
 - FR10: Epic 1 - JWT issuance [PARTIAL — first-party access tokens; refresh/JWKS remain]
-- FR11: Epic 1 - RBAC/ABAC authorization
+- FR11: Epic 1 - RBAC/ABAC authorization [DONE — initial identity/Task Goal decision boundary]
 - FR12: Epic 1 - Device/session management
 - FR13: Epic 4 - Personal profile
 - FR14: Epic 4 - Preferences
@@ -613,7 +613,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), and JWT issuance/refresh verification (FR10) exist in `identity-service`; passkey credential registration/provisioning, RBAC/ABAC, and user-facing session management are not yet built.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), JWT issuance/refresh verification (FR10), and the initial RBAC/ABAC decision boundary (FR11) exist in `identity-service`; passkey credential registration/provisioning and user-facing session management are not yet built.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.
@@ -754,7 +754,7 @@ signature/claims checks followed by the durable session check and returns generi
 logging token material. See [`docs/api/identity-service.md`](api/identity-service.md) and
 [`docs/diagrams/identity-jwt.md`](diagrams/identity-jwt.md).
 
-### Story 1.6: RBAC and ABAC authorization decisions
+### Story 1.6: RBAC and ABAC authorization decisions [DONE]
 
 As a LifeOS service,
 I want a consistent authorization decision for a user and resource,
@@ -771,6 +771,15 @@ So that authenticated users can access only permitted data and actions.
 **Given** a missing role, failed attribute condition, cross-user resource, or stale subject
 **When** access is attempted
 **Then** the action is denied, the denial is auditable, and no resource existence is disclosed beyond the service contract.
+
+**Implementation notes:** `identity-service` owns a versioned, deterministic decision service that
+revalidates the durable subject/session and active account, evaluates scoped roles with trusted
+tenant/owner facts, and returns allow or deny with a bounded reason code. The Task/Goal service is
+the first protected slice: it derives owner/tenant fields from the validated subject, scopes list
+queries, and returns the same generic denial for missing and cross-user goal reads. The current
+transport is a bounded, workload-authenticated internal REST adapter; the target gRPC/mTLS contract
+from ADR-007 remains a later platform change. See
+[`docs/diagrams/identity-authorization.md`](diagrams/identity-authorization.md).
 
 ### Story 1.7: Device and session management
 
@@ -1054,7 +1063,7 @@ So that recommendations match my preferences and consent.
 Users create tasks and goals, track habits and routines, express dependencies between them, and see a valid execution order.
 
 - **FRs covered:** FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25
-- **Status:** Partially done — goal create/list (FR19) and dependency-order computation (FR25, the algorithm itself is correct and complete) exist in `task-goal-service`. Not actually done despite earlier drafts of this doc claiming otherwise: there is no `Task` entity at all (FR18), goals have no update/delete (FR19 is create+list only), and dependency data isn't persisted against real goals (FR22 computes an order from submitted data but doesn't store a dependency relationship). Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built either.
+- **Status:** Partially done — authenticated, owner/tenant-scoped goal create/list/read (part of FR19) and dependency-order computation (FR25, the algorithm itself is correct and complete) exist in `task-goal-service`. There is no `Task` entity at all (FR18), goals have no update/delete (so FR19 is not complete), and dependency data isn't persisted against real goals (FR22 computes an order from submitted data but doesn't store a dependency relationship). Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built either.
 - **Implementation notes:** Depends on Epic 1. The existing dependency-ordering implementation reimplements Kahn's algorithm directly rather than calling a shared Algorithm Engine — note this as a future consolidation opportunity once Epic 9 exists, not a blocker.
 
 ### Story 5.1: Task lifecycle

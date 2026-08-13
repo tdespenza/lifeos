@@ -47,14 +47,16 @@ public class JwtValidationService {
             Jwt jwt = jwtDecoder.decode(rawToken);
             UUID accountId = UUID.fromString(requiredClaim(jwt, "sub"));
             UUID sessionId = UUID.fromString(requiredClaim(jwt, "session_id"));
+            String accessTokenProof = TokenDigest.sha256(rawToken);
             Instant now = clock.instant();
             AuthSession session = sessionRepository.findById(sessionId)
                     .filter(candidate -> candidate.getAccountId().equals(accountId))
                     .filter(candidate -> !candidate.isRevoked())
                     .filter(candidate -> candidate.getExpiresAt().isAfter(now))
-                    .filter(candidate -> candidate.getAccessTokenHash().equals(TokenDigest.sha256(rawToken)))
+                    .filter(candidate -> TokenDigest.matches(candidate.getAccessTokenHash(), accessTokenProof))
                     .orElseThrow(AuthenticationFailureException::new);
-            return new AuthenticatedSubject(accountId, sessionId, session.getAuthenticationMethod().name());
+            return new AuthenticatedSubject(
+                    accountId, sessionId, session.getAuthenticationMethod().name(), accessTokenProof);
         } catch (JwtException | IllegalArgumentException exception) {
             // The cause is deliberately dropped. Decode details must not reach the caller.
             throw new AuthenticationFailureException();

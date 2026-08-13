@@ -4,7 +4,7 @@ Base URL (local): `http://localhost:8081`
 
 Management URL (local): `http://localhost:9081`
 
-Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT issuance, JWKS publication, durable JWT/session validation, and one-time refresh-token rotation are implemented. RBAC/ABAC and user-facing session management remain planned stories. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
+Status: account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT issuance, JWKS publication, durable JWT/session validation, one-time refresh-token rotation, and deterministic RBAC/ABAC authorization decisions are implemented. User-facing session management remains a planned story. The target authentication and session design is documented in [ADR-020](../adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md); `UserAccount` deliberately does not store credentials, which are owned by separate authentication-boundary entities.
 
 The story-level first-party login diagrams are in
 [`docs/diagrams/identity-login.md`](../diagrams/identity-login.md), and the OAuth2/OIDC use-case,
@@ -14,6 +14,8 @@ The implemented Story 1.4 passkey/WebAuthn use-case, sequence, domain, and lifec
 [`docs/diagrams/identity-passkey.md`](../diagrams/identity-passkey.md).
 Story 1.5 JWT issuance, refresh rotation, JWKS verification, and token-family lifecycle diagrams are in
 [`docs/diagrams/identity-jwt.md`](../diagrams/identity-jwt.md).
+Story 1.6 authorization policy, decision contract, invariants, and deployment trade-offs are in
+[`docs/diagrams/identity-authorization.md`](../diagrams/identity-authorization.md).
 
 All requests receive a server-generated `X-Correlation-ID` response header. Any incoming value is ignored so caller-controlled personal data cannot enter MDC, request context, or structured logs. Registration logs include the generated correlation context and event outcome without logging the email address, account identifier, or database exception details.
 
@@ -112,6 +114,117 @@ HMAC-SHA-256 digests of normalized email plus the request source address, using 
 client fingerprints use a separate `IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET`. Both secrets must be
 supplied by a secret manager and must not reuse the JWT signing key. The account's active-session
 limit is ten by default.
+
+## `GET /api/v1/auth/validate` (internal)
+
+This is an internal migration adapter for protected services, not a browser or public-client API.
+It validates the bearer JWT and then performs the durable PostgreSQL session/revocation check
+required by ADR-020. A service must authenticate itself with both workload headers:
+
+```text
+Authorization: Bearer <access token>
+X-LifeOS-Workload-Identity: task-goal-service
+X-LifeOS-Workload-Token: <deployment-managed shared credential>
+```
+
+The workload credential is configured independently in the identity and calling service; missing,
+unknown, blank, or mismatched credentials receive the same generic `401` response. The adapter
+does not trust an identity header by itself, log the bearer token, or return roles/tenant data.
+It has a separate, Redis-backed per-workload request budget (60,000 requests/minute by default),
+not the five-attempt credential-login budget. Deploy it on an internal network boundary with
+TLS/mTLS or an equivalent workload-identity control.
+
+### Response (`200 OK`)
+
+```json
+{
+  "accountId": "5e7af000-0000-4000-8000-000000000001",
+  "sessionId": "7a4cf000-0000-4000-8000-000000000002",
+  "authenticationMethod": "PASSWORD",
+  "accessTokenProof": "<opaque internal proof, redacted>"
+}
+```
+
+`accessTokenProof` is returned only to an authenticated workload so it can make the immediately
+following authorization request. It binds that request to the exact bearer token that identity
+validated. It is opaque contract data: it is never sent to a browser or public client and is never
+written to logs, audit rows, metric labels, or public API documentation as a real value.
+
+| Status | Condition |
+| --- | --- |
+| `200 OK` | Workload authenticated; bearer signature, claims, durable session ownership, revocation, expiry, and token digest are valid |
+| `401 Unauthorized` | Missing/invalid workload credential or bearer token; all client-safe failures have the same generic body |
+| `429 Too Many Requests` | Authenticated workload's bounded internal request budget is exceeded |
+| `503 Service Unavailable` | Required identity, audit, or internal rate-limit dependency cannot complete safely |
+
+## `POST /api/v1/internal/authorization/decisions` (internal)
+
+Returns a deterministic authorization decision for a subject and a resource that the calling service
+has already loaded. It requires `X-LifeOS-Workload-Identity` and
+`X-LifeOS-Workload-Token` exactly as the validation adapter does. The current repository uses this
+narrow REST adapter while the ADR-007 gRPC contracts module and mTLS rollout remain future work;
+the policy domain is transport-independent.
+
+Workload authentication and its separate Redis-backed request budget run before JSON binding. The
+request body is capped at 16 KiB; unauthenticated workload failures return a generic response
+without synchronously creating a durable audit row, so they cannot be used to exhaust audit storage.
+
+The service must send an exact `expectedPolicyVersion` and only trusted owner, tenant, and
+`resourceExists` attributes. It must not forward client-supplied resource facts. `v1` currently
+supports the four goal actions `goal:create`, `goal:list`, `goal:read`, and
+`goal:dependency-order`.
+
+### Request body
+
+```json
+{
+  "subjectId": "5e7af000-0000-4000-8000-000000000001",
+  "sessionId": "7a4cf000-0000-4000-8000-000000000002",
+  "accessTokenProof": "<opaque internal proof, redacted>",
+  "action": "goal:read",
+  "resource": {
+    "resourceType": "goal",
+    "resourceId": "f65bf000-0000-4000-8000-000000000003",
+    "tenantId": "5e7af000-0000-4000-8000-000000000001",
+    "attributes": {
+      "ownerAccountId": "5e7af000-0000-4000-8000-000000000001",
+      "resourceExists": "true"
+    }
+  },
+  "expectedPolicyVersion": "v1"
+}
+```
+
+### Decision response (`200 OK`)
+
+```json
+{
+  "outcome": "DENY",
+  "reasonCode": "OWNER_MISMATCH",
+  "policyVersion": "v1",
+  "expiresAt": "2026-08-13T18:10:00Z"
+}
+```
+
+`outcome` is always `ALLOW` or `DENY`. Reason codes are bounded and intentionally omit resource
+identifiers and contents. A decision is tied to the subject, session, opaque validation proof,
+action, resource facts, tenant, and policy version; the returned expiry is no later than the
+active session expiry. The proof is accepted only from an authenticated workload and is never
+persisted in authorization audits or exposed in a public response.
+
+| Status | Condition |
+| --- | --- |
+| `200 OK` | Authenticated workload; a deterministic allow or deny decision was created and audit-recorded |
+| `400 Bad Request` | The internal request cannot be parsed; no input values are echoed |
+| `401 Unauthorized` | Missing/invalid workload credential; configured identities and secrets are not disclosed |
+| `429 Too Many Requests` | Authenticated workload's bounded internal request budget is exceeded |
+| `413 Payload Too Large` | Decision request exceeds the 16 KiB bounded contract |
+| `503 Service Unavailable` | Required audit persistence or internal rate-limit dependency cannot complete safely; no allow is returned |
+
+Policy-store failures are represented as `DENY` with reason `POLICY_UNAVAILABLE`, so protected
+services can return a generic `503` rather than treating an outage as a policy denial. See
+[the authorization design](../diagrams/identity-authorization.md) for the full rule table,
+non-enumeration behavior, audit fields, and cache constraints.
 
 ## `POST /api/v1/auth/passkey/options`
 
@@ -305,7 +418,8 @@ PostgreSQL, database `lifeos_identity`, with these identity-owned tables:
 | `auth_session` | Durable session metadata and SHA-256 access-token digest for revocation authority. |
 | `external_identity` | Verified provider/subject to LifeOS-account mappings; no provider tokens. |
 | `security_audit_event` | Redacted authentication outcomes and correlation metadata. |
+| `authorization_membership` | Explicit active role grants scoped to an account and tenant; personal `MEMBER` remains implicit. |
 
-See [`UserAccount`](../../services/identity-service/src/main/java/com/lifeos/identity/account/UserAccount.java), [`PasswordCredential`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/PasswordCredential.java), and [`AuthSession`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/AuthSession.java). Schema is currently managed by Hibernate's `ddl-auto: update` — this is a known Phase 1 shortcut; a real migration tool (e.g. Flyway) should replace it before this goes further, per the persistence-model tradeoff called out in [ADR-008](../adr/ADR-008-use-postgresql-as-system-of-record.md).
+See [`UserAccount`](../../services/identity-service/src/main/java/com/lifeos/identity/account/UserAccount.java), [`PasswordCredential`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/PasswordCredential.java), and [`AuthSession`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/AuthSession.java). Flyway owns schema evolution and Hibernate runs with `ddl-auto: validate`, so an unexpected production schema fails startup instead of being changed implicitly. Follow the [database migration runbook](../operations/database-migrations.md) for fresh deployments, existing Hibernate-managed databases, and rollback discipline.
 
 For deployed environments, set `IDENTITY_DATASOURCE_URL`, `IDENTITY_DATASOURCE_USERNAME`, and `IDENTITY_DATASOURCE_PASSWORD` rather than relying on the local-development defaults in `application.yml`.

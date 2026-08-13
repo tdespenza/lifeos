@@ -1,12 +1,17 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:identity-test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    # H2 has no PostgreSQL large-object type. This test-only domain makes the shipped OID DDL
+    # validate as H2's CLOB while leaving the production migration byte-for-byte unchanged.
+    url: jdbc:h2:mem:identity-test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;INIT=CREATE DOMAIN IF NOT EXISTS OID AS CLOB
     username: sa
     password:
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
 
 management:
   server:
@@ -28,6 +33,10 @@ identity:
     fingerprint:
       audit-client-fingerprint-secret: test-only-audit-fingerprint-secret-that-is-at-least-32-bytes
       rate-limit-key-secret: test-only-rate-limit-key-secret-that-is-at-least-32-bytes
+    authorization:
+      policy-version: v1
+      workload-identities:
+        task-goal-service: test-only-task-goal-workload-secret
     oidc:
       callback-state-ttl: PT5M
       provider-connect-timeout: PT2S

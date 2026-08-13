@@ -9,8 +9,8 @@ graph TD
     end
 
     subgraph Services["Backend — Java 25 + Spring Boot 3.5.16"]
-        I["identity-service :8081<br/>registration + password/OIDC/passkey login"]
-        T["task-goal-service :8082<br/>goal CRUD + dependency-order"]
+        I["identity-service :8081<br/>authentication + authorization decisions"]
+        T["task-goal-service :8082<br/>authenticated goal create/list/read + dependency-order"]
     end
 
     subgraph Data["docker-compose"]
@@ -21,6 +21,7 @@ graph TD
 
     C -->|REST/JSON| I
     C -->|REST/JSON| T
+    T -->|bounded internal REST:<br/>validate + authorize| I
     I --> PG
     I -.->|atomic limits + short-lived state| R
     T --> PG2
@@ -28,8 +29,10 @@ graph TD
     style R fill:#eee,stroke:#999,stroke-dasharray: 5 5
 ```
 
-Redis is drawn dashed because it stores bounded, short-lived authentication state rather than the
-durable identity store; accounts, credentials, sessions, and audit records remain in PostgreSQL.
+Redis is drawn dashed because it stores bounded, short-lived authentication/workload-rate-limit
+state rather than the durable identity store; accounts, credentials, sessions, memberships, and
+audit records remain in PostgreSQL. The internal Task/Goal-to-Identity REST adapter is a bounded,
+workload-authenticated transition while ADR-007's gRPC/mTLS platform contract is not yet built.
 See [`why-redis.md`](../interview/why-redis.md).
 
 ## Target architecture (not yet built)

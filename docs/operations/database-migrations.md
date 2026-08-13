@@ -53,15 +53,48 @@ on a staging clone and choose one of these guarded paths:
 | Task/Goal schema already includes the V3 index but has no Flyway history | `TASK_GOAL_FLYWAY_BASELINE_ON_MIGRATE=true`, `TASK_GOAL_FLYWAY_BASELINE_VERSION=3` | Records Task/Goal's current version; no historical SQL is reapplied. |
 | Schema differs from the expected V1/V2/V3 shape | Do not start the application or baseline it. | Reconcile with an explicitly reviewed, forward-only migration first. |
 
-Before recording Task/Goal baseline version 3, verify that the existing index is valid—not merely
-named correctly. This query must return `idx_goal_owner_tenant` with `indisvalid = true`; otherwise
+Before recording Task/Goal baseline version 3, verify the complete V3 index contract—not merely
+its name. Run this through the Task/Goal Flyway datasource, where `current_schema()` resolves the
+active Flyway schema. It must return exactly one row with `v3_contract_valid = true`; otherwise
 repair the index first and do not baseline V3:
 
 ```sql
-SELECT c.relname, i.indisvalid
-FROM pg_class c
-JOIN pg_index i ON i.indexrelid = c.oid
-WHERE c.relname = 'idx_goal_owner_tenant';
+WITH expected AS (
+    SELECT
+        current_schema() AS flyway_schema,
+        format(
+            'CREATE INDEX idx_goal_owner_tenant ON %I.goal USING btree (owner_account_id, tenant_id)',
+            current_schema()
+        ) AS v3_index_definition
+)
+SELECT
+    actual.index_schema,
+    actual.table_schema,
+    actual.indisvalid,
+    actual.index_definition,
+    expected.v3_index_definition,
+    COALESCE(
+        actual.indisvalid
+            AND actual.index_definition = expected.v3_index_definition,
+        false
+    ) AS v3_contract_valid
+FROM expected
+LEFT JOIN LATERAL (
+    SELECT
+        index_schema.nspname AS index_schema,
+        goal_schema.nspname AS table_schema,
+        index_state.indisvalid,
+        pg_get_indexdef(index_relation.oid) AS index_definition
+    FROM pg_class index_relation
+    JOIN pg_namespace index_schema ON index_schema.oid = index_relation.relnamespace
+    JOIN pg_index index_state ON index_state.indexrelid = index_relation.oid
+    JOIN pg_class goal_relation ON goal_relation.oid = index_state.indrelid
+    JOIN pg_namespace goal_schema ON goal_schema.oid = goal_relation.relnamespace
+    WHERE index_schema.nspname = expected.flyway_schema
+      AND index_relation.relname = 'idx_goal_owner_tenant'
+      AND goal_schema.nspname = expected.flyway_schema
+      AND goal_relation.relname = 'goal'
+) actual ON true;
 ```
 
 Unset the one-time `*_FLYWAY_BASELINE_ON_MIGRATE` switch after history is established. `baseline`
@@ -73,8 +106,8 @@ is the final guard against baselining the wrong shape.
 For each service, confirm:
 
 - Flyway reports the expected current version and no failed migration.
-- The relevant V2 table/columns exist; for Task/Goal V3, the query above returns
-  `idx_goal_owner_tenant` with `indisvalid = true`.
+- The relevant V2 table/columns exist; for Task/Goal V3, the complete-contract query above returns
+  exactly one row with `v3_contract_valid = true`.
 - Hibernate validation starts successfully.
 - Readiness is healthy before traffic moves to the new instances.
 - For Task/Goal, legacy null-owner rows remain excluded and newly created goals have both scope

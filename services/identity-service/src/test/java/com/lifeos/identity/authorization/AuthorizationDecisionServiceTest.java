@@ -2,6 +2,7 @@ package com.lifeos.identity.authorization;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.lifeos.identity.account.UserAccount;
@@ -163,14 +164,19 @@ class AuthorizationDecisionServiceTest {
     void deniesAuthorizationWhenTheAccessTokenRotatesAfterValidation() {
         String validatedRawToken = "validated-access-token";
         Instant durableExpiry = Instant.parse("2099-01-01T00:00:00Z");
+        UserAccount durableAccount = account(subjectId);
         AuthSession durableSession = new AuthSession(
                 sessionId,
-                account(subjectId),
+                durableAccount,
                 SessionAuthenticationMethod.PASSWORD,
                 TokenDigest.sha256(validatedRawToken),
                 NOW.minusSeconds(30),
                 durableExpiry);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(durableSession));
+        when(accountRepository.findById(subjectId)).thenReturn(Optional.of(durableAccount));
+        when(policyRepository.loadCurrentPolicy()).thenReturn(v1Policy());
+        when(membershipRepository.findByAccountIdAndTenantIdAndActiveTrue(subjectId, subjectId.toString()))
+                .thenReturn(List.of());
         when(jwtDecoder.decode(validatedRawToken)).thenReturn(Jwt.withTokenValue(validatedRawToken)
                 .header("alg", "HS256")
                 .claim("sub", subjectId.toString())
@@ -182,14 +188,19 @@ class AuthorizationDecisionServiceTest {
         AuthenticatedSubject validated = new JwtValidationService(jwtDecoder, sessionRepository)
                 .validate(validatedRawToken);
 
-        durableSession.replaceAccessTokenHash(TokenDigest.sha256("rotated-successor-access-token"));
-        AuthorizationDecision decision = service.decide(new AuthorizationRequest(
+        AuthorizationRequest request = new AuthorizationRequest(
                 validated.accountId(),
                 validated.sessionId(),
                 validated.accessTokenProof(),
                 AuthorizationAction.GOAL_LIST.value(),
                 new AuthorizationResource("goal", null, subjectId.toString(), Map.of()),
-                "v1"));
+                "v1");
+        assertThat(service.decide(request).outcome()).isEqualTo(DecisionOutcome.ALLOW);
+        verify(membershipRepository)
+                .findByAccountIdAndTenantIdAndActiveTrue(subjectId, subjectId.toString());
+
+        durableSession.replaceAccessTokenHash(TokenDigest.sha256("rotated-successor-access-token"));
+        AuthorizationDecision decision = service.decide(request);
 
         assertDeny(decision, AuthorizationDenyReason.STALE_SUBJECT);
     }

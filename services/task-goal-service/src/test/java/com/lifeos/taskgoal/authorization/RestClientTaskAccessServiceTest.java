@@ -179,6 +179,26 @@ class RestClientTaskAccessServiceTest {
     }
 
     @Test
+    void authorizePropagatesTheBoundCorrelationId() {
+        TaskSubject subject = subject();
+        GoalAuthorizationResource resource = GoalAuthorizationResource.forCollection(subject.tenantId());
+        String correlationId = "11111111-1111-4111-8111-111111111111";
+        identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/internal/authorization/decisions"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("X-Correlation-ID", correlationId))
+                .andRespond(withSuccess(
+                        """
+                        {"outcome":"ALLOW","reasonCode":"ALLOWED","policyVersion":"v1","expiresAt":"2099-01-01T00:00:00Z"}
+                        """,
+                        MediaType.APPLICATION_JSON));
+
+        ScopedValue.where(RequestContext.CORRELATION_ID, correlationId)
+                .run(() -> accessService.authorize(subject, GoalAuthorizationActions.LIST, resource));
+
+        identityServer.verify();
+    }
+
+    @Test
     void boundaryExceptionsKeepCausesWithoutCopyingPotentialCredentialTextIntoTheirMessages() {
         RuntimeException cause = new RuntimeException("Bearer raw-access-token");
 

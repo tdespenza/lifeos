@@ -23,6 +23,15 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rejectsLongUnknownPathsWithoutProgressiveSubstringAllocation() {
+        GatewayRouteTable table = new GatewayRouteTable(properties(
+                new GatewayProperties.Route("goals", "/api/v1/goals", "https://task-goal.test")));
+        String longUnknownPath = "/" + "unknown/".repeat(10_000) + "tail";
+
+        assertThat(table.resolve(longUnknownPath)).isEmpty();
+    }
+
+    @Test
     void rejectsDuplicatePrefixesBeforeTheGatewayStarts() {
         GatewayProperties properties = properties(
                 new GatewayProperties.Route("first", "/api/v1/goals", "https://one.test"),

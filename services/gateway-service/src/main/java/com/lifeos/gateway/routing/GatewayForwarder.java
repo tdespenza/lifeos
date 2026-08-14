@@ -3,6 +3,7 @@ package com.lifeos.gateway.routing;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.ByteArrayOutputStream;
@@ -12,6 +13,7 @@ import java.net.URI;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -30,6 +32,13 @@ import org.springframework.web.client.RestClientException;
  * <p>The implementation buffers only bounded request and response bodies. Hop-by-hop headers and
  * caller-supplied routing headers are removed, while the validated correlation ID is installed
  * exactly once on the downstream request.
+ *
+ * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
+ * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Across concurrent
+ * requests, the worst-case response-buffer footprint is approximately
+ * {@code maxResponseBodyBytes * concurrentInFlightRequests}; production alerting must bound JVM
+ * heap usage and observe {@code gateway.inflight.requests} before traffic is admitted. A future
+ * bulkhead can provide a stricter aggregate bound without changing this per-request behavior.
  */
 @Component
 public class GatewayForwarder {
@@ -49,20 +58,29 @@ public class GatewayForwarder {
             "x-correlation-id",
             "x-forwarded-for",
             "x-forwarded-host",
-            "x-forwarded-proto");
+            "x-forwarded-proto",
+            "forwarded",
+            "x-real-ip",
+            "x-http-method-override",
+            "x-method-override",
+            "x-original-url",
+            "x-rewrite-url");
 
     private final RestClient restClient;
     private final GatewayProperties properties;
+    private final AtomicInteger inFlightRequests = new AtomicInteger();
 
     /**
      * Creates a forwarder with the configured outbound HTTP client.
      *
      * @param restClient outbound HTTP client
      * @param properties gateway bounds
+     * @param meterRegistry metrics registry for bounded in-flight request instrumentation
      */
-    public GatewayForwarder(RestClient restClient, GatewayProperties properties) {
+    public GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
         this.restClient = restClient;
         this.properties = properties;
+        meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
     }
 
     /**
@@ -80,30 +98,39 @@ public class GatewayForwarder {
             GatewayRoute route,
             String correlationId)
             throws IOException {
-        HttpMethod method = HttpMethod.valueOf(request.getMethod());
-        byte[] requestBody = readRequestBody(request, method);
-        URI target = targetUri(route, request);
-
-        RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-        requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId));
-
-        RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
-        if (requestBody.length > 0) {
-            outgoing = requestSpec.body(requestBody);
-        }
-
+        inFlightRequests.incrementAndGet();
         try {
-            DownstreamResponse downstream = outgoing.exchange((clientRequest, clientResponse) -> readResponse(clientResponse));
-            writeResponse(response, downstream, method);
-        } catch (GatewayPayloadTooLargeException exception) {
-            throw exception;
-        } catch (ResourceAccessException exception) {
-            HttpStatus status = isTimeout(exception) ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-            logUpstreamFailure(route, status, exception);
-            throw new GatewayUpstreamException(status, exception);
-        } catch (RestClientException exception) {
-            logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, exception);
-            throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+            HttpMethod method = HttpMethod.valueOf(request.getMethod());
+            byte[] requestBody = readRequestBody(request, method);
+            URI target = targetUri(route, request);
+
+            RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
+            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId));
+
+            RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
+            if (requestBody.length > 0) {
+                outgoing = requestSpec.body(requestBody);
+            }
+
+            try {
+                DownstreamResponse downstream = outgoing.exchange(
+                        (clientRequest, clientResponse) -> readResponse(clientResponse));
+                writeResponse(response, downstream, method);
+            } catch (GatewayUpstreamException exception) {
+                logUpstreamFailure(route, exception.getStatus(), exception);
+                throw exception;
+            } catch (GatewayPayloadTooLargeException exception) {
+                throw exception;
+            } catch (ResourceAccessException exception) {
+                HttpStatus status = isTimeout(exception) ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                logUpstreamFailure(route, status, exception);
+                throw new GatewayUpstreamException(status, exception);
+            } catch (RestClientException exception) {
+                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, exception);
+                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+            }
+        } finally {
+            inFlightRequests.decrementAndGet();
         }
     }
 
@@ -148,12 +175,19 @@ public class GatewayForwarder {
                 target.add(name, values.nextElement());
             }
         }
+        target.set("X-Forwarded-For", request.getRemoteAddr());
+        target.set("X-Forwarded-Proto", request.getScheme());
+        target.set("X-Forwarded-Host", request.getServerName());
         target.set(CorrelationIdSupport.HEADER_NAME, correlationId);
     }
 
     private DownstreamResponse readResponse(ClientHttpResponse response) throws IOException {
-        byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
-        return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
+        try {
+            byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
+            return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
+        } catch (GatewayPayloadTooLargeException exception) {
+            throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+        }
     }
 
     private static void writeResponse(
@@ -208,10 +242,11 @@ public class GatewayForwarder {
 
     private static void logUpstreamFailure(GatewayRoute route, HttpStatus status, Throwable exception) {
         LOGGER.warn(
-                "gateway upstream request failed routeId={} status={} correlationIdBound={}",
+                "gateway upstream request failed routeId={} status={} correlationId={}",
                 route.id(),
                 status.value(),
-                RequestContext.CORRELATION_ID.isBound());
+                RequestContext.CORRELATION_ID.isBound() ? RequestContext.CORRELATION_ID.get() : "unbound",
+                exception);
     }
 
     private record DownstreamResponse(HttpStatusCode status, HttpHeaders headers, byte[] body) {

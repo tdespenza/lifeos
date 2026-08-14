@@ -115,7 +115,7 @@ public class GatewayController {
     @ExceptionHandler(GatewayPayloadTooLargeException.class)
     public ResponseEntity<ProblemDetail> handlePayloadTooLarge() {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.PAYLOAD_TOO_LARGE, "The request or upstream response exceeds the configured size limit.");
+                HttpStatus.PAYLOAD_TOO_LARGE, "The request exceeds the configured size limit.");
         problem.setTitle("Payload too large");
         problem.setProperty("code", "PAYLOAD_TOO_LARGE");
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(problem);

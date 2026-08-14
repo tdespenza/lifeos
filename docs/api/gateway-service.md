@@ -38,8 +38,8 @@ deadlines.
 | Status | Code | Condition |
 | --- | --- | --- |
 | `404 Not Found` | `ROUTE_NOT_FOUND` | No configured versioned public route matches the request path |
-| `413 Payload Too Large` | `PAYLOAD_TOO_LARGE` | Request or buffered upstream response exceeds its configured bound |
-| `502 Bad Gateway` | `UPSTREAM_UNAVAILABLE` | Upstream cannot be reached or returns an unusable transport response |
+| `413 Payload Too Large` | `PAYLOAD_TOO_LARGE` | Request exceeds its configured bound |
+| `502 Bad Gateway` | `UPSTREAM_UNAVAILABLE` | Upstream cannot be reached, returns an unusable transport response, or exceeds its response-size bound |
 | `504 Gateway Timeout` | `UPSTREAM_TIMEOUT` | Upstream connection or response read exceeds its deadline |
 
 Failures use RFC 9457 problem details with generic client-safe text. Upstream application responses
@@ -56,3 +56,13 @@ fail startup.
 
 The gateway currently implements routing and correlation only. Authentication enforcement, rate
 limiting, circuit breaking, and bulkhead isolation are subsequent Epic 2 stories.
+
+## Operational guardrails
+
+The gateway exposes the Micrometer gauge `gateway.inflight.requests` through its Prometheus
+endpoint. Before production traffic, configure a heap-pressure alert such as
+`sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.85`
+for five minutes, and page or shed traffic when `gateway_inflight_requests` approaches the
+deployment's concurrency budget. The response buffer is bounded per request, but aggregate heap
+use still scales with the configured response limit and concurrent in-flight requests; a future
+bulkhead will provide a stricter aggregate bound.

@@ -14,7 +14,7 @@ Early-stage. Phase 1 of the roadmap is underway: two backend services are built 
 
 * **identity-service** — account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT/JWKS validation, one-time refresh-token rotation, and deterministic RBAC/ABAC policy decisions over PostgreSQL, with Redis-backed rate limiting and single-use callback state. See [`docs/api/identity-service.md`](docs/api/identity-service.md) and [`docs/diagrams/identity-authorization.md`](docs/diagrams/identity-authorization.md).
 * **task-goal-service** — authenticated owner/tenant-scoped goal create/list/read plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. It validates bearer sessions and enforces identity authorization decisions before object access. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
-* **gateway-service** — one public REST ingress for the configured `/api/v1/accounts`, `/api/v1/auth`, and `/api/v1/goals` route prefixes. It forwards only to deployment-configured upstream origins, preserves downstream HTTP responses, rejects unknown routes with a controlled problem detail, and propagates one validated `X-Correlation-ID`. See [`docs/api/gateway-service.md`](docs/api/gateway-service.md).
+* **gateway-service** — one public REST ingress for the configured `/api/v1/accounts`, `/api/v1/auth`, and `/api/v1/goals` route prefixes. It forwards only to deployment-configured upstream origins, preserves downstream HTTP responses, rejects unknown routes with a controlled problem detail, and propagates one validated `X-Correlation-ID`. See [`docs/api/gateway-service.md`](docs/api/gateway-service.md), [`docs/api/identity-service.md`](docs/api/identity-service.md), [`docs/architecture/current-state.md`](docs/architecture/current-state.md), [`docs/diagrams/current-architecture.md`](docs/diagrams/current-architecture.md), [`docs/diagrams/epic-2-gateway.md`](docs/diagrams/epic-2-gateway.md), and [`docs/epics.md`](docs/epics.md) for the corresponding API, architecture, diagram, and roadmap evidence.
 * Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis is used by identity-service for login and authenticated-workload rate limiting.
 
 Production gRPC/mTLS contracts, other services, clients (web/desktop/mobile), event bus, and deployed observability remain planned. The current internal authorization adapter is bounded and workload-authenticated; the gateway's deployment-managed upstream connections still require the future infrastructure mTLS rollout. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
@@ -70,3 +70,11 @@ The full product vision (not all built yet — see Status above):
 ## Roadmap
 
 The full 8-phase roadmap — from foundation and core algorithms through microservices, AI, video streaming, blockchain, desktop/mobile clients, and production readiness — lives in `REQUIREMENTS.md`'s "Suggested MVP Roadmap" section (see the Documentation section above for why that file isn't linked directly).
+
+## Verification
+
+The gateway implementation and its documentation are validated with `./gradlew --no-daemon check`
+and `git diff --check`. The seven changed Markdown documents — this README plus the gateway API,
+identity API, current architecture, current architecture diagram, Epic 2 gateway diagram, and
+epics roadmap — are prose-only, so link consistency review and whitespace validation are the
+applicable documentation checks; no executable documentation test exists yet.

@@ -1,22 +1,23 @@
 package com.lifeos.gateway.routing;
 
 import com.lifeos.gateway.config.GatewayProperties;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 /**
  * Finite, immutable public route table.
  *
- * <p>Resolution checks only path-segment prefixes against a hash map. It never performs a remote
- * lookup and never treats arbitrary request text as an upstream, keeping route selection bounded
- * by the request path length and configuration size.
+ * <p>Resolution checks only path-segment prefixes against a route list ordered from longest to
+ * shortest. It never performs a remote lookup or allocates progressively shorter path copies, and
+ * never treats arbitrary request text as an upstream.
  */
 public class GatewayRouteTable {
 
-    private final Map<String, GatewayRoute> routesByPrefix;
+    private final List<GatewayRoute> routesByPrefix;
 
     /**
      * Builds an immutable route table and rejects duplicate identifiers or public prefixes.
@@ -24,21 +25,24 @@ public class GatewayRouteTable {
      * @param properties gateway configuration
      */
     public GatewayRouteTable(GatewayProperties properties) {
-        Map<String, GatewayRoute> routes = new HashMap<>();
+        List<GatewayRoute> routes = new ArrayList<>();
         Set<String> routeIds = new HashSet<>();
+        Set<String> pathPrefixes = new HashSet<>();
         for (GatewayProperties.Route configuredRoute : properties.getRoutes()) {
             GatewayRoute route = GatewayRoute.from(configuredRoute);
             if (!routeIds.add(route.id())) {
                 throw new IllegalStateException("duplicate gateway route id");
             }
-            if (routes.putIfAbsent(route.pathPrefix(), route) != null) {
+            if (!pathPrefixes.add(route.pathPrefix())) {
                 throw new IllegalStateException("duplicate gateway route path prefix");
             }
+            routes.add(route);
         }
         if (routes.isEmpty()) {
             throw new IllegalStateException("gateway route table must not be empty");
         }
-        this.routesByPrefix = Map.copyOf(routes);
+        routes.sort(Comparator.comparingInt((GatewayRoute route) -> route.pathPrefix().length()).reversed());
+        this.routesByPrefix = List.copyOf(routes);
     }
 
     /**
@@ -52,17 +56,14 @@ public class GatewayRouteTable {
             return Optional.empty();
         }
 
-        int end = requestPath.length();
-        while (end > 0) {
-            GatewayRoute route = routesByPrefix.get(requestPath.substring(0, end));
-            if (route != null) {
+        for (GatewayRoute route : routesByPrefix) {
+            String prefix = route.pathPrefix();
+            if (requestPath.equals(prefix)
+                    || (requestPath.length() > prefix.length()
+                            && requestPath.startsWith(prefix)
+                            && requestPath.charAt(prefix.length()) == '/')) {
                 return Optional.of(route);
             }
-            int slash = requestPath.lastIndexOf('/', end - 1);
-            if (slash < 1) {
-                break;
-            }
-            end = slash;
         }
         return Optional.empty();
     }

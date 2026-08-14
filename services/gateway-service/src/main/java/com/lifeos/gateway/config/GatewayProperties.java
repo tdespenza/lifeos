@@ -1,12 +1,12 @@
 package com.lifeos.gateway.config;
 
+import com.lifeos.gateway.routing.GatewayRoute;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
-import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -136,7 +136,7 @@ public class GatewayProperties {
      * @return {@code true} when both timeouts are bounded and positive
      */
     @AssertTrue(message = "gateway timeouts must be positive and no greater than 60 seconds")
-    public boolean areTimeoutsValid() {
+    public boolean isTimeoutsValid() {
         return isBoundedPositive(connectTimeout) && isBoundedPositive(readTimeout);
     }
 
@@ -212,15 +212,7 @@ public class GatewayProperties {
          */
         @AssertTrue(message = "route pathPrefix must be an absolute path without wildcards or a trailing slash")
         public boolean isPathPrefixValid() {
-            return pathPrefix != null
-                    && pathPrefix.startsWith("/")
-                    && !pathPrefix.contains("?")
-                    && !pathPrefix.contains("#")
-                    && !pathPrefix.contains("*")
-                    && !pathPrefix.contains("{")
-                    && !pathPrefix.contains("}")
-                    && !pathPrefix.contains("//")
-                    && (pathPrefix.length() == 1 || !pathPrefix.endsWith("/"));
+            return GatewayRoute.isValidPathPrefix(pathPrefix);
         }
 
         /**
@@ -231,21 +223,7 @@ public class GatewayProperties {
          */
         @AssertTrue(message = "route upstream must be an absolute HTTP(S) origin without userinfo, query, or fragment")
         public boolean isUpstreamValid() {
-            if (upstream == null || upstream.isBlank()) {
-                return false;
-            }
-            try {
-                URI uri = URI.create(upstream);
-                return uri.isAbsolute()
-                        && uri.getHost() != null
-                        && ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                        && uri.getUserInfo() == null
-                        && uri.getQuery() == null
-                        && uri.getFragment() == null
-                        && (uri.getPath() == null || uri.getPath().isEmpty() || "/".equals(uri.getPath()));
-            } catch (IllegalArgumentException ignored) {
-                return false;
-            }
+            return GatewayRoute.isValidUpstream(upstream);
         }
     }
 }

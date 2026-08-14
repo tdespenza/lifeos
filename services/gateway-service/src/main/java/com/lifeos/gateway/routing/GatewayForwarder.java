@@ -1,5 +1,6 @@
 package com.lifeos.gateway.routing;
 
+import com.lifeos.gateway.auth.GatewayAuthenticatedSubject;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
@@ -64,7 +65,12 @@ public class GatewayForwarder {
             "x-http-method-override",
             "x-method-override",
             "x-original-url",
-            "x-rewrite-url");
+            "x-rewrite-url",
+            "x-lifeos-authenticated-account-id",
+            "x-lifeos-authenticated-session-id",
+            "x-lifeos-authentication-method",
+            "x-lifeos-workload-identity",
+            "x-lifeos-workload-token");
 
     private final RestClient restClient;
     private final GatewayProperties properties;
@@ -98,6 +104,26 @@ public class GatewayForwarder {
             GatewayRoute route,
             String correlationId)
             throws IOException {
+        forward(request, response, route, correlationId, null);
+    }
+
+    /**
+     * Forwards one request and installs the gateway-validated subject context when protected.
+     *
+     * @param request inbound request
+     * @param response inbound response
+     * @param route resolved fixed route
+     * @param correlationId validated request correlation ID
+     * @param subject gateway-validated subject, or {@code null} for a public route
+     * @throws IOException when servlet request/response I/O fails
+     */
+    public void forward(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            GatewayRoute route,
+            String correlationId,
+            GatewayAuthenticatedSubject subject)
+            throws IOException {
         inFlightRequests.incrementAndGet();
         try {
             HttpMethod method = HttpMethod.valueOf(request.getMethod());
@@ -105,7 +131,7 @@ public class GatewayForwarder {
             URI target = targetUri(route, request);
 
             RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId));
+            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
 
             RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
             if (requestBody.length > 0) {
@@ -176,7 +202,10 @@ public class GatewayForwarder {
     }
 
     private static void copyRequestHeaders(
-            HttpServletRequest request, HttpHeaders target, String correlationId) {
+            HttpServletRequest request,
+            HttpHeaders target,
+            String correlationId,
+            GatewayAuthenticatedSubject subject) {
         Enumeration<String> names = request.getHeaderNames();
         while (names != null && names.hasMoreElements()) {
             String name = names.nextElement();
@@ -192,6 +221,11 @@ public class GatewayForwarder {
         target.set("X-Forwarded-Proto", request.getScheme());
         target.set("X-Forwarded-Host", request.getServerName());
         target.set(CorrelationIdSupport.HEADER_NAME, correlationId);
+        if (subject != null) {
+            target.set(GatewayAuthenticatedSubject.ACCOUNT_ID_HEADER, subject.accountId().toString());
+            target.set(GatewayAuthenticatedSubject.SESSION_ID_HEADER, subject.sessionId().toString());
+            target.set(GatewayAuthenticatedSubject.AUTHENTICATION_METHOD_HEADER, subject.authenticationMethod());
+        }
     }
 
     private DownstreamResponse readResponse(ClientHttpResponse response) throws IOException {

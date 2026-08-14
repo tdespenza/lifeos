@@ -2,11 +2,18 @@ package com.lifeos.gateway.routing;
 
 import com.lifeos.gateway.config.GatewayProperties;
 import java.net.URI;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Immutable route representation used after configuration binding and validation.
  */
-public record GatewayRoute(String id, String pathPrefix, URI upstream) {
+public record GatewayRoute(
+        String id,
+        String pathPrefix,
+        URI upstream,
+        boolean authenticationRequired,
+        Set<String> authenticationRequiredMethods) {
 
     /**
      * Creates an immutable route from deployment configuration.
@@ -16,7 +23,25 @@ public record GatewayRoute(String id, String pathPrefix, URI upstream) {
      */
     public static GatewayRoute from(GatewayProperties.Route route) {
         return new GatewayRoute(
-                route.getId(), normalizePathPrefix(route.getPathPrefix()), normalizeUpstream(route.getUpstream()));
+                route.getId(),
+                normalizePathPrefix(route.getPathPrefix()),
+                normalizeUpstream(route.getUpstream()),
+                route.isAuthenticationRequired(),
+                normalizeAuthenticationMethods(route.getAuthenticationRequiredMethods()));
+    }
+
+    /**
+     * Returns whether the supplied method is protected by this route's policy.
+     *
+     * @param method inbound HTTP method
+     * @return whether gateway authentication is required
+     */
+    public boolean requiresAuthentication(String method) {
+        if (!authenticationRequired) {
+            return false;
+        }
+        return authenticationRequiredMethods.isEmpty()
+                || (method != null && authenticationRequiredMethods.contains(method.toUpperCase(Locale.ROOT)));
     }
 
     /**
@@ -79,5 +104,14 @@ public record GatewayRoute(String id, String pathPrefix, URI upstream) {
             throw new IllegalArgumentException("route upstream must be an HTTP(S) origin");
         }
         return URI.create(value);
+    }
+
+    private static Set<String> normalizeAuthenticationMethods(Set<String> methods) {
+        if (methods == null || methods.isEmpty()) {
+            return Set.of();
+        }
+        return methods.stream()
+                .map(method -> method.toUpperCase(Locale.ROOT))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }

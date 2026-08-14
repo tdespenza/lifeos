@@ -1,5 +1,6 @@
 package com.lifeos.gateway.routing;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
@@ -17,6 +18,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.lifeos.gateway.auth.GatewayAuthenticationClient;
+import com.lifeos.gateway.auth.GatewayAuthenticationMetrics;
+import com.lifeos.gateway.auth.GatewayAuthenticationService;
+import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdFilter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -24,6 +29,7 @@ import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -41,16 +47,22 @@ class GatewayControllerTest {
     private static final String UUID_V7_CORRELATION_ID = "11111111-1111-7111-8111-111111111111";
 
     private MockRestServiceServer upstream;
+    private MockRestServiceServer identity;
     private MockMvc mockMvc;
     private GatewayProperties properties;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
         properties = new GatewayProperties();
-        properties.setRoutes(List.of(new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM)));
+        // These fixtures exercise Story 2.1 forwarding behavior. Protected-route behavior is
+        // covered below with an explicit authenticated route fixture.
+        properties.setRoutes(List.of(
+                new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, false)));
         RestClient.Builder builder = RestClient.builder();
         upstream = MockRestServiceServer.bindTo(builder).build();
-        GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, new SimpleMeterRegistry());
+        meterRegistry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, meterRegistry);
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new GatewayController(new GatewayRouteTable(properties), forwarder))
                 .addFilters(new CorrelationIdFilter())
@@ -81,6 +93,96 @@ class GatewayControllerTest {
                 .andExpect(header().string("X-Upstream", "task-goal"))
                 .andExpect(content().json("{\"id\":\"goal-1\"}"));
 
+        upstream.verify();
+    }
+
+    @Test
+    void rejectsMissingBearerWithoutForwardingAndRecordsOnlyRedactedSecurityMetrics() throws Exception {
+        useProtectedRoute();
+
+        mockMvc.perform(get("/api/v1/goals"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+
+        assertThat(meterRegistry.get("gateway.authentication.rejections")
+                .tag("route", "goals")
+                .tag("reason", "invalid_credentials")
+                .counter()
+                .count()).isEqualTo(1);
+        upstream.verify();
+        identity.verify();
+    }
+
+    @Test
+    void validatesBearerWithIdentityBeforeForwardingSanitizedSubjectContext() throws Exception {
+        useProtectedRoute();
+        UUID accountId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        identity.expect(requestTo("https://identity.test/api/v1/auth/validate"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer signed-access-token"))
+                .andExpect(header("X-LifeOS-Workload-Identity", "gateway-service"))
+                .andExpect(header("X-LifeOS-Workload-Token", "test-gateway-workload-token"))
+                .andRespond(withSuccess("""
+                        {"accountId":"%s","sessionId":"%s","authenticationMethod":"PASSWORD",
+                         "accessTokenProof":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+                        """.formatted(accountId, sessionId), MediaType.APPLICATION_JSON));
+        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer signed-access-token"))
+                .andExpect(header("X-LifeOS-Authenticated-Account-Id", accountId.toString()))
+                .andExpect(header("X-LifeOS-Authenticated-Session-Id", sessionId.toString()))
+                .andExpect(header("X-LifeOS-Authentication-Method", "PASSWORD"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Workload-Token"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        mockMvc.perform(get("/api/v1/goals")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer signed-access-token")
+                        .header("X-LifeOS-Authenticated-Account-Id", "attacker-account")
+                        .header("X-LifeOS-Authenticated-Session-Id", "attacker-session")
+                        .header("X-LifeOS-Authentication-Method", "attacker-method")
+                        .header("X-LifeOS-Workload-Token", "attacker-token"))
+                .andExpect(status().isOk());
+
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
+    void mapsExpiredOrRevokedIdentityRejectionsToUnauthorizedWithoutForwarding() throws Exception {
+        useProtectedRoute();
+        identity.expect(requestTo("https://identity.test/api/v1/auth/validate"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withUnauthorizedRequest());
+
+        mockMvc.perform(get("/api/v1/goals")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer expired-or-revoked"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
+    void failsClosedWhenIdentityValidationIsUnavailable() throws Exception {
+        useProtectedRoute();
+        identity.expect(requestTo("https://identity.test/api/v1/auth/validate"))
+                .andRespond(withServerError());
+
+        mockMvc.perform(get("/api/v1/goals")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer valid-format-token"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_UNAVAILABLE"));
+
+        assertThat(meterRegistry.get("gateway.authentication.rejections")
+                .tag("route", "goals")
+                .tag("reason", "identity_unavailable")
+                .counter()
+                .count()).isEqualTo(1);
+        identity.verify();
         upstream.verify();
     }
 
@@ -255,5 +357,31 @@ class GatewayControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("ROUTE_NOT_FOUND"))
                 .andExpect(jsonPath("$.detail").value("The requested API route does not exist."));
+    }
+
+    private void useProtectedRoute() {
+        properties.setRoutes(List.of(
+                new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true)));
+        GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
+        authenticationProperties.setBaseUrl("https://identity.test");
+        authenticationProperties.setWorkloadIdentity("gateway-service");
+        authenticationProperties.setWorkloadToken("test-gateway-workload-token");
+
+        RestClient.Builder identityBuilder = RestClient.builder()
+                .baseUrl(authenticationProperties.getBaseUrl());
+        identity = MockRestServiceServer.bindTo(identityBuilder).build();
+        GatewayAuthenticationClient authenticationClient = new GatewayAuthenticationClient(
+                identityBuilder.build(), authenticationProperties);
+        GatewayAuthenticationService authenticationService = new GatewayAuthenticationService(
+                authenticationClient, new GatewayAuthenticationMetrics(meterRegistry));
+
+        RestClient.Builder upstreamBuilder = RestClient.builder();
+        upstream = MockRestServiceServer.bindTo(upstreamBuilder).build();
+        GatewayForwarder forwarder = new GatewayForwarder(upstreamBuilder.build(), properties, meterRegistry);
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                        new GatewayController(
+                                new GatewayRouteTable(properties), forwarder, authenticationService))
+                .addFilters(new CorrelationIdFilter())
+                .build();
     }
 }

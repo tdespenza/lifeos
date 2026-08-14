@@ -840,6 +840,10 @@ So that clients do not need to know internal service topology.
 
 ### Story 2.2: Gateway authentication enforcement
 
+**Status:** Implemented in `services/gateway-service`; protected routes validate through the
+identity-service JWT/session authority before forwarding, fail closed on identity dependency
+failures, and emit redacted rejection metrics.
+
 As a platform owner,
 I want the gateway to enforce authentication on protected routes,
 So that unauthenticated traffic cannot reach user data services.

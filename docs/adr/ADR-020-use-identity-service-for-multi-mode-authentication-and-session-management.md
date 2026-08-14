@@ -174,7 +174,9 @@ key and required metadata.
 
 The identity service evaluates RBAC and ABAC policy for user-facing actions and
 places the minimum required claims in access tokens. The API gateway performs
-coarse authentication and route checks; each service remains responsible for
+coarse authentication and route checks by calling the workload-authenticated
+identity validation adapter; it forwards only sanitized account/session subject
+facts and never treats caller-supplied subject headers as proof. Each service remains responsible for
 object-level authorization using the authenticated subject and tenant/user
 scope. Service-to-service calls use authenticated workload identity and mTLS
 where the deployment environment requires it.

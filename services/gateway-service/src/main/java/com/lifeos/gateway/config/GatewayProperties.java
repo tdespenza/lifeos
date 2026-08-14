@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -162,6 +163,21 @@ public class GatewayProperties {
         private String upstream;
 
         /**
+         * Whether the route requires a valid authenticated subject before forwarding.
+         *
+         * <p>Routes are protected by default. Public identity bootstrap endpoints must opt out
+         * explicitly in deployment configuration so a newly added route cannot accidentally
+         * expose user data without authentication.
+         */
+        private boolean authenticationRequired = true;
+
+        /**
+         * Optional HTTP methods to protect for a mixed public/protected route. An empty set means
+         * every supported method is protected when {@link #authenticationRequired} is enabled.
+         */
+        private Set<String> authenticationRequiredMethods = Set.of();
+
+        /**
          * Creates an empty route for Spring configuration binding.
          */
         public Route() {
@@ -178,6 +194,19 @@ public class GatewayProperties {
             this.id = id;
             this.pathPrefix = pathPrefix;
             this.upstream = upstream;
+        }
+
+        /**
+         * Creates a route definition with an explicit authentication policy.
+         *
+         * @param id route identifier
+         * @param pathPrefix public path prefix
+         * @param upstream fixed upstream origin
+         * @param authenticationRequired whether a valid bearer subject is required
+         */
+        public Route(String id, String pathPrefix, String upstream, boolean authenticationRequired) {
+            this(id, pathPrefix, upstream);
+            this.authenticationRequired = authenticationRequired;
         }
 
         public String getId() {
@@ -202,6 +231,56 @@ public class GatewayProperties {
 
         public void setUpstream(String upstream) {
             this.upstream = upstream;
+        }
+
+        /**
+         * Returns whether this route requires gateway authentication.
+         *
+         * @return {@code true} when a valid bearer subject is required
+         */
+        public boolean isAuthenticationRequired() {
+            return authenticationRequired;
+        }
+
+        /**
+         * Sets the route authentication policy during configuration binding.
+         *
+         * @param authenticationRequired whether a valid bearer subject is required
+         */
+        public void setAuthenticationRequired(boolean authenticationRequired) {
+            this.authenticationRequired = authenticationRequired;
+        }
+
+        /**
+         * Returns the protected-method allow-list for a mixed route.
+         *
+         * @return protected HTTP methods, or an empty set for all methods
+         */
+        public Set<String> getAuthenticationRequiredMethods() {
+            return Set.copyOf(authenticationRequiredMethods);
+        }
+
+        /**
+         * Sets the protected-method allow-list during configuration binding.
+         *
+         * @param authenticationRequiredMethods protected HTTP methods
+         */
+        public void setAuthenticationRequiredMethods(Set<String> authenticationRequiredMethods) {
+            this.authenticationRequiredMethods = authenticationRequiredMethods == null
+                    ? Set.of()
+                    : Set.copyOf(authenticationRequiredMethods);
+        }
+
+        /**
+         * Rejects malformed method names so authentication policy cannot be silently broadened by
+         * a configuration typo.
+         *
+         * @return whether every configured method is a supported HTTP method name
+         */
+        @AssertTrue(message = "route authenticationRequiredMethods must contain valid HTTP methods")
+        public boolean areAuthenticationRequiredMethodsValid() {
+            return authenticationRequiredMethods.stream()
+                    .allMatch(method -> method != null && method.matches("[A-Za-z]+"));
         }
 
         /**

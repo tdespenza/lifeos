@@ -31,6 +31,24 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void protectsRoutesByDefaultAndAllowsAnExplicitPublicBootstrapRoute() {
+        GatewayRouteTable table = new GatewayRouteTable(properties(
+                new GatewayProperties.Route("protected", "/api/v1/goals", "https://goals.test"),
+                new GatewayProperties.Route("public", "/api/v1/auth", "https://identity.test", false)));
+
+        assertThat(table.resolve("/api/v1/goals")).get()
+                .extracting(GatewayRoute::authenticationRequired)
+                .isEqualTo(true);
+        assertThat(table.resolve("/api/v1/auth/login")).get()
+                .extracting(GatewayRoute::authenticationRequired)
+                .isEqualTo(false);
+        assertThat(table.resolve("/api/v1/goals")).get()
+                .satisfies(route -> assertThat(route.requiresAuthentication("GET")).isTrue());
+        assertThat(table.resolve("/api/v1/auth/login")).get()
+                .satisfies(route -> assertThat(route.requiresAuthentication("POST")).isFalse());
+    }
+
+    @Test
     void rejectsLongUnknownPathsWithoutProgressiveSubstringAllocation() {
         GatewayRouteTable table = new GatewayRouteTable(properties(
                 new GatewayProperties.Route("goals", "/api/v1/goals", "https://task-goal.test")));

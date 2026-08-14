@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.lifeos.gateway.config.GatewayProperties;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class GatewayRouteTableTest {
@@ -79,6 +80,15 @@ class GatewayRouteTableTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new GatewayRouteTable(properties(wildcard)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsUnknownMethodScopedAuthenticationPoliciesDuringValidation() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "goals", "/api/v1/goals", "https://task-goal.test");
+        route.setAuthenticationRequiredMethods(Set.of("GEET"));
+
+        assertThat(route.areAuthenticationRequiredMethodsValid()).isFalse();
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

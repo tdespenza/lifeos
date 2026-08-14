@@ -6,6 +6,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.observability.RequestContext;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -102,6 +104,26 @@ class GatewayAuthenticationClientTest {
         assertThatThrownBy(() -> client.authenticate("Bearer signed-access-token"))
                 .isInstanceOf(GatewayAuthenticationDependencyUnavailableException.class)
                 .hasMessage(null);
+        identityServer.verify();
+    }
+
+    @Test
+    void mapsForbiddenIdentityDecisionsToAuthenticationFailure() {
+        identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+        assertThatThrownBy(() -> client.authenticate("Bearer signed-access-token"))
+                .isInstanceOf(GatewayAuthenticationFailureException.class);
+        identityServer.verify();
+    }
+
+    @Test
+    void mapsUnexpectedIdentityStatusesToDependencyUnavailable() {
+        identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> client.authenticate("Bearer signed-access-token"))
+                .isInstanceOf(GatewayAuthenticationDependencyUnavailableException.class);
         identityServer.verify();
     }
 }

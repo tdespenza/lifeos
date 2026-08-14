@@ -178,8 +178,10 @@ coarse authentication and route checks by calling the workload-authenticated
 identity validation adapter; it forwards only sanitized account/session subject
 facts and never treats caller-supplied subject headers as proof. Each service remains responsible for
 object-level authorization using the authenticated subject and tenant/user
-scope. Service-to-service calls use authenticated workload identity and mTLS
-where the deployment environment requires it.
+scope. The gateway admits identity validation through a fair, deployment-configured
+per-instance bulkhead; when the bound is full, it fails closed without waiting for
+another identity timeout. Service-to-service calls use authenticated workload
+identity and mTLS where the deployment environment requires it.
 
 ## Consequences
 
@@ -208,6 +210,13 @@ where the deployment environment requires it.
   entries, and reject replay-cache writes. PostgreSQL or Redis failure must
   preserve fail-closed protected-data behavior and cache recovery must be
   verified after dependencies return.
+- Gateway identity validation is bounded by a fair per-instance semaphore bulkhead
+  (`LIFEOS_GATEWAY_AUTH_MAX_CONCURRENT_VALIDATIONS`, default 64). Capacity rejection
+  returns the same generic temporary authentication response as other dependency
+  failures, emits only bounded reason labels, and prevents an identity outage from
+  consuming one gateway request slot per full read timeout. A future circuit breaker
+  may be added if operational measurements show that fast-open behavior is needed;
+  the current bulkhead is deliberately dependency-free and fail-closed.
 - OIDC provider and WebAuthn integration tests require contract fixtures and
   security-focused negative cases; real provider secrets are never used in CI.
 

@@ -25,6 +25,9 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 public class GatewayProperties {
 
+    private static final Set<String> SUPPORTED_GATEWAY_METHODS = Set.of(
+            "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
+
     @Valid
     @NotEmpty(message = "at least one gateway route must be configured")
     private List<Route> routes = new ArrayList<>();
@@ -280,7 +283,7 @@ public class GatewayProperties {
         @AssertTrue(message = "route authenticationRequiredMethods must contain valid HTTP methods")
         public boolean areAuthenticationRequiredMethodsValid() {
             return authenticationRequiredMethods.stream()
-                    .allMatch(method -> method != null && method.matches("[A-Za-z]+"));
+                    .allMatch(method -> method != null && SUPPORTED_GATEWAY_METHODS.contains(method));
         }
 
         /**

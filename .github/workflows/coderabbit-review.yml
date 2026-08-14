@@ -4,10 +4,7 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+permissions: {}
 
 concurrency:
   group: coderabbit-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
@@ -17,6 +14,9 @@ jobs:
   request-review:
     name: Request CodeRabbit full review
     if: ${{ github.event.pull_request.draft == false }}
+    permissions:
+      # The workflow only creates an issue-style comment on the pull request.
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -34,8 +34,15 @@ jobs:
           marker="<!-- lifeos-coderabbit-review:${HEAD_SHA} -->"
           body="${marker}"$'\n\n'"@coderabbitai full review"
           comments_endpoint="/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100"
+          comments_file="$(mktemp)"
+          trap 'rm -f "${comments_file}"' EXIT
 
-          if gh api --paginate "${comments_endpoint}" --jq '.[].body' | grep -Fq "${marker}"; then
+          # Search a file so grep cannot close gh's paginated output early under pipefail.
+          # Only comments authored by this workflow's GITHUB_TOKEN are trusted markers.
+          gh api --paginate "${comments_endpoint}" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' \
+            > "${comments_file}"
+          if grep -Fq "${marker}" "${comments_file}"; then
             echo "CodeRabbit review already requested for ${HEAD_SHA}."
             exit 0
           fi

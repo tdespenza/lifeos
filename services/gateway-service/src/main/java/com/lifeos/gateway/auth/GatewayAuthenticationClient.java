@@ -5,6 +5,7 @@ import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.observability.RequestContext;
 import java.net.http.HttpClient;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -27,6 +28,7 @@ public class GatewayAuthenticationClient {
     static final String VALIDATE_PATH = "/api/v1/auth/validate";
     static final String WORKLOAD_IDENTITY_HEADER = "X-LifeOS-Workload-Identity";
     static final String WORKLOAD_TOKEN_HEADER = "X-LifeOS-Workload-Token";
+    private static final Pattern ACCESS_TOKEN_PROOF_PATTERN = Pattern.compile("[0-9a-f]{64}");
 
     private final RestClient restClient;
     private final GatewayAuthenticationProperties properties;
@@ -130,7 +132,7 @@ public class GatewayAuthenticationClient {
     }
 
     private static boolean isFixedFormatAccessTokenProof(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
+        return value != null && ACCESS_TOKEN_PROOF_PATTERN.matcher(value).matches();
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

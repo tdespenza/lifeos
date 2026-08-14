@@ -2,6 +2,7 @@ package com.lifeos.gateway.auth;
 
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Sanitized subject facts returned by the identity authority for one protected request.
@@ -21,6 +22,8 @@ public record GatewayAuthenticatedSubject(UUID accountId, UUID sessionId, String
     public static final String AUTHENTICATION_METHOD_HEADER = "X-LifeOS-Authentication-Method";
 
     private static final int MAX_AUTHENTICATION_METHOD_LENGTH = 64;
+    private static final Pattern AUTHENTICATION_METHOD_PATTERN =
+            Pattern.compile("[A-Za-z0-9_-]{1," + MAX_AUTHENTICATION_METHOD_LENGTH + "}");
     private static final String REDACTED_REPRESENTATION = "GatewayAuthenticatedSubject[redacted]";
 
     /**
@@ -30,7 +33,7 @@ public record GatewayAuthenticatedSubject(UUID accountId, UUID sessionId, String
         Objects.requireNonNull(accountId, "accountId must not be null");
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         if (authenticationMethod == null
-                || !authenticationMethod.matches("[A-Za-z0-9_-]{1," + MAX_AUTHENTICATION_METHOD_LENGTH + "}")) {
+                || !AUTHENTICATION_METHOD_PATTERN.matcher(authenticationMethod).matches()) {
             throw new IllegalArgumentException("authenticationMethod must be a bounded safe value");
         }
     }

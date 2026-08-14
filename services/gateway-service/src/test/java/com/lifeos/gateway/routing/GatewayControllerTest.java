@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,8 +64,18 @@ class GatewayControllerTest {
         upstream = MockRestServiceServer.bindTo(builder).build();
         meterRegistry = new SimpleMeterRegistry();
         GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, meterRegistry);
+        GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
+        authenticationProperties.setBaseUrl("https://identity.test");
+        authenticationProperties.setWorkloadIdentity("gateway-service");
+        authenticationProperties.setWorkloadToken("test-gateway-workload-token");
+        GatewayAuthenticationService authenticationService = new GatewayAuthenticationService(
+                new GatewayAuthenticationClient(
+                        RestClient.builder().baseUrl(authenticationProperties.getBaseUrl()).build(),
+                        authenticationProperties),
+                new GatewayAuthenticationMetrics(meterRegistry),
+                authenticationProperties);
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new GatewayController(new GatewayRouteTable(properties), forwarder))
+                        new GatewayController(new GatewayRouteTable(properties), forwarder, authenticationService))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }
@@ -134,6 +145,7 @@ class GatewayControllerTest {
                 .andExpect(header("X-LifeOS-Authenticated-Account-Id", accountId.toString()))
                 .andExpect(header("X-LifeOS-Authenticated-Session-Id", sessionId.toString()))
                 .andExpect(header("X-LifeOS-Authentication-Method", "PASSWORD"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Workload-Identity"))
                 .andExpect(headerDoesNotExist("X-LifeOS-Workload-Token"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
@@ -174,7 +186,7 @@ class GatewayControllerTest {
         mockMvc.perform(get("/api/v1/goals")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer valid-format-token"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, matchesPattern("(?:[5-9]|1[0-5])")))
                 .andExpect(jsonPath("$.code").value("AUTHENTICATION_UNAVAILABLE"));
 
         assertThat(meterRegistry.get("gateway.authentication.rejections")
@@ -182,6 +194,25 @@ class GatewayControllerTest {
                 .tag("reason", "identity_unavailable")
                 .counter()
                 .count()).isEqualTo(1);
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
+    void honorsMethodScopedAuthenticationPolicies() throws Exception {
+        useProtectedRoute(Set.of("POST"));
+
+        mockMvc.perform(post("/api/v1/goals"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+
+        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(headerDoesNotExist("X-LifeOS-Authenticated-Account-Id"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        mockMvc.perform(get("/api/v1/goals"))
+                .andExpect(status().isOk());
+
         identity.verify();
         upstream.verify();
     }
@@ -294,6 +325,11 @@ class GatewayControllerTest {
                 .andExpect(headerDoesNotExist("X-Method-Override"))
                 .andExpect(headerDoesNotExist("X-Original-URL"))
                 .andExpect(headerDoesNotExist("X-Rewrite-URL"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Authenticated-Account-Id"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Authenticated-Session-Id"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Authentication-Method"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Workload-Identity"))
+                .andExpect(headerDoesNotExist("X-LifeOS-Workload-Token"))
                 .andExpect(headerDoesNotExist("X-Forwarded-Port"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
@@ -305,6 +341,11 @@ class GatewayControllerTest {
                         .header("X-Method-Override", "DELETE")
                         .header("X-Original-URL", "/admin")
                         .header("X-Rewrite-URL", "/admin")
+                        .header("X-LifeOS-Authenticated-Account-Id", "attacker-account")
+                        .header("X-LifeOS-Authenticated-Session-Id", "attacker-session")
+                        .header("X-LifeOS-Authentication-Method", "attacker-method")
+                        .header("X-LifeOS-Workload-Identity", "attacker-workload")
+                        .header("X-LifeOS-Workload-Token", "attacker-token")
                         .header("X-Forwarded-For", "192.0.2.10")
                         .header("X-Forwarded-Host", "attacker.test")
                         .header("X-Forwarded-Proto", "https")
@@ -360,8 +401,14 @@ class GatewayControllerTest {
     }
 
     private void useProtectedRoute() {
+        useProtectedRoute(Set.of());
+    }
+
+    private void useProtectedRoute(Set<String> authenticationRequiredMethods) {
+        GatewayProperties.Route route = new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true);
+        route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
         properties.setRoutes(List.of(
-                new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true)));
+                route));
         GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
         authenticationProperties.setBaseUrl("https://identity.test");
         authenticationProperties.setWorkloadIdentity("gateway-service");
@@ -373,7 +420,7 @@ class GatewayControllerTest {
         GatewayAuthenticationClient authenticationClient = new GatewayAuthenticationClient(
                 identityBuilder.build(), authenticationProperties);
         GatewayAuthenticationService authenticationService = new GatewayAuthenticationService(
-                authenticationClient, new GatewayAuthenticationMetrics(meterRegistry));
+                authenticationClient, new GatewayAuthenticationMetrics(meterRegistry), authenticationProperties);
 
         RestClient.Builder upstreamBuilder = RestClient.builder();
         upstream = MockRestServiceServer.bindTo(upstreamBuilder).build();

@@ -44,7 +44,9 @@ which retain responsibility for object-level authorization and may repeat the id
 The gateway authenticates itself to identity-service with `X-LifeOS-Workload-Identity` and
 `X-LifeOS-Workload-Token`; the token is supplied by `IDENTITY_GATEWAY_WORKLOAD_TOKEN` and has no
 repository default. Non-loopback identity URLs must use HTTPS. Identity connection and read
-timeouts are explicit and bounded to 60 seconds.
+timeouts are explicit and bounded to 60 seconds. A fair validation bulkhead admits at most
+`LIFEOS_GATEWAY_AUTH_MAX_CONCURRENT_VALIDATIONS` (default 64) identity calls per gateway instance;
+when full, protected requests fail closed without waiting for an identity timeout.
 
 ## Correlation contract
 
@@ -86,8 +88,9 @@ fail startup.
 
 Authentication validation is O(1) remote calls per protected request and adds no unbounded gateway
 state. Request/response buffering remains bounded by the configured byte limits; downstream
-object-level authorization, rate limiting, circuit breaking, and bulkhead isolation remain separate
-service or later Epic 2 responsibilities.
+object-level authorization, rate limiting, and circuit breaking remain separate service or later
+Epic 2 responsibilities. The gateway-side identity bulkhead provides a bounded concurrency guard
+for that dependency; rejected capacity is observable as `identity_bulkhead_rejected`.
 
 ## Operational guardrails
 

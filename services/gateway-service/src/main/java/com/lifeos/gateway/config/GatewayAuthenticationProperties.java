@@ -1,6 +1,8 @@
 package com.lifeos.gateway.config;
 
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.net.InetAddress;
@@ -34,6 +36,10 @@ public class GatewayAuthenticationProperties {
 
     @NotNull(message = "identity readTimeout must be configured")
     private Duration readTimeout = Duration.ofSeconds(3);
+
+    @Min(value = 1, message = "maxConcurrentValidations must be positive")
+    @Max(value = 1024, message = "maxConcurrentValidations must not exceed 1024")
+    private int maxConcurrentValidations = 64;
 
     /**
      * Creates the default local identity authority settings.
@@ -129,6 +135,24 @@ public class GatewayAuthenticationProperties {
      */
     public void setReadTimeout(Duration readTimeout) {
         this.readTimeout = readTimeout;
+    }
+
+    /**
+     * Returns the maximum number of concurrent identity validations admitted by the gateway.
+     *
+     * @return validation bulkhead capacity
+     */
+    public int getMaxConcurrentValidations() {
+        return maxConcurrentValidations;
+    }
+
+    /**
+     * Sets the validation bulkhead capacity during configuration binding.
+     *
+     * @param maxConcurrentValidations maximum concurrent identity validations
+     */
+    public void setMaxConcurrentValidations(int maxConcurrentValidations) {
+        this.maxConcurrentValidations = maxConcurrentValidations;
     }
 
     /**

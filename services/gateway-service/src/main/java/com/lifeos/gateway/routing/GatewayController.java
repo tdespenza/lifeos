@@ -11,6 +11,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -28,20 +30,12 @@ public class GatewayController {
 
     private static final Set<String> SUPPORTED_METHODS = Set.of(
             "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
+    private static final int MIN_RETRY_AFTER_SECONDS = 5;
+    private static final int MAX_RETRY_AFTER_SECONDS = 15;
 
     private final GatewayRouteTable routeTable;
     private final GatewayForwarder forwarder;
     private final GatewayAuthenticationService authenticationService;
-
-    /**
-     * Creates the gateway controller.
-     *
-     * @param routeTable configured route table
-     * @param forwarder bounded HTTP forwarder
-     */
-    public GatewayController(GatewayRouteTable routeTable, GatewayForwarder forwarder) {
-        this(routeTable, forwarder, null);
-    }
 
     /**
      * Creates the gateway controller with its protected-route authentication boundary.
@@ -57,7 +51,7 @@ public class GatewayController {
             GatewayAuthenticationService authenticationService) {
         this.routeTable = routeTable;
         this.forwarder = forwarder;
-        this.authenticationService = authenticationService;
+        this.authenticationService = Objects.requireNonNull(authenticationService, "authenticationService must not be null");
     }
 
     /**
@@ -80,9 +74,6 @@ public class GatewayController {
         GatewayRoute resolvedRoute = route.get();
         GatewayAuthenticatedSubject subject = null;
         if (resolvedRoute.requiresAuthentication(request.getMethod())) {
-            if (authenticationService == null) {
-                throw new GatewayAuthenticationDependencyUnavailableException();
-            }
             subject = authenticationService.authenticate(
                     resolvedRoute, request.getHeader(HttpHeaders.AUTHORIZATION));
         }
@@ -117,8 +108,12 @@ public class GatewayController {
         problem.setTitle("Authentication unavailable");
         problem.setProperty("code", "AUTHENTICATION_UNAVAILABLE");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, "1")
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
                 .body(problem);
+    }
+
+    private static int retryAfterSeconds() {
+        return ThreadLocalRandom.current().nextInt(MIN_RETRY_AFTER_SECONDS, MAX_RETRY_AFTER_SECONDS + 1);
     }
 
     /**

@@ -1,0 +1,45 @@
+name: Request CodeRabbit review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: coderabbit-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  request-review:
+    name: Request CodeRabbit full review
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request one review per PR head commit
+        # This workflow intentionally does not check out or execute pull-request code.
+        # pull_request_target is used only so fork PRs can receive a review comment.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- lifeos-coderabbit-review:${HEAD_SHA} -->"
+          body="${marker}"$'\n\n'"@coderabbitai full review"
+          comments_endpoint="/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100"
+
+          if gh api --paginate "${comments_endpoint}" --jq '.[].body' | grep -Fq "${marker}"; then
+            echo "CodeRabbit review already requested for ${HEAD_SHA}."
+            exit 0
+          fi
+
+          gh api --method POST \
+            "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            -f body="${body}"

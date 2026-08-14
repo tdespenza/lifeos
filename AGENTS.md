@@ -76,7 +76,8 @@ Every meaningful change must include tests or a clear explanation for why tests 
 - Never create a pull request in draft state for this repository.
 - Pull requests created by an agent must be ready for review immediately; do not use draft status.
 - Before handing off a pull request, verify that GitHub reports `isDraft: false` and that the PR targets the intended base branch.
-- Never merge a pull request while the CodeRabbit review is in progress; verify that CodeRabbit has finished before allowing merge.
+- Every non-draft pull request must receive a CodeRabbit full review. The repository workflow requests `@coderabbitai full review` automatically for each PR head commit; if the workflow cannot run, request it manually before handoff.
+- Address every actionable CodeRabbit finding before merge, and never merge while the CodeRabbit review is in progress; verify that CodeRabbit has finished first.
 
 ## FAANG Engineering Principles
 

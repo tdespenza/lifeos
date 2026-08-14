@@ -23,6 +23,14 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rootPrefixMatchesNestedPaths() {
+        GatewayRouteTable table = new GatewayRouteTable(properties(
+                new GatewayProperties.Route("root", "/", "https://root.test")));
+
+        assertThat(table.resolve("/nested/path")).get().extracting(GatewayRoute::id).isEqualTo("root");
+    }
+
+    @Test
     void rejectsLongUnknownPathsWithoutProgressiveSubstringAllocation() {
         GatewayRouteTable table = new GatewayRouteTable(properties(
                 new GatewayProperties.Route("goals", "/api/v1/goals", "https://task-goal.test")));

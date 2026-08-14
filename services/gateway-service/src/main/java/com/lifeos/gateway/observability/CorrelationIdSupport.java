@@ -44,7 +44,7 @@ public final class CorrelationIdSupport {
      * Checks the canonical UUID shape before parsing it.
      *
      * @param value candidate value
-     * @return whether the value is a valid RFC 4122 UUID representation
+     * @return whether the value is a valid canonical UUID representation
      */
     public static boolean isValid(String value) {
         return value != null && CANONICAL_UUID.matcher(value).matches();

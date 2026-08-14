@@ -59,6 +59,7 @@ public class GatewayRouteTable {
         for (GatewayRoute route : routesByPrefix) {
             String prefix = route.pathPrefix();
             if (requestPath.equals(prefix)
+                    || "/".equals(prefix)
                     || (requestPath.length() > prefix.length()
                             && requestPath.startsWith(prefix)
                             && requestPath.charAt(prefix.length()) == '/')) {

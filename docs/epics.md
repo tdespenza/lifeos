@@ -820,6 +820,8 @@ Users interact with LifeOS through one coherent, reliable entry point rather tha
 
 ### Story 2.1: REST routing and correlation IDs
 
+**Status:** Implemented in `services/gateway-service`; the gateway owns the finite public route table and validated correlation context, while downstream services preserve the gateway UUID for nested calls.
+
 As a client,
 I want one external gateway to route requests to the correct service,
 So that clients do not need to know internal service topology.

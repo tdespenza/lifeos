@@ -9,6 +9,7 @@ graph TD
     end
 
     subgraph Services["Backend — Java 25 + Spring Boot 3.5.16"]
+        G["gateway-service :8080<br/>allow-listed REST routing + correlation"]
         I["identity-service :8081<br/>authentication + authorization decisions"]
         T["task-goal-service :8082<br/>authenticated goal create/list/read + dependency-order"]
     end
@@ -19,8 +20,9 @@ graph TD
         R[("Redis 8<br/>limits + OIDC/WebAuthn state")]
     end
 
-    C -->|REST/JSON| I
-    C -->|REST/JSON| T
+    C -->|REST/JSON| G
+    G -->|/api/v1/accounts + /api/v1/auth| I
+    G -->|/api/v1/goals| T
     T -->|bounded internal REST:<br/>validate + authorize| I
     I --> PG
     I -.->|atomic limits + short-lived state| R
@@ -37,4 +39,4 @@ See [`why-redis.md`](../interview/why-redis.md).
 
 ## Target architecture (not yet built)
 
-`REQUIREMENTS.md`'s "Core Microservices" section names 13 services total; Identity and Task/Goal are the 2 built so far, leaving 11 not yet started: API Gateway, Profile, Calendar, Finance, Document Vault, Media Streaming, AI Orchestrator, Algorithm Engine, Blockchain Trust Ledger, Notification, and Analytics. (A `search-service/` also appears in REQUIREMENTS.md's high-level directory-tree diagram, but it isn't one of the 13 named in the Core Microservices section itself, so it's not counted here.) The event bus (Kafka/Pulsar), GraphQL/gRPC layers, and the Angular/JavaFX/Flutter clients are all planned but not implemented either. This diagram will be extended as each phase of `REQUIREMENTS.md`'s "Suggested MVP Roadmap" lands, rather than drawn speculatively ahead of the code.
+`REQUIREMENTS.md`'s "Core Microservices" section names 13 services total; Gateway, Identity, and Task/Goal are the 3 built so far, leaving 10 not yet started: Profile, Calendar, Finance, Document Vault, Media Streaming, AI Orchestrator, Algorithm Engine, Blockchain Trust Ledger, Notification, and Analytics. (A `search-service/` also appears in REQUIREMENTS.md's high-level directory-tree diagram, but it isn't one of the 13 named in the Core Microservices section itself, so it's not counted here.) The event bus (Kafka/Pulsar), GraphQL/gRPC layers, and the Angular/JavaFX/Flutter clients are all planned but not implemented either. This diagram will be extended as each phase of `REQUIREMENTS.md`'s "Suggested MVP Roadmap" lands, rather than drawn speculatively ahead of the code.

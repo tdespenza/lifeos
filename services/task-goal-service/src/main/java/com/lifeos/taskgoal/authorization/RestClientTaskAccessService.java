@@ -1,6 +1,7 @@
 package com.lifeos.taskgoal.authorization;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.lifeos.taskgoal.observability.RequestContext;
 import java.net.http.HttpClient;
 import java.time.Instant;
 import java.util.Map;
@@ -51,12 +52,13 @@ public class RestClientTaskAccessService implements TaskAccessService {
     public TaskSubject authenticate(String authorizationHeader) {
         String token = extractBearerToken(authorizationHeader);
         try {
-            ValidatedSubjectResponse response = restClient.get()
+            RestClient.RequestHeadersSpec<?> requestSpec = restClient.get()
                     .uri(VALIDATE_PATH)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                     .header(WORKLOAD_IDENTITY_HEADER, properties.getWorkloadIdentity())
-                    .header(WORKLOAD_TOKEN_HEADER, properties.getWorkloadToken())
-                    .retrieve()
+                    .header(WORKLOAD_TOKEN_HEADER, properties.getWorkloadToken());
+            addCorrelationHeader(requestSpec);
+            ValidatedSubjectResponse response = requestSpec.retrieve()
                     .body(ValidatedSubjectResponse.class);
             return toSubject(response);
         } catch (TaskAuthenticationFailure | TaskAuthorizationDependencyUnavailable exception) {
@@ -74,7 +76,7 @@ public class RestClientTaskAccessService implements TaskAccessService {
     @Override
     public void authorize(TaskSubject subject, String action, GoalAuthorizationResource resource) {
         try {
-            AuthorizationDecisionResponse response = restClient.post()
+            RestClient.RequestBodySpec requestSpec = restClient.post()
                     .uri(DECISION_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .header(WORKLOAD_IDENTITY_HEADER, properties.getWorkloadIdentity())
@@ -89,8 +91,9 @@ public class RestClientTaskAccessService implements TaskAccessService {
                                     resource.resourceId(),
                                     resource.tenantId(),
                                     resource.attributes()),
-                            properties.getExpectedPolicyVersion()))
-                    .retrieve()
+                            properties.getExpectedPolicyVersion()));
+            addCorrelationHeader(requestSpec);
+            AuthorizationDecisionResponse response = requestSpec.retrieve()
                     .body(AuthorizationDecisionResponse.class);
             if (!isUsableDecision(response)) {
                 throw new TaskAuthorizationDependencyUnavailable();
@@ -118,6 +121,12 @@ public class RestClientTaskAccessService implements TaskAccessService {
                 .baseUrl(properties.getBaseUrl())
                 .requestFactory(requestFactory)
                 .build();
+    }
+
+    private static void addCorrelationHeader(RestClient.RequestHeadersSpec<?> requestSpec) {
+        if (RequestContext.CORRELATION_ID.isBound()) {
+            requestSpec.header("X-Correlation-ID", RequestContext.CORRELATION_ID.get());
+        }
     }
 
     private static String extractBearerToken(String authorizationHeader) {

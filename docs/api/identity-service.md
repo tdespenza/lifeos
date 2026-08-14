@@ -17,7 +17,7 @@ Story 1.5 JWT issuance, refresh rotation, JWKS verification, and token-family li
 Story 1.6 authorization policy, decision contract, invariants, and deployment trade-offs are in
 [`docs/diagrams/identity-authorization.md`](../diagrams/identity-authorization.md).
 
-All requests receive a server-generated `X-Correlation-ID` response header. Any incoming value is ignored so caller-controlled personal data cannot enter MDC, request context, or structured logs. Registration logs include the generated correlation context and event outcome without logging the email address, account identifier, or database exception details.
+All requests receive a validated `X-Correlation-ID` response header. A canonical UUID supplied by the trusted gateway is preserved so one request context remains correlated across the public edge and identity service; absent, repeated, or malformed values are replaced with a server-generated UUID. Registration logs include the correlation context and event outcome without logging the email address, account identifier, or database exception details.
 
 ## `POST /api/v1/auth/login`
 

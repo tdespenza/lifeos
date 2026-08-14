@@ -192,6 +192,7 @@ class GatewayControllerTest {
                 .andExpect(headerDoesNotExist("X-Method-Override"))
                 .andExpect(headerDoesNotExist("X-Original-URL"))
                 .andExpect(headerDoesNotExist("X-Rewrite-URL"))
+                .andExpect(headerDoesNotExist("X-Forwarded-Port"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
         mockMvc.perform(get("/api/v1/goals")
@@ -204,7 +205,8 @@ class GatewayControllerTest {
                         .header("X-Rewrite-URL", "/admin")
                         .header("X-Forwarded-For", "192.0.2.10")
                         .header("X-Forwarded-Host", "attacker.test")
-                        .header("X-Forwarded-Proto", "https"))
+                        .header("X-Forwarded-Proto", "https")
+                        .header("X-Forwarded-Port", "8443"))
                 .andExpect(status().isOk());
 
         upstream.verify();

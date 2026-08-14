@@ -117,16 +117,17 @@ public class GatewayForwarder {
                         (clientRequest, clientResponse) -> readResponse(clientResponse));
                 writeResponse(response, downstream, method);
             } catch (GatewayUpstreamException exception) {
-                logUpstreamFailure(route, exception.getStatus(), exception);
+                logUpstreamFailure(route, exception.getStatus(), "upstream");
                 throw exception;
             } catch (GatewayPayloadTooLargeException exception) {
                 throw exception;
             } catch (ResourceAccessException exception) {
-                HttpStatus status = isTimeout(exception) ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                logUpstreamFailure(route, status, exception);
+                boolean timeout = isTimeout(exception);
+                HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
                 throw new GatewayUpstreamException(status, exception);
             } catch (RestClientException exception) {
-                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, exception);
+                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
                 throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
             }
         } finally {
@@ -170,7 +171,7 @@ public class GatewayForwarder {
         try {
             return URI.create(target);
         } catch (IllegalArgumentException exception) {
-            throw new GatewayBadRequestException();
+            throw new GatewayBadRequestException(exception);
         }
     }
 
@@ -237,7 +238,8 @@ public class GatewayForwarder {
     }
 
     private static boolean isHopByHop(String name) {
-        return HOP_BY_HOP_HEADERS.contains(name.toLowerCase(Locale.ROOT));
+        String normalizedName = name.toLowerCase(Locale.ROOT);
+        return normalizedName.startsWith("x-forwarded-") || HOP_BY_HOP_HEADERS.contains(normalizedName);
     }
 
     private static boolean isTimeout(Throwable exception) {
@@ -252,13 +254,13 @@ public class GatewayForwarder {
         return false;
     }
 
-    private static void logUpstreamFailure(GatewayRoute route, HttpStatus status, Throwable exception) {
+    private static void logUpstreamFailure(GatewayRoute route, HttpStatus status, String failureClass) {
         LOGGER.warn(
-                "gateway upstream request failed routeId={} status={} correlationId={}",
+                "gateway upstream request failed routeId={} status={} failureClass={} correlationId={}",
                 route.id(),
                 status.value(),
-                RequestContext.CORRELATION_ID.isBound() ? RequestContext.CORRELATION_ID.get() : "unbound",
-                exception);
+                failureClass,
+                RequestContext.CORRELATION_ID.isBound() ? RequestContext.CORRELATION_ID.get() : "unbound");
     }
 
     private record DownstreamResponse(HttpStatusCode status, HttpHeaders headers, byte[] body) {

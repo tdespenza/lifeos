@@ -15,9 +15,12 @@ The initial route table is:
 | `/api/v1/goals` | `LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM` | enabled |
 
 The gateway preserves the request method, path, query string, body, content type, authorization,
-and ordinary application headers. It preserves upstream status, response body, and public response
-headers while stripping hop-by-hop headers and any downstream attempt to replace the gateway's
-correlation ID. Internal identity routes such as `/api/v1/internal/**` are not public gateway routes.
+and ordinary application headers. It preserves upstream status, response body, and eligible public
+response headers while stripping hop-by-hop headers, upstream `Content-Length`, and any downstream
+attempt to replace the gateway's correlation ID. For non-`HEAD` responses, the gateway recalculates
+`Content-Length` from the bounded response body; `HEAD` responses omit the body and do not add a
+replacement length header. Internal identity routes such as `/api/v1/internal/**` are not public
+gateway routes.
 
 ## Correlation contract
 

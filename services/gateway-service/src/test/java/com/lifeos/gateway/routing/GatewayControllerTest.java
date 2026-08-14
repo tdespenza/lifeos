@@ -224,6 +224,29 @@ class GatewayControllerTest {
     }
 
     @Test
+    void stripsTheServletContextPathBeforeResolvingAndForwarding() throws Exception {
+        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        mockMvc.perform(get("/gateway/api/v1/goals").contextPath("/gateway"))
+                .andExpect(status().isOk());
+
+        upstream.verify();
+    }
+
+    @Test
+    void returnsControlledBadRequestForAnUnparsableRawQuery() throws Exception {
+        mockMvc.perform(get("/api/v1/goals").with(request -> {
+                    request.setQueryString("invalid query");
+                    return request;
+                }))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST_TARGET"));
+    }
+
+    @Test
     void returnsControlledNotFoundWithoutForwardingUnknownRoutes() throws Exception {
         mockMvc.perform(get("/api/v1/internal/authorization/decisions"))
                 .andExpect(status().isNotFound())

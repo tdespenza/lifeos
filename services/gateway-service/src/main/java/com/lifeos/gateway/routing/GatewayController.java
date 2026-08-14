@@ -47,7 +47,7 @@ public class GatewayController {
      */
     @RequestMapping(value = "/{*path}")
     public void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        Optional<GatewayRoute> route = routeTable.resolve(request.getRequestURI());
+        Optional<GatewayRoute> route = routeTable.resolve(pathWithoutContext(request));
         if (route.isEmpty()) {
             throw new UnknownGatewayRouteException();
         }
@@ -56,6 +56,20 @@ public class GatewayController {
         }
         String correlationId = correlationId(request);
         forwarder.forward(request, response, route.get(), correlationId);
+    }
+
+    /**
+     * Returns one controlled response when the raw request target cannot be forwarded safely.
+     *
+     * @return generic RFC 9457 problem detail
+     */
+    @ExceptionHandler(GatewayBadRequestException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidRequestTarget() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "The request target is invalid.");
+        problem.setTitle("Invalid request target");
+        problem.setProperty("code", "INVALID_REQUEST_TARGET");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
     }
 
     /**
@@ -130,6 +144,18 @@ public class GatewayController {
             return RequestContext.CORRELATION_ID.get();
         }
         return CorrelationIdSupport.resolve(request);
+    }
+
+    private static String pathWithoutContext(HttpServletRequest request) {
+        String requestUri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath == null || contextPath.isEmpty()) {
+            return requestUri;
+        }
+        if (requestUri == null || !requestUri.startsWith(contextPath)) {
+            throw new GatewayBadRequestException();
+        }
+        return requestUri.substring(contextPath.length());
     }
 
     private static final class UnknownGatewayRouteException extends RuntimeException {

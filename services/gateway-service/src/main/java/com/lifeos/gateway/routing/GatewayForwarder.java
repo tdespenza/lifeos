@@ -157,9 +157,21 @@ public class GatewayForwarder {
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
+        String requestUri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath != null && !contextPath.isEmpty()) {
+            if (requestUri == null || !requestUri.startsWith(contextPath)) {
+                throw new GatewayBadRequestException();
+            }
+            requestUri = requestUri.substring(contextPath.length());
+        }
         String query = request.getQueryString();
-        String target = base + request.getRequestURI() + (query == null ? "" : "?" + query);
-        return URI.create(target);
+        String target = base + requestUri + (query == null ? "" : "?" + query);
+        try {
+            return URI.create(target);
+        } catch (IllegalArgumentException exception) {
+            throw new GatewayBadRequestException();
+        }
     }
 
     private static void copyRequestHeaders(

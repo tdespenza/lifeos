@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: lifeos-gateway
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${LIFEOS_GATEWAY_PORT:8080}
+
+gateway:
+  max-request-body-bytes: ${LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES:1048576}
+  max-response-body-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES:10485760}
+  connect-timeout: ${LIFEOS_GATEWAY_CONNECT_TIMEOUT:2s}
+  read-timeout: ${LIFEOS_GATEWAY_READ_TIMEOUT:5s}
+  routes:
+    - id: identity-accounts
+      path-prefix: /api/v1/accounts
+      upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
+    - id: identity-auth
+      path-prefix: /api/v1/auth
+      upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
+    - id: task-goal
+      path-prefix: /api/v1/goals
+      upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+
+management:
+  server:
+    port: ${LIFEOS_GATEWAY_MANAGEMENT_PORT:9080}
+    address: ${LIFEOS_GATEWAY_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    access:
+      default: none
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    info:
+      access: unrestricted
+    prometheus:
+      access: unrestricted
+    health:
+      access: unrestricted
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs

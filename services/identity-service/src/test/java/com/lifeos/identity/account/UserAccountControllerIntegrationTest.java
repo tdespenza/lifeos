@@ -83,6 +83,16 @@ class UserAccountControllerIntegrationTest {
     }
 
     @Test
+    void preservesAValidatedCorrelationIdFromTheGateway() throws Exception {
+        String correlationId = "11111111-1111-4111-8111-111111111111";
+
+        mockMvc.perform(get("/api/v1/accounts/00000000-0000-0000-0000-000000000000")
+                        .header("X-Correlation-ID", correlationId))
+                .andExpect(status().isNotFound())
+                .andExpect(header().string("X-Correlation-ID", correlationId));
+    }
+
+    @Test
     void registerRejectsDuplicateEmailWithoutEchoingPersonalData() throws Exception {
         String request = """
                 {"email":"ada@example.com","displayName":"Ada Lovelace"}

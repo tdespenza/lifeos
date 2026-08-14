@@ -6,3 +6,4 @@ rootProject.name = "lifeos"
 
 include("services:identity-service")
 include("services:task-goal-service")
+include("services:gateway-service")

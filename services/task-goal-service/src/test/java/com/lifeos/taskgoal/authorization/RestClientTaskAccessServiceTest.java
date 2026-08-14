@@ -12,7 +12,9 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withTooManyRequests;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest;
 
+import java.lang.ScopedValue;
 import java.util.UUID;
+import com.lifeos.taskgoal.observability.RequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -64,6 +66,26 @@ class RestClientTaskAccessServiceTest {
         assertThat(subject.accountId()).isEqualTo(accountId);
         assertThat(subject.sessionId()).isEqualTo(sessionId);
         assertThat(subject.accessTokenProof()).isEqualTo(ACCESS_TOKEN_PROOF);
+        identityServer.verify();
+    }
+
+    @Test
+    void authenticatePropagatesTheBoundCorrelationId() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        String correlationId = "11111111-1111-4111-8111-111111111111";
+        identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
+                .andExpect(header("X-Correlation-ID", correlationId))
+                .andRespond(withSuccess(
+                        """
+                        {"accountId":"%s","sessionId":"%s","authenticationMethod":"password","accessTokenProof":"%s"}
+                        """.formatted(accountId, sessionId, ACCESS_TOKEN_PROOF),
+                        MediaType.APPLICATION_JSON));
+
+        TaskSubject subject = ScopedValue.where(RequestContext.CORRELATION_ID, correlationId)
+                .call(() -> accessService.authenticate("Bearer raw-access-token"));
+
+        assertThat(subject.accountId()).isEqualTo(accountId);
         identityServer.verify();
     }
 

@@ -37,5 +37,6 @@ only under configured byte limits; connection and read deadlines turn transport 
 adapter before request-body forwarding. The gateway forwards only bounded subject facts and strips
 caller-supplied subject/workload headers. Identity-owned account/auth prefixes remain explicitly
 public at the gateway where bootstrap operations require it; account lookup and session management
-are protected by more-specific gateway policies. Identity-service still enforces its operation-level rules. Rate limiting, circuit breaking, and
-bulkheads remain Story 2.3 responsibilities.
+are protected by more-specific gateway policies. Identity-service still enforces its operation-level
+rules. Rate limiting and circuit breaking remain Story 2.3 responsibilities; the gateway's
+identity-validation bulkhead is implemented as part of Story 2.2.

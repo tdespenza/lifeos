@@ -64,4 +64,26 @@ class GatewayAuthenticationServiceTest {
             assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(subject);
         }
     }
+
+    @Test
+    void releasesTheBulkheadPermitAfterAFailedValidation() {
+        GatewayAuthenticationProperties properties = new GatewayAuthenticationProperties();
+        properties.setBaseUrl("https://identity.test");
+        properties.setWorkloadIdentity("gateway-service");
+        properties.setWorkloadToken("test-gateway-workload-token");
+        GatewayAuthenticationClient client = new GatewayAuthenticationClient(
+                RestClient.builder().baseUrl(properties.getBaseUrl()).build(), properties) {
+            @Override
+            public GatewayAuthenticatedSubject authenticate(String authorizationHeader) {
+                throw new GatewayAuthenticationFailureException();
+            }
+        };
+        GatewayAuthenticationService service = new GatewayAuthenticationService(
+                client, new GatewayAuthenticationMetrics(new SimpleMeterRegistry()), 1);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertThatThrownBy(() -> service.authenticate(ROUTE, "Bearer token"))
+                    .isInstanceOf(GatewayAuthenticationFailureException.class);
+        }
+    }
 }

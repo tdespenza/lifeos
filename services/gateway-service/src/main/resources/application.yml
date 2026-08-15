@@ -27,7 +27,9 @@ gateway:
       path-prefix: /api/v1/accounts
       upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
       authentication-required: true
-      authentication-required-methods: [GET, HEAD]
+      authentication-required-methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+      authentication-public-paths: [/api/v1/accounts]
+      authentication-public-methods: [POST]
     - id: identity-auth
       path-prefix: /api/v1/auth
       upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}

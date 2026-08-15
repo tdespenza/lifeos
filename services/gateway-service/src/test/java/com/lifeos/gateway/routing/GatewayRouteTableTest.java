@@ -91,6 +91,25 @@ class GatewayRouteTableTest {
         assertThat(route.areAuthenticationRequiredMethodsValid()).isFalse();
     }
 
+    @Test
+    void makesOnlyTheExactRegistrationPostPublic() {
+        GatewayProperties.Route registration = new GatewayProperties.Route(
+                "accounts", "/api/v1/accounts", "https://identity.test");
+        registration.setAuthenticationRequiredMethods(
+                Set.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        registration.setAuthenticationPublicPaths(Set.of("/api/v1/accounts"));
+        registration.setAuthenticationPublicMethods(Set.of("POST"));
+        GatewayRoute route = new GatewayRouteTable(properties(registration))
+                .resolve("/api/v1/accounts")
+                .orElseThrow();
+
+        assertThat(route.requiresAuthentication("/api/v1/accounts", "POST")).isFalse();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "POST")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PUT")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PATCH")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "DELETE")).isTrue();
+    }
+
     private static GatewayProperties properties(GatewayProperties.Route... routes) {
         GatewayProperties properties = new GatewayProperties();
         properties.setRoutes(List.of(routes));

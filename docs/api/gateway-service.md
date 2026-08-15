@@ -10,7 +10,7 @@ The initial route table is:
 
 | Public prefix | Upstream | Authentication |
 | --- | --- | --- |
-| `/api/v1/accounts` | `LIFEOS_GATEWAY_IDENTITY_UPSTREAM` | `GET`/`HEAD` gateway enforced; registration `POST` is public |
+| `/api/v1/accounts` | `LIFEOS_GATEWAY_IDENTITY_UPSTREAM` | exact `POST /api/v1/accounts` registration is public; all other account operations are gateway enforced |
 | `/api/v1/auth` | `LIFEOS_GATEWAY_IDENTITY_UPSTREAM` | bootstrap operations remain public where identity allows |
 | `/api/v1/auth/sessions` | `LIFEOS_GATEWAY_IDENTITY_UPSTREAM` | gateway enforced |
 | `/api/v1/goals` | `LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM` | gateway enforced |
@@ -25,8 +25,9 @@ gateway routes.
 
 ## Authentication contract
 
-Routes require authentication by default. Mixed routes can protect only selected methods, so account
-registration remains public while account lookup is protected. The `/api/v1/auth` bootstrap prefix
+Routes require authentication by default. Mixed routes can expose only explicitly configured exact
+operations, so only account registration at `POST /api/v1/accounts` remains public; descendant
+account operations and all other account methods are protected. The `/api/v1/auth` bootstrap prefix
 explicitly opts out because login, refresh, OIDC, and passkey endpoints have a mixed contract owned
 by identity-service; the more-specific `/api/v1/auth/sessions` route is gateway protected. The initial
 task-goal route is protected.

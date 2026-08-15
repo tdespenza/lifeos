@@ -85,6 +85,8 @@ public class GatewayAuthenticationClient {
             throw new GatewayAuthenticationDependencyUnavailableException(exception);
         } catch (RestClientException exception) {
             throw new GatewayAuthenticationDependencyUnavailableException(exception);
+        } catch (RuntimeException exception) {
+            throw new GatewayAuthenticationDependencyUnavailableException(exception);
         }
     }
 
@@ -141,10 +143,7 @@ public class GatewayAuthenticationClient {
 
         @Override
         public String toString() {
-            return "ValidatedSubjectResponse[accountId=" + accountId
-                    + ", sessionId=" + sessionId
-                    + ", authenticationMethod=" + authenticationMethod
-                    + ", accessTokenProof=[redacted]]";
+            return "ValidatedSubjectResponse[redacted]";
         }
     }
 }

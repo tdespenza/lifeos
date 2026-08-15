@@ -6,10 +6,14 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.observability.RequestContext;
+import java.net.SocketTimeoutException;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,10 +34,11 @@ class GatewayAuthenticationClientTest {
 
     private MockRestServiceServer identityServer;
     private GatewayAuthenticationClient client;
+    private GatewayAuthenticationProperties properties;
 
     @BeforeEach
     void setUp() {
-        GatewayAuthenticationProperties properties = new GatewayAuthenticationProperties();
+        properties = new GatewayAuthenticationProperties();
         properties.setBaseUrl(IDENTITY_URL);
         properties.setWorkloadIdentity("gateway-service");
         properties.setWorkloadToken(WORKLOAD_TOKEN);
@@ -125,5 +130,31 @@ class GatewayAuthenticationClientTest {
         assertThatThrownBy(() -> client.authenticate("Bearer signed-access-token"))
                 .isInstanceOf(GatewayAuthenticationDependencyUnavailableException.class);
         identityServer.verify();
+    }
+
+    @Test
+    void mapsIdentityTransportFailuresToDependencyUnavailable() {
+        identityServer.expect(requestTo(IDENTITY_URL + "/api/v1/auth/validate"))
+                .andRespond(withException(new SocketTimeoutException("timed out")));
+
+        assertThatThrownBy(() -> client.authenticate("Bearer signed-access-token"))
+                .isInstanceOf(GatewayAuthenticationDependencyUnavailableException.class)
+                .satisfies(exception -> assertThat(
+                                ((GatewayAuthenticationDependencyUnavailableException) exception).reasonCode())
+                        .isEqualTo(GatewayAuthenticationDependencyUnavailableException.REASON_IDENTITY_UNAVAILABLE));
+        identityServer.verify();
+    }
+
+    @Test
+    void mapsUnexpectedIdentityClientRuntimeFailuresToDependencyUnavailable() {
+        RestClient unexpectedRestClient = mock(RestClient.class);
+        when(unexpectedRestClient.get()).thenThrow(new IllegalStateException("unexpected client failure"));
+        GatewayAuthenticationClient unexpectedClient = new GatewayAuthenticationClient(unexpectedRestClient, properties);
+
+        assertThatThrownBy(() -> unexpectedClient.authenticate("Bearer signed-access-token"))
+                .isInstanceOf(GatewayAuthenticationDependencyUnavailableException.class)
+                .satisfies(exception -> assertThat(
+                                ((GatewayAuthenticationDependencyUnavailableException) exception).reasonCode())
+                        .isEqualTo(GatewayAuthenticationDependencyUnavailableException.REASON_IDENTITY_UNAVAILABLE));
     }
 }

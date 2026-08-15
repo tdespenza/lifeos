@@ -63,7 +63,8 @@ public class GatewayController {
      */
     @RequestMapping(value = "/{*path}")
     public void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        Optional<GatewayRoute> route = routeTable.resolve(pathWithoutContext(request));
+        String requestPath = pathWithoutContext(request);
+        Optional<GatewayRoute> route = routeTable.resolve(requestPath);
         if (route.isEmpty()) {
             throw new UnknownGatewayRouteException();
         }
@@ -73,7 +74,7 @@ public class GatewayController {
         String correlationId = correlationId(request);
         GatewayRoute resolvedRoute = route.get();
         GatewayAuthenticatedSubject subject = null;
-        if (resolvedRoute.requiresAuthentication(request.getMethod())) {
+        if (resolvedRoute.requiresAuthentication(requestPath, request.getMethod())) {
             subject = authenticationService.authenticate(
                     resolvedRoute, request.getHeader(HttpHeaders.AUTHORIZATION));
         }

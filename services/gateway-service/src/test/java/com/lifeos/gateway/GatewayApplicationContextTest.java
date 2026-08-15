@@ -36,8 +36,15 @@ class GatewayApplicationContextTest {
                 .isEqualTo(true);
         assertThat(routeTable.resolve("/api/v1/accounts/00000000-0000-4000-8000-000000000001")).get()
                 .satisfies(route -> {
-                    assertThat(route.requiresAuthentication("GET")).isTrue();
-                    assertThat(route.requiresAuthentication("POST")).isFalse();
+                    assertThat(route.requiresAuthentication("/api/v1/accounts", "POST")).isFalse();
+                    assertThat(route.requiresAuthentication(
+                            "/api/v1/accounts/00000000-0000-4000-8000-000000000001", "POST")).isTrue();
+                    assertThat(route.requiresAuthentication(
+                            "/api/v1/accounts/00000000-0000-4000-8000-000000000001", "PUT")).isTrue();
+                    assertThat(route.requiresAuthentication(
+                            "/api/v1/accounts/00000000-0000-4000-8000-000000000001", "PATCH")).isTrue();
+                    assertThat(route.requiresAuthentication(
+                            "/api/v1/accounts/00000000-0000-4000-8000-000000000001", "DELETE")).isTrue();
                 });
         assertThat(routeTable.resolve("/api/v1/internal/authorization/decisions")).isEmpty();
     }

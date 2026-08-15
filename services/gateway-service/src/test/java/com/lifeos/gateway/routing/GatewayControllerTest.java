@@ -64,10 +64,7 @@ class GatewayControllerTest {
         upstream = MockRestServiceServer.bindTo(builder).build();
         meterRegistry = new SimpleMeterRegistry();
         GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, meterRegistry);
-        GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
-        authenticationProperties.setBaseUrl("https://identity.test");
-        authenticationProperties.setWorkloadIdentity("gateway-service");
-        authenticationProperties.setWorkloadToken("test-gateway-workload-token");
+        GatewayAuthenticationProperties authenticationProperties = configuredAuthenticationProperties();
         GatewayAuthenticationService authenticationService = new GatewayAuthenticationService(
                 new GatewayAuthenticationClient(
                         RestClient.builder().baseUrl(authenticationProperties.getBaseUrl()).build(),
@@ -409,10 +406,7 @@ class GatewayControllerTest {
         route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
         properties.setRoutes(List.of(
                 route));
-        GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
-        authenticationProperties.setBaseUrl("https://identity.test");
-        authenticationProperties.setWorkloadIdentity("gateway-service");
-        authenticationProperties.setWorkloadToken("test-gateway-workload-token");
+        GatewayAuthenticationProperties authenticationProperties = configuredAuthenticationProperties();
 
         RestClient.Builder identityBuilder = RestClient.builder()
                 .baseUrl(authenticationProperties.getBaseUrl());
@@ -430,5 +424,13 @@ class GatewayControllerTest {
                                 new GatewayRouteTable(properties), forwarder, authenticationService))
                 .addFilters(new CorrelationIdFilter())
                 .build();
+    }
+
+    private static GatewayAuthenticationProperties configuredAuthenticationProperties() {
+        GatewayAuthenticationProperties authenticationProperties = new GatewayAuthenticationProperties();
+        authenticationProperties.setBaseUrl("https://identity.test");
+        authenticationProperties.setWorkloadIdentity("gateway-service");
+        authenticationProperties.setWorkloadToken("test-gateway-workload-token");
+        return authenticationProperties;
     }
 }

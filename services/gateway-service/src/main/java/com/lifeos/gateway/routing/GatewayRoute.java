@@ -13,7 +13,38 @@ public record GatewayRoute(
         String pathPrefix,
         URI upstream,
         boolean authenticationRequired,
-        Set<String> authenticationRequiredMethods) {
+        Set<String> authenticationRequiredMethods,
+        Set<String> authenticationPublicPaths,
+        Set<String> authenticationPublicMethods) {
+
+    /**
+     * Normalizes method policy values and keeps all route policy sets immutable.
+     */
+    public GatewayRoute {
+        authenticationRequiredMethods = normalizeAuthenticationMethods(authenticationRequiredMethods);
+        authenticationPublicPaths = authenticationPublicPaths == null
+                ? Set.of()
+                : Set.copyOf(authenticationPublicPaths);
+        authenticationPublicMethods = normalizeAuthenticationMethods(authenticationPublicMethods);
+    }
+
+    /**
+     * Creates a route without exact public operation exceptions.
+     *
+     * @param id route identifier
+     * @param pathPrefix public path prefix
+     * @param upstream fixed upstream origin
+     * @param authenticationRequired whether authentication is required
+     * @param authenticationRequiredMethods methods protected by this route
+     */
+    public GatewayRoute(
+            String id,
+            String pathPrefix,
+            URI upstream,
+            boolean authenticationRequired,
+            Set<String> authenticationRequiredMethods) {
+        this(id, pathPrefix, upstream, authenticationRequired, authenticationRequiredMethods, Set.of(), Set.of());
+    }
 
     /**
      * Creates an immutable route from deployment configuration.
@@ -27,7 +58,9 @@ public record GatewayRoute(
                 normalizePathPrefix(route.getPathPrefix()),
                 normalizeUpstream(route.getUpstream()),
                 route.isAuthenticationRequired(),
-                normalizeAuthenticationMethods(route.getAuthenticationRequiredMethods()));
+                route.getAuthenticationRequiredMethods(),
+                route.getAuthenticationPublicPaths(),
+                route.getAuthenticationPublicMethods());
     }
 
     /**
@@ -37,11 +70,29 @@ public record GatewayRoute(
      * @return whether gateway authentication is required
      */
     public boolean requiresAuthentication(String method) {
+        return requiresAuthentication(pathPrefix, method);
+    }
+
+    /**
+     * Returns whether the supplied request path and method are protected by this route's policy.
+     * Public operation exceptions are exact path matches and never apply to descendants.
+     *
+     * @param requestPath inbound request path
+     * @param method inbound HTTP method
+     * @return whether gateway authentication is required
+     */
+    public boolean requiresAuthentication(String requestPath, String method) {
         if (!authenticationRequired) {
             return false;
         }
-        return authenticationRequiredMethods.isEmpty()
-                || (method != null && authenticationRequiredMethods.contains(method.toUpperCase(Locale.ROOT)));
+        String normalizedMethod = method == null ? null : method.toUpperCase(Locale.ROOT);
+        if (!authenticationRequiredMethods.isEmpty()
+                && (normalizedMethod == null || !authenticationRequiredMethods.contains(normalizedMethod))) {
+            return false;
+        }
+        return !(authenticationPublicPaths.contains(requestPath)
+                && normalizedMethod != null
+                && authenticationPublicMethods.contains(normalizedMethod));
     }
 
     /**

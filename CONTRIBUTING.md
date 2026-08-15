@@ -62,3 +62,6 @@ The workflows need the repository setting **Allow GitHub Actions to create and a
 ## Testing
 
 Every meaningful change should include tests or a documented reason why tests don't apply — see [CLAUDE.md](CLAUDE.md)'s "Implement With Verification" section. Run `./gradlew build` before opening a PR; it compiles and runs the full test suite.
+
+Run `bash scripts/test-coderabbit-review-workflow.sh` when changing the CodeRabbit workflow to
+validate its non-draft gate, exact head-commit de-duplication marker, and trusted bot-author filter.

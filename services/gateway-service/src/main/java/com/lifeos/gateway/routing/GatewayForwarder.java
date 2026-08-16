@@ -15,6 +15,7 @@ import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -35,11 +36,9 @@ import org.springframework.web.client.RestClientException;
  * exactly once on the downstream request.
  *
  * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
- * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Across concurrent
- * requests, the worst-case response-buffer footprint is approximately
- * {@code maxResponseBodyBytes * concurrentInFlightRequests}; production alerting must bound JVM
- * heap usage and observe {@code gateway.inflight.requests} before traffic is admitted. A future
- * bulkhead can provide a stricter aggregate bound without changing this per-request behavior.
+ * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. The route bulkhead
+ * bounds concurrent response buffers, so the worst-case response-buffer footprint is approximately
+ * {@code maxResponseBodyBytes * configuredRouteBulkheadCapacity} per gateway route.
  */
 @Component
 public class GatewayForwarder {
@@ -74,6 +73,7 @@ public class GatewayForwarder {
 
     private final RestClient restClient;
     private final GatewayProperties properties;
+    private final GatewayUpstreamResilience resilience;
     private final AtomicInteger inFlightRequests = new AtomicInteger();
 
     /**
@@ -83,10 +83,24 @@ public class GatewayForwarder {
      * @param properties gateway bounds
      * @param meterRegistry metrics registry for bounded in-flight request instrumentation
      */
-    public GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
+    @Autowired
+    public GatewayForwarder(
+            RestClient restClient,
+            GatewayProperties properties,
+            MeterRegistry meterRegistry,
+            GatewayUpstreamResilience resilience) {
         this.restClient = restClient;
         this.properties = properties;
+        this.resilience = resilience;
         meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
+    }
+
+    /**
+     * Creates a forwarder with its default in-process route resilience for isolated tests and
+     * source-compatible local callers.
+     */
+    public GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
+        this(restClient, properties, meterRegistry, new GatewayUpstreamResilience(properties, meterRegistry));
     }
 
     /**
@@ -124,40 +138,51 @@ public class GatewayForwarder {
             String correlationId,
             GatewayAuthenticatedSubject subject)
             throws IOException {
-        inFlightRequests.incrementAndGet();
-        try {
-            HttpMethod method = HttpMethod.valueOf(request.getMethod());
-            byte[] requestBody = readRequestBody(request, method);
-            URI target = targetUri(route, request);
-
-            RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
-
-            RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
-            if (requestBody.length > 0) {
-                outgoing = requestSpec.body(requestBody);
-            }
-
+        GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
+        try (permit) {
+            inFlightRequests.incrementAndGet();
             try {
-                DownstreamResponse downstream = outgoing.exchange(
-                        (clientRequest, clientResponse) -> readResponse(clientResponse));
-                writeResponse(response, downstream, method);
-            } catch (GatewayUpstreamException exception) {
-                logUpstreamFailure(route, exception.getStatus(), "upstream");
-                throw exception;
-            } catch (GatewayPayloadTooLargeException exception) {
-                throw exception;
-            } catch (ResourceAccessException exception) {
-                boolean timeout = isTimeout(exception);
-                HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
-                throw new GatewayUpstreamException(status, exception);
-            } catch (RestClientException exception) {
-                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
-                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                HttpMethod method = HttpMethod.valueOf(request.getMethod());
+                byte[] requestBody = readRequestBody(request, method);
+                URI target = targetUri(route, request);
+
+                RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
+                requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
+
+                RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
+                if (requestBody.length > 0) {
+                    outgoing = requestSpec.body(requestBody);
+                }
+
+                try {
+                    DownstreamResponse downstream = outgoing.exchange(
+                            (clientRequest, clientResponse) -> readResponse(clientResponse));
+                    if (downstream.status().is5xxServerError()) {
+                        permit.recordFailure();
+                    } else {
+                        permit.recordSuccess();
+                    }
+                    writeResponse(response, downstream, method);
+                } catch (GatewayUpstreamException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
+                    throw exception;
+                } catch (GatewayPayloadTooLargeException exception) {
+                    throw exception;
+                } catch (ResourceAccessException exception) {
+                    permit.recordFailure();
+                    boolean timeout = isTimeout(exception);
+                    HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                    logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
+                    throw new GatewayUpstreamException(status, exception);
+                } catch (RestClientException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                }
+            } finally {
+                inFlightRequests.decrementAndGet();
             }
-        } finally {
-            inFlightRequests.decrementAndGet();
         }
     }
 

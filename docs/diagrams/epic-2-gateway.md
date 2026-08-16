@@ -1,4 +1,4 @@
-# Epic 2 gateway — Stories 2.1 and 2.2
+# Epic 2 gateway — Stories 2.1–2.3
 
 The gateway owns a finite deployment configuration of versioned public path prefixes. A request
 cannot select an arbitrary upstream, and a downstream response cannot replace the request's
@@ -14,11 +14,20 @@ flowchart LR
     F -- yes --> G[Validate bearer with identity-service]
     G -- invalid --> H[401; redacted security metric]
     G -- unavailable --> I[503 fail closed; redacted security metric]
-    G -- valid --> J[Forward sanitized subject context]
-    F -- no --> J[Copy safe request contract]
-    J --> K[Forward to fixed upstream with same correlation ID]
-    K --> L[Copy status/body/public headers]
-    L --> M[Return response with same correlation ID]
+    G -- valid --> J[Derive account/client digest]
+    F -- no --> J[Derive anonymous client digest]
+    J --> K[Atomic Redis INCR + PEXPIRE]
+    K -- over limit --> L[429 + Retry-After]
+    K -- Redis failure --> M[503 fail closed]
+    K -- allowed --> N{Route circuit and bulkhead admit?}
+    N -- no --> O[503 degraded response]
+    N -- yes --> P[Forward fixed upstream with timeout]
+    P --> Q{Dependency outcome}
+    Q -- failure --> R[Record failure; open route circuit after threshold]
+    Q -- success --> S[Record success; close half-open circuit]
+    R --> T[Copy safe status/body/headers]
+    S --> T
+    T --> U[Return response with same correlation ID]
 ```
 
 Current routes:
@@ -38,5 +47,6 @@ adapter before request-body forwarding. The gateway forwards only bounded subjec
 caller-supplied subject/workload headers. Identity-owned account/auth prefixes remain explicitly
 public at the gateway where bootstrap operations require it; account lookup and session management
 are protected by more-specific gateway policies. Identity-service still enforces its operation-level
-rules. Rate limiting and circuit breaking remain Story 2.3 responsibilities; the gateway's
-identity-validation bulkhead is implemented as part of Story 2.2.
+rules. Story 2.3 adds Redis-backed route/client budgets plus per-route non-waiting upstream
+bulkheads and circuit breakers; the gateway's identity-validation bulkhead is implemented as part
+of Story 2.2.

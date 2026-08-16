@@ -3,9 +3,10 @@
 ## Context
 
 The target architecture described here includes Redis-backed session and
-revocation acceleration. In the current Story 1.2 implementation, PostgreSQL
-remains the durable session store and Redis is used for the distributed login
-rate limiter; later stories may add the cache paths described below.
+revocation acceleration. In the current implementation, PostgreSQL remains the
+durable session store and Redis is used for the gateway and identity-service
+distributed rate limiters plus short-lived authentication state; later stories
+may add the cache paths described below.
 
 LifeOS runs as a set of independently deployable Spring Boot microservices, each scaled horizontally behind a load balancer. Several cross-cutting needs span these instances: the API Gateway must enforce rate limits consistently regardless of which instance handles a request; the Identity Service must validate and revoke sessions/tokens the instant a user logs out or is compromised, from any instance; and the Finance Service needs a fast read-through cache in front of PostgreSQL for account summaries and computed aggregates that are expensive to recompute on every request. All three needs share a common shape: high-churn, latency-sensitive state that must be visible to every service instance immediately, and that does not need to survive permanently if lost.
 
@@ -17,7 +18,7 @@ LifeOS runs as a set of independently deployable Spring Boot microservices, each
 
 ## Decision Made
 
-Use Redis as the shared, distributed layer for caching, session storage, token revocation lists, rate limiting, distributed locks, and lightweight pub/sub notifications across all services, deployed as a managed/clustered Redis instance separate from PostgreSQL and MongoDB.
+Use Redis as the shared, distributed layer for caching, session storage, token revocation lists, rate limiting, distributed locks, and lightweight pub/sub notifications across all services, deployed as a managed/clustered Redis instance separate from PostgreSQL and MongoDB. The gateway's rate limit is an atomic fixed-window `INCR`/`PEXPIRE` counter keyed by a privacy-safe route/client digest.
 
 ## Why
 

@@ -862,6 +862,10 @@ So that unauthenticated traffic cannot reach user data services.
 
 ### Story 2.3: Gateway rate limiting and dependency isolation
 
+**Status:** Implemented in `services/gateway-service`; Redis-backed route/client limiting and
+per-route upstream bulkheads/circuit breakers are active with documented degraded responses and
+low-cardinality metrics.
+
 As a platform owner,
 I want bounded per-client rate limits and isolated upstream failures,
 So that abusive or failing traffic cannot exhaust the platform.
@@ -877,6 +881,12 @@ So that abusive or failing traffic cannot exhaust the platform.
 **Given** an unavailable or slow upstream
 **When** the gateway calls it
 **Then** explicit timeouts, circuit breaking, and bulkhead limits prevent unbounded resource use and return a documented degraded response.
+
+**Implementation notes:** The gateway uses one atomic Redis `INCR`/`PEXPIRE` Lua script per
+route/client digest and fails closed when Redis cannot decide. Authenticated requests use the
+validated account ID; anonymous requests use the immediate client address. Upstream admission is
+non-waiting and isolated per route; consecutive dependency failures open only the affected route's
+circuit, with one half-open probe after the configured cool-down.
 
 ### Epic 3: Reminders & Notifications
 

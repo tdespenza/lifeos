@@ -3,6 +3,7 @@ package com.lifeos.gateway.config;
 import com.lifeos.gateway.routing.GatewayRoute;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -43,6 +44,12 @@ public class GatewayProperties {
 
     @NotNull(message = "readTimeout must be configured")
     private Duration readTimeout = Duration.ofSeconds(5);
+
+    @Valid
+    private final RateLimit rateLimit = new RateLimit();
+
+    @Valid
+    private final Upstream upstream = new Upstream();
 
     /**
      * Returns the configured public route allow-list.
@@ -135,6 +142,25 @@ public class GatewayProperties {
     }
 
     /**
+     * Returns the gateway-wide Redis rate-limit settings. The route identifier is included in
+     * every limiter key, so one configured budget is independently enforced for each route.
+     *
+     * @return Redis rate-limit settings
+     */
+    public RateLimit getRateLimit() {
+        return rateLimit;
+    }
+
+    /**
+     * Returns upstream dependency-isolation settings.
+     *
+     * @return upstream bulkhead and circuit-breaker settings
+     */
+    public Upstream getUpstream() {
+        return upstream;
+    }
+
+    /**
      * Validates timeout values before constructing the HTTP client.
      *
      * @return {@code true} when both timeouts are bounded and positive
@@ -149,6 +175,143 @@ public class GatewayProperties {
                 && !duration.isZero()
                 && !duration.isNegative()
                 && duration.compareTo(Duration.ofSeconds(60)) <= 0;
+    }
+
+    /** Redis-backed fixed-window rate-limit settings. */
+    public static class RateLimit {
+
+        @Min(value = 1, message = "rateLimit.maxRequests must be positive")
+        @Max(value = 10_000_000, message = "rateLimit.maxRequests must be bounded")
+        private int maxRequests = 600;
+
+        @NotNull(message = "rateLimit.window must be configured")
+        private Duration window = Duration.ofMinutes(1);
+
+        /**
+         * Optional secret-manager supplied key material. When absent, the limiter still stores a
+         * one-way SHA-256 digest, which keeps raw addresses and account IDs out of Redis; setting a
+         * deployment secret upgrades this to a domain-separated HMAC digest.
+         */
+        private String keySecret;
+
+        public int getMaxRequests() {
+            return maxRequests;
+        }
+
+        public void setMaxRequests(int maxRequests) {
+            this.maxRequests = maxRequests;
+        }
+
+        /**
+         * Alias for deployments that name the budget requests-per-window.
+         *
+         * @return maximum requests in one window
+         */
+        public int getRequestsPerWindow() {
+            return maxRequests;
+        }
+
+        /**
+         * Binds the common requests-per-window configuration spelling.
+         *
+         * @param requestsPerWindow maximum requests in one window
+         */
+        public void setRequestsPerWindow(int requestsPerWindow) {
+            this.maxRequests = requestsPerWindow;
+        }
+
+        public Duration getWindow() {
+            return window;
+        }
+
+        public void setWindow(Duration window) {
+            this.window = window;
+        }
+
+        public String getKeySecret() {
+            return keySecret;
+        }
+
+        public void setKeySecret(String keySecret) {
+            this.keySecret = keySecret;
+        }
+
+        @AssertTrue(message = "rateLimit.window must be positive and no greater than 24 hours")
+        public boolean isWindowValid() {
+            return window != null
+                    && !window.isZero()
+                    && !window.isNegative()
+                    && window.compareTo(Duration.ofHours(24)) <= 0;
+        }
+    }
+
+    /** Per-route upstream failure-isolation settings. */
+    public static class Upstream {
+
+        @Valid
+        private final Bulkhead bulkhead = new Bulkhead();
+
+        @Valid
+        private final CircuitBreaker circuitBreaker = new CircuitBreaker();
+
+        public Bulkhead getBulkhead() {
+            return bulkhead;
+        }
+
+        public CircuitBreaker getCircuitBreaker() {
+            return circuitBreaker;
+        }
+    }
+
+    /** Non-waiting concurrency bound applied independently to each configured route. */
+    public static class Bulkhead {
+
+        @Min(value = 1, message = "upstream.bulkhead.maxConcurrentRequests must be positive")
+        @Max(value = 4096, message = "upstream.bulkhead.maxConcurrentRequests must be bounded")
+        private int maxConcurrentRequests = 64;
+
+        public int getMaxConcurrentRequests() {
+            return maxConcurrentRequests;
+        }
+
+        public void setMaxConcurrentRequests(int maxConcurrentRequests) {
+            this.maxConcurrentRequests = maxConcurrentRequests;
+        }
+    }
+
+    /** Consecutive-failure circuit-breaker settings applied independently to each route. */
+    public static class CircuitBreaker {
+
+        @Min(value = 1, message = "upstream.circuitBreaker.failureThreshold must be positive")
+        @Max(value = 10_000, message = "upstream.circuitBreaker.failureThreshold must be bounded")
+        private int failureThreshold = 5;
+
+        @NotNull(message = "upstream.circuitBreaker.openDuration must be configured")
+        private Duration openDuration = Duration.ofSeconds(10);
+
+        public int getFailureThreshold() {
+            return failureThreshold;
+        }
+
+        public void setFailureThreshold(int failureThreshold) {
+            this.failureThreshold = failureThreshold;
+        }
+
+        public Duration getOpenDuration() {
+            return openDuration;
+        }
+
+        public void setOpenDuration(Duration openDuration) {
+            this.openDuration = openDuration;
+        }
+
+        @AssertTrue(message = "upstream.circuitBreaker.openDuration must be positive and no greater than 60 seconds")
+        public boolean isOpenDurationValid() {
+            return openDuration != null
+                    && !openDuration.isZero()
+                    && !openDuration.isNegative()
+                    && openDuration.compareTo(Duration.ofSeconds(60)) <= 0;
+        }
     }
 
     /**

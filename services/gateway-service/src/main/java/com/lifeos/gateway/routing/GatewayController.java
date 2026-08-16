@@ -6,6 +6,9 @@ import com.lifeos.gateway.auth.GatewayAuthenticationFailureException;
 import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
+import com.lifeos.gateway.ratelimit.GatewayRateLimitDependencyUnavailableException;
+import com.lifeos.gateway.ratelimit.GatewayRateLimitExceededException;
+import com.lifeos.gateway.ratelimit.GatewayRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -36,6 +39,7 @@ public class GatewayController {
     private final GatewayRouteTable routeTable;
     private final GatewayForwarder forwarder;
     private final GatewayAuthenticationService authenticationService;
+    private final GatewayRateLimiter rateLimiter;
 
     /**
      * Creates the gateway controller with its protected-route authentication boundary.
@@ -44,14 +48,31 @@ public class GatewayController {
      * @param forwarder bounded HTTP forwarder
      * @param authenticationService identity-service authentication boundary
      */
-    @Autowired
     public GatewayController(
             GatewayRouteTable routeTable,
             GatewayForwarder forwarder,
             GatewayAuthenticationService authenticationService) {
+        this(routeTable, forwarder, authenticationService, GatewayRateLimiter.allowAll());
+    }
+
+    /**
+     * Creates the production controller with the distributed request-admission boundary.
+     *
+     * @param routeTable configured route table
+     * @param forwarder bounded HTTP forwarder
+     * @param authenticationService identity-service authentication boundary
+     * @param rateLimiter Redis-backed rate limiter
+     */
+    @Autowired
+    public GatewayController(
+            GatewayRouteTable routeTable,
+            GatewayForwarder forwarder,
+            GatewayAuthenticationService authenticationService,
+            GatewayRateLimiter rateLimiter) {
         this.routeTable = routeTable;
         this.forwarder = forwarder;
         this.authenticationService = Objects.requireNonNull(authenticationService, "authenticationService must not be null");
+        this.rateLimiter = Objects.requireNonNull(rateLimiter, "rateLimiter must not be null");
     }
 
     /**
@@ -78,7 +99,44 @@ public class GatewayController {
             subject = authenticationService.authenticate(
                     resolvedRoute, request.getHeader(HttpHeaders.AUTHORIZATION));
         }
+        rateLimiter.check(resolvedRoute, request, subject);
         forwarder.forward(request, response, resolvedRoute, correlationId, subject);
+    }
+
+    /**
+     * Returns a controlled RFC 9457 response when the route/client budget is exhausted.
+     *
+     * @param exception bounded rate-limit metadata
+     * @return too-many-requests response with safe retry guidance
+     */
+    @ExceptionHandler(GatewayRateLimitExceededException.class)
+    public ResponseEntity<ProblemDetail> handleRateLimitExceeded(GatewayRateLimitExceededException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS, "The request rate limit has been exceeded.");
+        problem.setTitle("Too many requests");
+        problem.setProperty("code", "RATE_LIMIT_EXCEEDED");
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(exception.getRetryAfterSeconds()))
+                .header("RateLimit-Limit", Integer.toString(exception.getLimit()))
+                .header("RateLimit-Remaining", "0")
+                .header("RateLimit-Reset", Integer.toString(exception.getRetryAfterSeconds()))
+                .body(problem);
+    }
+
+    /**
+     * Returns a fail-closed response when Redis cannot make a safe admission decision.
+     *
+     * @return generic temporary-failure problem detail
+     */
+    @ExceptionHandler(GatewayRateLimitDependencyUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleRateLimitDependencyFailure() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Request admission is temporarily unavailable.");
+        problem.setTitle("Rate limiter unavailable");
+        problem.setProperty("code", "RATE_LIMITER_UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "5")
+                .body(problem);
     }
 
     /**
@@ -177,7 +235,11 @@ public class GatewayController {
         problem.setProperty("code", exception.getStatus() == HttpStatus.GATEWAY_TIMEOUT
                 ? "UPSTREAM_TIMEOUT"
                 : "UPSTREAM_UNAVAILABLE");
-        return ResponseEntity.status(exception.getStatus()).body(problem);
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.getStatus());
+        if (exception.getRetryAfterSeconds() > 0) {
+            response.header(HttpHeaders.RETRY_AFTER, Integer.toString(exception.getRetryAfterSeconds()));
+        }
+        return response.body(problem);
     }
 
     /**

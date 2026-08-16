@@ -4,6 +4,10 @@ spring:
   threads:
     virtual:
       enabled: true
+  data:
+    redis:
+      connect-timeout: ${LIFEOS_GATEWAY_REDIS_CONNECT_TIMEOUT:500ms}
+      timeout: ${LIFEOS_GATEWAY_REDIS_COMMAND_TIMEOUT:500ms}
 
 server:
   port: ${LIFEOS_GATEWAY_PORT:8080}
@@ -22,6 +26,16 @@ gateway:
   max-response-body-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES:10485760}
   connect-timeout: ${LIFEOS_GATEWAY_CONNECT_TIMEOUT:2s}
   read-timeout: ${LIFEOS_GATEWAY_READ_TIMEOUT:5s}
+  rate-limit:
+    max-requests: ${LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS:600}
+    window: ${LIFEOS_GATEWAY_RATE_LIMIT_WINDOW:PT1M}
+    key-secret: ${LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET:}
+  upstream:
+    bulkhead:
+      max-concurrent-requests: ${LIFEOS_GATEWAY_UPSTREAM_MAX_CONCURRENT_REQUESTS:64}
+    circuit-breaker:
+      failure-threshold: ${LIFEOS_GATEWAY_UPSTREAM_FAILURE_THRESHOLD:5}
+      open-duration: ${LIFEOS_GATEWAY_UPSTREAM_CIRCUIT_OPEN_DURATION:10s}
   routes:
     - id: identity-accounts
       path-prefix: /api/v1/accounts

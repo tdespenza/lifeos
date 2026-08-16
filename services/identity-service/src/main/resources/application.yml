@@ -75,6 +75,7 @@ identity:
       # Internal adapters deny every caller until its deployment-managed workload secret is set.
       # Production traffic must also be isolated behind TLS/mTLS or an equivalent service mesh.
       workload-identities:
+        gateway-service: ${IDENTITY_GATEWAY_WORKLOAD_TOKEN:}
         task-goal-service: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN:}
     oidc:
       callback-state-ttl: ${IDENTITY_OIDC_CALLBACK_STATE_TTL:PT5M}

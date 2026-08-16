@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.lifeos.gateway.config.GatewayProperties;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class GatewayRouteTableTest {
@@ -28,6 +29,24 @@ class GatewayRouteTableTest {
                 new GatewayProperties.Route("root", "/", "https://root.test")));
 
         assertThat(table.resolve("/nested/path")).get().extracting(GatewayRoute::id).isEqualTo("root");
+    }
+
+    @Test
+    void protectsRoutesByDefaultAndAllowsAnExplicitPublicBootstrapRoute() {
+        GatewayRouteTable table = new GatewayRouteTable(properties(
+                new GatewayProperties.Route("protected", "/api/v1/goals", "https://goals.test"),
+                new GatewayProperties.Route("public", "/api/v1/auth", "https://identity.test", false)));
+
+        assertThat(table.resolve("/api/v1/goals")).get()
+                .extracting(GatewayRoute::authenticationRequired)
+                .isEqualTo(true);
+        assertThat(table.resolve("/api/v1/auth/login")).get()
+                .extracting(GatewayRoute::authenticationRequired)
+                .isEqualTo(false);
+        assertThat(table.resolve("/api/v1/goals")).get()
+                .satisfies(route -> assertThat(route.requiresAuthentication("GET")).isTrue());
+        assertThat(table.resolve("/api/v1/auth/login")).get()
+                .satisfies(route -> assertThat(route.requiresAuthentication("POST")).isFalse());
     }
 
     @Test
@@ -61,6 +80,45 @@ class GatewayRouteTableTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new GatewayRouteTable(properties(wildcard)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsUnknownMethodScopedAuthenticationPoliciesDuringValidation() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "goals", "/api/v1/goals", "https://task-goal.test");
+        route.setAuthenticationRequiredMethods(Set.of("GEET"));
+
+        assertThat(route.areAuthenticationRequiredMethodsValid()).isFalse();
+    }
+
+    @Test
+    void rejectsPublicMethodsThatAreNotInTheProtectedMethodSet() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "accounts", "/api/v1/accounts", "https://identity.test");
+        route.setAuthenticationRequiredMethods(Set.of("GET"));
+        route.setAuthenticationPublicPaths(Set.of("/api/v1/accounts"));
+        route.setAuthenticationPublicMethods(Set.of("POST"));
+
+        assertThat(route.areAuthenticationPublicMethodsValid()).isFalse();
+    }
+
+    @Test
+    void makesOnlyTheExactRegistrationPostPublic() {
+        GatewayProperties.Route registration = new GatewayProperties.Route(
+                "accounts", "/api/v1/accounts", "https://identity.test");
+        registration.setAuthenticationRequiredMethods(
+                Set.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        registration.setAuthenticationPublicPaths(Set.of("/api/v1/accounts"));
+        registration.setAuthenticationPublicMethods(Set.of("POST"));
+        GatewayRoute route = new GatewayRouteTable(properties(registration))
+                .resolve("/api/v1/accounts")
+                .orElseThrow();
+
+        assertThat(route.requiresAuthentication("/api/v1/accounts", "POST")).isFalse();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "POST")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PUT")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PATCH")).isTrue();
+        assertThat(route.requiresAuthentication("/api/v1/accounts/child", "DELETE")).isTrue();
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

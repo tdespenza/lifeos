@@ -57,8 +57,11 @@ The workflows need the repository setting **Allow GitHub Actions to create and a
 
 * Branch off the latest `dev` (or `main`, for a `hotfix/*`), not off an old already-merged branch — this repo squash-merges every PR, which rewrites history on the target branch. Reusing a stale local branch after a squash-merge causes already-merged files to reappear as "new" in a later PR's diff (a real issue hit during development here). Fetch first, then branch: `git fetch origin dev && git checkout -b feature/your-branch origin/dev` — skipping the fetch can silently branch off a stale local copy.
 * PRs are squash-merged only (`allow_merge_commit` and `allow_rebase_merge` are disabled repo-wide); branches are auto-deleted on merge.
-* Run a code review pass (CodeRabbit reviews automatically; the `code-review` Claude Code skill is also expected to run) before merging a PR, and address real findings before merge rather than after.
+* Every non-draft PR receives an automatic CodeRabbit full-review request from [`.github/workflows/coderabbit-review.yml`](.github/workflows/coderabbit-review.yml), once per head commit. If the workflow is unavailable, comment `@coderabbitai full review` manually. Wait for the review to finish and address every actionable finding before merging; the `code-review` Claude Code skill is also expected to run.
 
 ## Testing
 
 Every meaningful change should include tests or a documented reason why tests don't apply — see [CLAUDE.md](CLAUDE.md)'s "Implement With Verification" section. Run `./gradlew build` before opening a PR; it compiles and runs the full test suite.
+
+Run `bash scripts/test-coderabbit-review-workflow.sh` when changing the CodeRabbit workflow to
+validate its non-draft gate, exact head-commit de-duplication marker, and trusted bot-author filter.

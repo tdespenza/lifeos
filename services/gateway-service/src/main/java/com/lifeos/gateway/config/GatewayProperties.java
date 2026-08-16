@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -23,6 +24,9 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "gateway")
 @Validated
 public class GatewayProperties {
+
+    private static final Set<String> SUPPORTED_GATEWAY_METHODS = Set.of(
+            "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
 
     @Valid
     @NotEmpty(message = "at least one gateway route must be configured")
@@ -162,6 +166,33 @@ public class GatewayProperties {
         private String upstream;
 
         /**
+         * Whether the route requires a valid authenticated subject before forwarding.
+         *
+         * <p>Routes are protected by default. Public identity bootstrap endpoints must opt out
+         * explicitly in deployment configuration so a newly added route cannot accidentally
+         * expose user data without authentication.
+         */
+        private boolean authenticationRequired = true;
+
+        /**
+         * Optional HTTP methods to protect for a mixed public/protected route. An empty set means
+         * every supported method is protected when {@link #authenticationRequired} is enabled.
+         */
+        private Set<String> authenticationRequiredMethods = Set.of();
+
+        /**
+         * Exact request paths that may use the configured public methods while the route remains
+         * protected by default. This is intended for narrow bootstrap operations such as account
+         * registration, not for descendant resources.
+         */
+        private Set<String> authenticationPublicPaths = Set.of();
+
+        /**
+         * HTTP methods that are public only when the request path is one of the exact public paths.
+         */
+        private Set<String> authenticationPublicMethods = Set.of();
+
+        /**
          * Creates an empty route for Spring configuration binding.
          */
         public Route() {
@@ -178,6 +209,19 @@ public class GatewayProperties {
             this.id = id;
             this.pathPrefix = pathPrefix;
             this.upstream = upstream;
+        }
+
+        /**
+         * Creates a route definition with an explicit authentication policy.
+         *
+         * @param id route identifier
+         * @param pathPrefix public path prefix
+         * @param upstream fixed upstream origin
+         * @param authenticationRequired whether a valid bearer subject is required
+         */
+        public Route(String id, String pathPrefix, String upstream, boolean authenticationRequired) {
+            this(id, pathPrefix, upstream);
+            this.authenticationRequired = authenticationRequired;
         }
 
         public String getId() {
@@ -202,6 +246,120 @@ public class GatewayProperties {
 
         public void setUpstream(String upstream) {
             this.upstream = upstream;
+        }
+
+        /**
+         * Returns whether this route requires gateway authentication.
+         *
+         * @return {@code true} when a valid bearer subject is required
+         */
+        public boolean isAuthenticationRequired() {
+            return authenticationRequired;
+        }
+
+        /**
+         * Sets the route authentication policy during configuration binding.
+         *
+         * @param authenticationRequired whether a valid bearer subject is required
+         */
+        public void setAuthenticationRequired(boolean authenticationRequired) {
+            this.authenticationRequired = authenticationRequired;
+        }
+
+        /**
+         * Returns the protected-method allow-list for a mixed route.
+         *
+         * @return protected HTTP methods, or an empty set for all methods
+         */
+        public Set<String> getAuthenticationRequiredMethods() {
+            return Set.copyOf(authenticationRequiredMethods);
+        }
+
+        /**
+         * Sets the protected-method allow-list during configuration binding.
+         *
+         * @param authenticationRequiredMethods protected HTTP methods
+         */
+        public void setAuthenticationRequiredMethods(Set<String> authenticationRequiredMethods) {
+            this.authenticationRequiredMethods = authenticationRequiredMethods == null
+                    ? Set.of()
+                    : Set.copyOf(authenticationRequiredMethods);
+        }
+
+        /**
+         * Returns exact request paths for public method exceptions on this route.
+         *
+         * @return exact public request paths
+         */
+        public Set<String> getAuthenticationPublicPaths() {
+            return Set.copyOf(authenticationPublicPaths);
+        }
+
+        /**
+         * Sets exact request paths for public method exceptions during configuration binding.
+         *
+         * @param authenticationPublicPaths exact public request paths
+         */
+        public void setAuthenticationPublicPaths(Set<String> authenticationPublicPaths) {
+            this.authenticationPublicPaths = authenticationPublicPaths == null
+                    ? Set.of()
+                    : Set.copyOf(authenticationPublicPaths);
+        }
+
+        /**
+         * Returns methods that are public only on the configured exact public paths.
+         *
+         * @return exact public methods
+         */
+        public Set<String> getAuthenticationPublicMethods() {
+            return Set.copyOf(authenticationPublicMethods);
+        }
+
+        /**
+         * Sets methods that are public only on the configured exact public paths.
+         *
+         * @param authenticationPublicMethods exact public methods
+         */
+        public void setAuthenticationPublicMethods(Set<String> authenticationPublicMethods) {
+            this.authenticationPublicMethods = authenticationPublicMethods == null
+                    ? Set.of()
+                    : Set.copyOf(authenticationPublicMethods);
+        }
+
+        /**
+         * Rejects malformed method names so authentication policy cannot be silently broadened by
+         * a configuration typo.
+         *
+         * @return whether every configured method is a supported HTTP method name
+         */
+        @AssertTrue(message = "route authenticationRequiredMethods must contain valid HTTP methods")
+        public boolean areAuthenticationRequiredMethodsValid() {
+            return authenticationRequiredMethods.stream()
+                    .allMatch(method -> method != null && SUPPORTED_GATEWAY_METHODS.contains(method));
+        }
+
+        /**
+         * Rejects malformed methods used by exact public operation exceptions.
+         *
+         * @return whether every configured public method is supported
+         */
+        @AssertTrue(message = "route authenticationPublicMethods must contain valid HTTP methods")
+        public boolean areAuthenticationPublicMethodsValid() {
+            boolean supportedMethods = authenticationPublicMethods.stream()
+                    .allMatch(method -> method != null && SUPPORTED_GATEWAY_METHODS.contains(method));
+            return supportedMethods
+                    && (authenticationRequiredMethods.isEmpty()
+                            || authenticationRequiredMethods.containsAll(authenticationPublicMethods));
+        }
+
+        /**
+         * Rejects malformed exact public operation paths.
+         *
+         * @return whether every configured public path is a valid absolute path
+         */
+        @AssertTrue(message = "route authenticationPublicPaths must contain valid exact paths")
+        public boolean areAuthenticationPublicPathsValid() {
+            return authenticationPublicPaths.stream().allMatch(GatewayRoute::isValidPathPrefix);
         }
 
         /**

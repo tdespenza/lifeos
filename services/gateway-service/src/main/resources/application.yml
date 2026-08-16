@@ -9,6 +9,15 @@ server:
   port: ${LIFEOS_GATEWAY_PORT:8080}
 
 gateway:
+  authentication:
+    # Non-loopback identity authorities must use HTTPS. The workload token is intentionally
+    # required from deployment secret configuration; protected routes fail closed without it.
+    base-url: ${LIFEOS_GATEWAY_IDENTITY_BASE_URL:http://localhost:8081}
+    workload-identity: ${LIFEOS_GATEWAY_WORKLOAD_IDENTITY:gateway-service}
+    workload-token: ${IDENTITY_GATEWAY_WORKLOAD_TOKEN}
+    connect-timeout: ${LIFEOS_GATEWAY_IDENTITY_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LIFEOS_GATEWAY_IDENTITY_READ_TIMEOUT:3s}
+    max-concurrent-validations: ${LIFEOS_GATEWAY_AUTH_MAX_CONCURRENT_VALIDATIONS:64}
   max-request-body-bytes: ${LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES:1048576}
   max-response-body-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES:10485760}
   connect-timeout: ${LIFEOS_GATEWAY_CONNECT_TIMEOUT:2s}
@@ -17,12 +26,22 @@ gateway:
     - id: identity-accounts
       path-prefix: /api/v1/accounts
       upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
+      authentication-required: true
+      authentication-required-methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+      authentication-public-paths: [/api/v1/accounts]
+      authentication-public-methods: [POST]
     - id: identity-auth
       path-prefix: /api/v1/auth
       upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
+      authentication-required: false
+    - id: identity-sessions
+      path-prefix: /api/v1/auth/sessions
+      upstream: ${LIFEOS_GATEWAY_IDENTITY_UPSTREAM:http://localhost:8081}
+      authentication-required: true
     - id: task-goal
       path-prefix: /api/v1/goals
       upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
 
 management:
   server:

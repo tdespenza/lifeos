@@ -1,5 +1,9 @@
 package com.lifeos.gateway.routing;
 
+import com.lifeos.gateway.auth.GatewayAuthenticatedSubject;
+import com.lifeos.gateway.auth.GatewayAuthenticationDependencyUnavailableException;
+import com.lifeos.gateway.auth.GatewayAuthenticationFailureException;
+import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
@@ -7,6 +11,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -23,19 +30,28 @@ public class GatewayController {
 
     private static final Set<String> SUPPORTED_METHODS = Set.of(
             "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
+    private static final int MIN_RETRY_AFTER_SECONDS = 5;
+    private static final int MAX_RETRY_AFTER_SECONDS = 15;
 
     private final GatewayRouteTable routeTable;
     private final GatewayForwarder forwarder;
+    private final GatewayAuthenticationService authenticationService;
 
     /**
-     * Creates the gateway controller.
+     * Creates the gateway controller with its protected-route authentication boundary.
      *
      * @param routeTable configured route table
      * @param forwarder bounded HTTP forwarder
+     * @param authenticationService identity-service authentication boundary
      */
-    public GatewayController(GatewayRouteTable routeTable, GatewayForwarder forwarder) {
+    @Autowired
+    public GatewayController(
+            GatewayRouteTable routeTable,
+            GatewayForwarder forwarder,
+            GatewayAuthenticationService authenticationService) {
         this.routeTable = routeTable;
         this.forwarder = forwarder;
+        this.authenticationService = Objects.requireNonNull(authenticationService, "authenticationService must not be null");
     }
 
     /**
@@ -47,7 +63,8 @@ public class GatewayController {
      */
     @RequestMapping(value = "/{*path}")
     public void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        Optional<GatewayRoute> route = routeTable.resolve(pathWithoutContext(request));
+        String requestPath = pathWithoutContext(request);
+        Optional<GatewayRoute> route = routeTable.resolve(requestPath);
         if (route.isEmpty()) {
             throw new UnknownGatewayRouteException();
         }
@@ -55,7 +72,49 @@ public class GatewayController {
             throw new UnsupportedGatewayMethodException();
         }
         String correlationId = correlationId(request);
-        forwarder.forward(request, response, route.get(), correlationId);
+        GatewayRoute resolvedRoute = route.get();
+        GatewayAuthenticatedSubject subject = null;
+        if (resolvedRoute.requiresAuthentication(requestPath, request.getMethod())) {
+            subject = authenticationService.authenticate(
+                    resolvedRoute, request.getHeader(HttpHeaders.AUTHORIZATION));
+        }
+        forwarder.forward(request, response, resolvedRoute, correlationId, subject);
+    }
+
+    /**
+     * Returns one controlled response for an absent, malformed, expired, or revoked bearer.
+     *
+     * @return generic RFC 9457 unauthorized problem detail
+     */
+    @ExceptionHandler(GatewayAuthenticationFailureException.class)
+    public ResponseEntity<ProblemDetail> handleAuthenticationFailure() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED, "Authentication failed.");
+        problem.setTitle("Authentication required");
+        problem.setProperty("code", "AUTHENTICATION_REQUIRED");
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
+                .body(problem);
+    }
+
+    /**
+     * Returns a controlled fail-closed response when identity validation cannot complete.
+     *
+     * @return generic RFC 9457 temporary-failure problem detail
+     */
+    @ExceptionHandler(GatewayAuthenticationDependencyUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleAuthenticationDependencyFailure() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Authentication is temporarily unavailable.");
+        problem.setTitle("Authentication unavailable");
+        problem.setProperty("code", "AUTHENTICATION_UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
+                .body(problem);
+    }
+
+    private static int retryAfterSeconds() {
+        return ThreadLocalRandom.current().nextInt(MIN_RETRY_AFTER_SECONDS, MAX_RETRY_AFTER_SECONDS + 1);
     }
 
     /**

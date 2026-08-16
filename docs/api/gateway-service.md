@@ -25,12 +25,13 @@ gateway routes.
 
 ## Rate limiting
 
-Every resolved route is independently rate limited by a Redis fixed-window counter. Protected
-requests are charged to the validated account ID; public requests are charged to the immediate
-client address. Redis keys contain only a route-and-client digest, never a raw address, account ID,
-bearer token, or request path. `INCR` and the first-request `PEXPIRE` execute in one Lua script, and
-Redis failures fail closed with `503 RATE_LIMITER_UNAVAILABLE` rather than falling back to divergent
-per-instance counters.
+Every resolved route is independently rate limited by Redis fixed-window counters. Protected
+requests receive a pre-authentication charge to the immediate client address before identity
+validation, then a second charge to the validated account ID after successful authentication;
+public requests receive only the address charge. Redis keys contain only a route-and-client digest,
+never a raw address, account ID, bearer token, or request path. `INCR` and the first-request
+`PEXPIRE` execute in one Lua script, and Redis failures fail closed with
+`503 RATE_LIMITER_UNAVAILABLE` rather than falling back to divergent per-instance counters.
 
 Rejected requests return `429 RATE_LIMIT_EXCEEDED` with `Retry-After`, `RateLimit-Limit`,
 `RateLimit-Remaining: 0`, and `RateLimit-Reset` headers. The gateway exposes the route-only metrics
@@ -57,7 +58,9 @@ account ID, session ID, and authentication method. The gateway forwards those fa
 credential headers are always removed. The bearer header remains available to downstream services,
 which retain responsibility for object-level authorization and may repeat the identity check.
 
-The gateway authenticates itself to identity-service with `X-LifeOS-Workload-Identity` and
+The pre-authentication address budget bounds invalid-credential attempts before they reach
+identity-service; the post-authentication account budget protects each validated account's route
+traffic. The gateway authenticates itself to identity-service with `X-LifeOS-Workload-Identity` and
 `X-LifeOS-Workload-Token`; the token is supplied by `IDENTITY_GATEWAY_WORKLOAD_TOKEN` and has no
 repository default. Non-loopback identity URLs must use HTTPS. Identity connection and read
 timeouts are explicit and bounded to 60 seconds. A fair validation bulkhead admits at most

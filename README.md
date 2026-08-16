@@ -74,7 +74,7 @@ The full 8-phase roadmap — from foundation and core algorithms through microse
 ## Verification
 
 The gateway implementation and its documentation are validated with `./gradlew --no-daemon check`
-and `git diff --check`. The seven changed Markdown documents — this README plus the gateway API,
-identity API, current architecture, current architecture diagram, Epic 2 gateway diagram, and
-epics roadmap — are prose-only, so link consistency review and whitespace validation are the
-applicable documentation checks; no executable documentation test exists yet.
+and `git diff --check`. The seven changed Markdown documents — this README, ADR-010, ADR-022, the
+gateway API, current architecture, Epic 2 gateway diagram, and epics roadmap — are prose-only, so
+link consistency review and whitespace validation are the applicable documentation checks; no
+executable documentation test exists yet.

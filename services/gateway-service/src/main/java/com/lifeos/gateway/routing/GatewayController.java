@@ -96,9 +96,14 @@ public class GatewayController {
         GatewayRoute resolvedRoute = route.get();
         GatewayAuthenticatedSubject subject = null;
         if (resolvedRoute.requiresAuthentication(requestPath, request.getMethod())) {
+            // Charge anonymous attempts before identity validation so invalid credentials cannot
+            // consume the identity dependency without consuming an address budget.
+            rateLimiter.check(resolvedRoute, request, null);
             subject = authenticationService.authenticate(
                     resolvedRoute, request.getHeader(HttpHeaders.AUTHORIZATION));
         }
+        // Protected traffic receives a second, independent charge keyed by the validated account.
+        // Public traffic is charged once by its immediate client address.
         rateLimiter.check(resolvedRoute, request, subject);
         forwarder.forward(request, response, resolvedRoute, correlationId, subject);
     }

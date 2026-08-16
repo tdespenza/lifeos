@@ -92,6 +92,17 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rejectsPublicMethodsThatAreNotInTheProtectedMethodSet() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "accounts", "/api/v1/accounts", "https://identity.test");
+        route.setAuthenticationRequiredMethods(Set.of("GET"));
+        route.setAuthenticationPublicPaths(Set.of("/api/v1/accounts"));
+        route.setAuthenticationPublicMethods(Set.of("POST"));
+
+        assertThat(route.areAuthenticationPublicMethodsValid()).isFalse();
+    }
+
+    @Test
     void makesOnlyTheExactRegistrationPostPublic() {
         GatewayProperties.Route registration = new GatewayProperties.Route(
                 "accounts", "/api/v1/accounts", "https://identity.test");

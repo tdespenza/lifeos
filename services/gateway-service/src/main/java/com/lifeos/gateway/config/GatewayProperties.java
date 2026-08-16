@@ -345,8 +345,11 @@ public class GatewayProperties {
          */
         @AssertTrue(message = "route authenticationPublicMethods must contain valid HTTP methods")
         public boolean areAuthenticationPublicMethodsValid() {
-            return authenticationPublicMethods.stream()
+            boolean supportedMethods = authenticationPublicMethods.stream()
                     .allMatch(method -> method != null && SUPPORTED_GATEWAY_METHODS.contains(method));
+            return supportedMethods
+                    && (authenticationRequiredMethods.isEmpty()
+                            || authenticationRequiredMethods.containsAll(authenticationPublicMethods));
         }
 
         /**

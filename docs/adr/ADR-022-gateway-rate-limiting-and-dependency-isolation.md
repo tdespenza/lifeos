@@ -15,10 +15,11 @@ needs one shared admission decision and bounded per-route dependency capacity.
 
 Use Redis for a fixed-window request counter. One Lua script performs `INCR` and applies `PEXPIRE`
 only to the first request, making the counter atomic across gateway instances. The key contains a
-digest of the deployment-owned route ID plus the validated account ID for authenticated requests
-or the immediate client address for anonymous requests. An optional secret-manager supplied key
-turns the digest into HMAC-SHA-256; the no-secret development fallback still prevents raw identity
-values from being stored.
+digest of the deployment-owned route ID plus the immediate client address for anonymous requests
+or the validated account ID for authenticated requests. Protected requests receive both an
+address-based pre-authentication charge and an account-based post-authentication charge; public
+requests receive only the address-based charge. The digest uses HMAC-SHA-256 with the mandatory
+secret-manager supplied key; there is no unkeyed development fallback.
 
 Apply a non-waiting semaphore bulkhead and a consecutive-failure circuit breaker independently to
 each configured route. Transport errors, timeouts, oversized upstream responses, and upstream 5xx

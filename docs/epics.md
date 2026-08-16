@@ -883,8 +883,9 @@ So that abusive or failing traffic cannot exhaust the platform.
 **Then** explicit timeouts, circuit breaking, and bulkhead limits prevent unbounded resource use and return a documented degraded response.
 
 **Implementation notes:** The gateway uses one atomic Redis `INCR`/`PEXPIRE` Lua script per
-route/client digest and fails closed when Redis cannot decide. Authenticated requests use the
-validated account ID; anonymous requests use the immediate client address. Upstream admission is
+route/client digest and fails closed when Redis cannot decide. Public requests receive one
+immediate client-address charge; protected requests receive that pre-authentication address charge
+and a second post-authentication charge keyed by the validated account ID. Upstream admission is
 non-waiting and isolated per route; consecutive dependency failures open only the affected route's
 circuit, with one half-open probe after the configured cool-down.
 

@@ -11,23 +11,30 @@ flowchart LR
     C --> D{Configured path-segment prefix?}
     D -- no --> E[Controlled 404 ROUTE_NOT_FOUND]
     D -- yes --> F{Protected route?}
-    F -- yes --> G[Validate bearer with identity-service]
-    G -- invalid --> H[401; redacted security metric]
-    G -- unavailable --> I[503 fail closed; redacted security metric]
-    G -- valid --> J[Derive account/client digest]
-    F -- no --> J[Derive anonymous client digest]
-    J --> K[Atomic Redis INCR + PEXPIRE]
-    K -- over limit --> L[429 + Retry-After]
-    K -- Redis failure --> M[503 fail closed]
-    K -- allowed --> N{Route circuit and bulkhead admit?}
-    N -- no --> O[503 degraded response]
-    N -- yes --> P[Forward fixed upstream with timeout]
-    P --> Q{Dependency outcome}
-    Q -- failure --> R[Record failure; open route circuit after threshold]
-    Q -- success --> S[Record success; close half-open circuit]
-    R --> T[Copy safe status/body/headers]
-    S --> T
-    T --> U[Return response with same correlation ID]
+    F -- yes --> G[Derive immediate client-address digest]
+    F -- no --> H[Derive anonymous client-address digest]
+    G --> I[Atomic Redis check for address budget]
+    H --> J[Atomic Redis check for address budget]
+    I -- over limit --> K[429 + Retry-After]
+    J -- over limit --> K
+    I -- Redis failure --> L[503 fail closed]
+    J -- Redis failure --> L
+    I -- allowed --> M[Validate bearer with identity-service]
+    M -- invalid --> N[401; redacted security metric]
+    M -- unavailable --> O[503 fail closed; redacted security metric]
+    M -- valid --> P[Derive validated account digest]
+    P --> Q[Atomic Redis check for account budget]
+    Q -- over limit --> K
+    Q -- Redis failure --> L
+    Q -- allowed --> R{Route circuit and bulkhead admit?}
+    R -- no --> S[503 degraded response]
+    R -- yes --> T[Forward fixed upstream with timeout]
+    T --> U{Dependency outcome}
+    U -- failure --> V[Record failure; open route circuit after threshold]
+    U -- success --> W[Record success; close half-open circuit]
+    V --> X[Copy safe status/body/headers]
+    W --> X
+    X --> Y[Return response with same correlation ID]
 ```
 
 Current routes:

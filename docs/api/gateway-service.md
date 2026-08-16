@@ -104,9 +104,9 @@ deployments. `LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES` defaults to 1 MiB and
 2 seconds and 5 seconds and are bounded to 60 seconds. Each route's upstream must be an absolute
 HTTP(S) origin without userinfo, query, fragment, or a base path; duplicate route IDs and prefixes
 fail startup. `LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS` defaults to 600 per
-`LIFEOS_GATEWAY_RATE_LIMIT_WINDOW` (one minute). `LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET` is an
-optional secret-manager supplied HMAC key; without it the gateway still stores a one-way SHA-256
-digest. Redis connect and command timeouts default to 500 milliseconds.
+`LIFEOS_GATEWAY_RATE_LIMIT_WINDOW` (one minute). `LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET` is a
+required HMAC key supplied by secret management; the gateway fails startup when it is absent or
+blank. Redis connect and command timeouts default to 500 milliseconds.
 
 Each route has a 64-request non-waiting bulkhead by default. Five consecutive transport, timeout,
 oversized-response, or upstream-5xx failures open that route's circuit for 10 seconds, after which

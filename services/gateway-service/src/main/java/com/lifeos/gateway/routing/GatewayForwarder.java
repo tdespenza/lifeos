@@ -168,7 +168,9 @@ public class GatewayForwarder {
                     logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
                     throw exception;
                 } catch (GatewayPayloadTooLargeException exception) {
-                    throw exception;
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
                 } catch (ResourceAccessException exception) {
                     permit.recordFailure();
                     boolean timeout = isTimeout(exception);
@@ -254,12 +256,8 @@ public class GatewayForwarder {
     }
 
     private DownstreamResponse readResponse(ClientHttpResponse response) throws IOException {
-        try {
-            byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
-            return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
-        } catch (GatewayPayloadTooLargeException exception) {
-            throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-        }
+        byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
+        return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
     }
 
     private static void writeResponse(

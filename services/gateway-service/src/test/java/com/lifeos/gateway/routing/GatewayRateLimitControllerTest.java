@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdFilter;
+import com.lifeos.gateway.ratelimit.GatewayRateLimitDependencyUnavailableException;
 import com.lifeos.gateway.ratelimit.GatewayRateLimitExceededException;
 import com.lifeos.gateway.ratelimit.GatewayRateLimiter;
 import java.util.List;
@@ -42,6 +43,31 @@ class GatewayRateLimitControllerTest {
                 .andExpect(header().string("RateLimit-Limit", "10"))
                 .andExpect(header().string("RateLimit-Remaining", "0"))
                 .andExpect(jsonPath("$.code").value("RATE_LIMIT_EXCEEDED"));
+
+        verifyNoInteractions(forwarder);
+    }
+
+    @Test
+    void returns503WhenRateLimitDependencyIsUnavailableBeforeForwardingToTheUpstream() throws Exception {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "public", "/api/v1/public", "https://public.test", false)));
+        GatewayForwarder forwarder = mock(GatewayForwarder.class);
+        GatewayRateLimiter limiter = (route, request, subject) -> {
+            throw new GatewayRateLimitDependencyUnavailableException();
+        };
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new GatewayController(
+                        new GatewayRouteTable(properties),
+                        forwarder,
+                        mock(GatewayAuthenticationService.class),
+                        limiter))
+                .addFilters(new CorrelationIdFilter())
+                .build();
+
+        mockMvc.perform(get("/api/v1/public/resource"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "5"))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITER_UNAVAILABLE"));
 
         verifyNoInteractions(forwarder);
     }

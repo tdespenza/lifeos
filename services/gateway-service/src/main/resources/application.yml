@@ -29,7 +29,7 @@ gateway:
   rate-limit:
     max-requests: ${LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS:600}
     window: ${LIFEOS_GATEWAY_RATE_LIMIT_WINDOW:PT1M}
-    key-secret: ${LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET:}
+    key-secret: ${LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET}
   upstream:
     bulkhead:
       max-concurrent-requests: ${LIFEOS_GATEWAY_UPSTREAM_MAX_CONCURRENT_REQUESTS:64}

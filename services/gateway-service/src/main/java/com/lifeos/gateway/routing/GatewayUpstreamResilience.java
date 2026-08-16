@@ -9,6 +9,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -25,14 +27,22 @@ public class GatewayUpstreamResilience {
 
     private final GatewayProperties.Upstream properties;
     private final MeterRegistry meterRegistry;
+    private final LongSupplier nanoTime;
     private final ConcurrentMap<String, RouteState> states = new ConcurrentHashMap<>();
 
+    @Autowired
     public GatewayUpstreamResilience(GatewayProperties properties, MeterRegistry meterRegistry) {
+        this(properties, meterRegistry, System::nanoTime);
+    }
+
+    GatewayUpstreamResilience(
+            GatewayProperties properties, MeterRegistry meterRegistry, LongSupplier nanoTime) {
         this.properties = properties.getUpstream();
         this.meterRegistry = meterRegistry;
+        this.nanoTime = nanoTime;
         for (GatewayProperties.Route route : properties.getRoutes()) {
             if (route.getId() != null) {
-                states.put(route.getId(), new RouteState(this.properties));
+                states.put(route.getId(), new RouteState(this.properties, nanoTime));
             }
         }
     }
@@ -46,7 +56,7 @@ public class GatewayUpstreamResilience {
      */
     public Permit acquire(GatewayRoute route) {
         String routeId = route == null ? "unknown" : route.id();
-        RouteState state = states.computeIfAbsent(routeId, ignored -> new RouteState(properties));
+        RouteState state = states.computeIfAbsent(routeId, ignored -> new RouteState(properties, nanoTime));
         CircuitPermit circuitPermit = state.circuit.tryAcquire();
         if (!circuitPermit.admitted()) {
             counter("gateway.upstream.circuit.open", routeId,
@@ -142,11 +152,12 @@ public class GatewayUpstreamResilience {
         private final Semaphore bulkhead;
         private final Circuit circuit;
 
-        private RouteState(GatewayProperties.Upstream properties) {
+        private RouteState(GatewayProperties.Upstream properties, LongSupplier nanoTime) {
             this.bulkhead = new Semaphore(properties.getBulkhead().getMaxConcurrentRequests(), true);
             this.circuit = new Circuit(
                     properties.getCircuitBreaker().getFailureThreshold(),
-                    properties.getCircuitBreaker().getOpenDuration());
+                    properties.getCircuitBreaker().getOpenDuration(),
+                    nanoTime);
         }
     }
 
@@ -154,17 +165,19 @@ public class GatewayUpstreamResilience {
 
         private final int failureThreshold;
         private final long openDurationNanos;
+        private final LongSupplier nanoTime;
         private int consecutiveFailures;
         private long openedAtNanos;
         private State state = State.CLOSED;
 
-        private Circuit(int failureThreshold, Duration openDuration) {
+        private Circuit(int failureThreshold, Duration openDuration, LongSupplier nanoTime) {
             this.failureThreshold = failureThreshold;
             this.openDurationNanos = openDuration.toNanos();
+            this.nanoTime = nanoTime;
         }
 
         private synchronized CircuitPermit tryAcquire() {
-            long now = System.nanoTime();
+            long now = nanoTime.getAsLong();
             if (state == State.OPEN) {
                 if (now - openedAtNanos < openDurationNanos) {
                     return new CircuitPermit(false, false);
@@ -181,21 +194,27 @@ public class GatewayUpstreamResilience {
         private synchronized void cancelProbe(boolean probe) {
             if (probe && state == State.HALF_OPEN) {
                 state = State.OPEN;
-                openedAtNanos = System.nanoTime();
+                openedAtNanos = nanoTime.getAsLong();
             }
         }
 
         private synchronized void recordSuccess(boolean probe) {
-            if (probe || state == State.HALF_OPEN) {
+            if (probe) {
                 state = State.CLOSED;
+                consecutiveFailures = 0;
+            } else if (state == State.CLOSED) {
+                consecutiveFailures = 0;
             }
-            consecutiveFailures = 0;
         }
 
         private synchronized void recordFailure(boolean probe) {
-            if (probe || state == State.HALF_OPEN || ++consecutiveFailures >= failureThreshold) {
+            if (probe) {
                 state = State.OPEN;
-                openedAtNanos = System.nanoTime();
+                openedAtNanos = nanoTime.getAsLong();
+                consecutiveFailures = 0;
+            } else if (state == State.CLOSED && ++consecutiveFailures >= failureThreshold) {
+                state = State.OPEN;
+                openedAtNanos = nanoTime.getAsLong();
                 consecutiveFailures = 0;
             }
         }

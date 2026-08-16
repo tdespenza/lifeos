@@ -187,11 +187,8 @@ public class GatewayProperties {
         @NotNull(message = "rateLimit.window must be configured")
         private Duration window = Duration.ofMinutes(1);
 
-        /**
-         * Optional secret-manager supplied key material. When absent, the limiter still stores a
-         * one-way SHA-256 digest, which keeps raw addresses and account IDs out of Redis; setting a
-         * deployment secret upgrades this to a domain-separated HMAC digest.
-         */
+        /** Secret-manager supplied HMAC key material used to protect Redis client-key digests. */
+        @NotBlank(message = "rateLimit.keySecret must be supplied by secret management")
         private String keySecret;
 
         public int getMaxRequests() {

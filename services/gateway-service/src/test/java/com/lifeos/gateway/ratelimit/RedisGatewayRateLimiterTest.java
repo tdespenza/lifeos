@@ -15,14 +15,29 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
+@Testcontainers(disabledWithoutDocker = true)
 class RedisGatewayRateLimiterTest {
+
+    @Container
+    private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:8-alpine")
+            .withExposedPorts(6379);
 
     private static final GatewayRoute ROUTE = new GatewayRoute(
             "goals", "/api/v1/goals", URI.create("https://task-goal.test"), true, Set.of());
@@ -93,6 +108,47 @@ class RedisGatewayRateLimiterTest {
 
         assertThatThrownBy(() -> limiter.check(ROUTE, request("127.0.0.1"), null))
                 .isInstanceOf(GatewayRateLimitDependencyUnavailableException.class);
+    }
+
+    @Test
+    void enforcesTheAtomicFixedWindowAcrossConcurrentRequestsAndResetsAfterExpiry() throws Exception {
+        GatewayProperties properties = properties(5);
+        properties.getRateLimit().setWindow(Duration.ofMillis(150));
+        LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory(
+                REDIS.getHost(), REDIS.getMappedPort(6379));
+        connectionFactory.afterPropertiesSet();
+        StringRedisTemplate redis = new StringRedisTemplate(connectionFactory);
+        redis.afterPropertiesSet();
+        ExecutorService executor = Executors.newFixedThreadPool(12);
+        try {
+            RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
+                    redis, properties, new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
+            List<Future<Boolean>> outcomes = new ArrayList<>();
+            for (int index = 0; index < 12; index++) {
+                outcomes.add(executor.submit(() -> {
+                    try {
+                        limiter.check(ROUTE, request("198.51.100.42"), null);
+                        return true;
+                    } catch (GatewayRateLimitExceededException exception) {
+                        return false;
+                    }
+                }));
+            }
+
+            AtomicInteger allowed = new AtomicInteger();
+            for (Future<Boolean> outcome : outcomes) {
+                if (outcome.get(5, TimeUnit.SECONDS)) {
+                    allowed.incrementAndGet();
+                }
+            }
+            assertThat(allowed.get()).isEqualTo(5);
+
+            Thread.sleep(250);
+            limiter.check(ROUTE, request("198.51.100.42"), null);
+        } finally {
+            executor.shutdownNow();
+            connectionFactory.destroy();
+        }
     }
 
     private static GatewayProperties properties(int maxRequests) {

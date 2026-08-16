@@ -9,6 +9,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class GatewayUpstreamResilienceTest {
@@ -49,8 +50,9 @@ class GatewayUpstreamResilienceTest {
     void opensAfterConsecutiveFailuresAndAllowsOnlyOneHalfOpenProbe() {
         GatewayProperties properties = properties(2, 2);
         properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
+        MutableNanoClock clock = new MutableNanoClock();
         GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
-                properties, new SimpleMeterRegistry());
+                properties, new SimpleMeterRegistry(), clock);
 
         fail(resilience);
         fail(resilience);
@@ -61,12 +63,7 @@ class GatewayUpstreamResilienceTest {
                                 ((GatewayUpstreamException) error).getFailureClass())
                         .isEqualTo("circuit_open"));
 
-        try {
-            Thread.sleep(70);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError(exception);
-        }
+        clock.advance(Duration.ofMillis(51));
         GatewayUpstreamResilience.Permit probe = resilience.acquire(ROUTE);
         try {
             assertThatThrownBy(() -> resilience.acquire(ROUTE))
@@ -78,6 +75,38 @@ class GatewayUpstreamResilienceTest {
             probe.recordSuccess();
             probe.close();
         }
+    }
+
+    @Test
+    void ignoresAStalePermitWhileAHalfOpenProbeOwnsTheCircuitTransition() {
+        GatewayProperties properties = properties(2, 1);
+        properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
+        MutableNanoClock clock = new MutableNanoClock();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
+                properties, new SimpleMeterRegistry(), clock);
+
+        GatewayUpstreamResilience.Permit stalePermit = resilience.acquire(ROUTE);
+        GatewayUpstreamResilience.Permit opener = resilience.acquire(ROUTE);
+        opener.recordFailure();
+        opener.close();
+
+        clock.advance(Duration.ofMillis(51));
+        GatewayUpstreamResilience.Permit probe = resilience.acquire(ROUTE);
+        stalePermit.recordSuccess();
+        stalePermit.close();
+
+        assertThatThrownBy(() -> resilience.acquire(ROUTE))
+                .isInstanceOf(GatewayUpstreamException.class)
+                .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
+                                ((GatewayUpstreamException) error).getFailureClass())
+                        .isEqualTo("circuit_open"));
+
+        probe.recordSuccess();
+        probe.close();
+        assertThatCode(() -> {
+            GatewayUpstreamResilience.Permit permit = resilience.acquire(ROUTE);
+            permit.close();
+        }).doesNotThrowAnyException();
     }
 
     private static void fail(GatewayUpstreamResilience resilience) {
@@ -93,5 +122,19 @@ class GatewayUpstreamResilienceTest {
         properties.getUpstream().getBulkhead().setMaxConcurrentRequests(maxConcurrentRequests);
         properties.getUpstream().getCircuitBreaker().setFailureThreshold(failureThreshold);
         return properties;
+    }
+
+    private static final class MutableNanoClock implements java.util.function.LongSupplier {
+
+        private final AtomicLong nanos = new AtomicLong();
+
+        @Override
+        public long getAsLong() {
+            return nanos.get();
+        }
+
+        private void advance(Duration duration) {
+            nanos.addAndGet(duration.toNanos());
+        }
     }
 }

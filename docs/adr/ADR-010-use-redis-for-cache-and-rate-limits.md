@@ -1,4 +1,4 @@
-# ADR-010: Use Redis for caching, sessions, and rate limiting
+# ADR-010: Use Redis for caching, short-lived state, and rate limiting
 
 ## Context
 
@@ -18,11 +18,11 @@ LifeOS runs as a set of independently deployable Spring Boot microservices, each
 
 ## Decision Made
 
-Use Redis as the shared, distributed layer for caching, session storage, token revocation lists, rate limiting, distributed locks, and lightweight pub/sub notifications across all services, deployed as a managed/clustered Redis instance separate from PostgreSQL and MongoDB. The gateway's rate limit is an atomic fixed-window `INCR`/`PEXPIRE` counter keyed by a privacy-safe route/client digest.
+Use Redis as the shared, distributed layer for caching, short-lived acceleration state, rate limiting, distributed locks, and lightweight pub/sub notifications across all services, deployed as a managed/clustered Redis instance separate from PostgreSQL and MongoDB. PostgreSQL remains the authoritative durable session store. The gateway's rate limit is an atomic fixed-window `INCR`/`PEXPIRE` counter keyed by an HMAC-protected route/client digest.
 
 ## Why
 
-Redis is the only option among those considered that satisfies all three requirements natively without bolted-on infrastructure: atomic `INCR`/`EXPIRE` and sorted sets give correct, race-free rate limiting across instances; `SETEX`/`SET NX` give both TTL-based session expiry and revocation plus simple distributed locks; and pub/sub covers cross-instance cache invalidation and lightweight fan-out notifications. Sub-millisecond in-memory access keeps it viable on the hot path (every gateway request, every authenticated call), and it keeps this volatile, high-churn traffic off PostgreSQL, preserving headroom on the datastore that holds durable financial and identity records.
+Redis is the only option among those considered that satisfies the distributed, non-authoritative requirements natively without bolted-on infrastructure: atomic `INCR`/`EXPIRE` and sorted sets give correct, race-free rate limiting across instances; `SET NX PX` gives distributed locks; and pub/sub covers cross-instance cache invalidation and lightweight fan-out notifications. Sub-millisecond in-memory access keeps it viable on the hot path, while PostgreSQL remains the source of truth for durable identity and session records.
 
 ## Tradeoffs
 

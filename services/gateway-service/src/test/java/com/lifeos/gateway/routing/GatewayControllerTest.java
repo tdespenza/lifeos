@@ -265,6 +265,10 @@ class GatewayControllerTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
 
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(1);
         upstream.verify();
     }
 
@@ -285,6 +289,10 @@ class GatewayControllerTest {
         mockMvc.perform(get("/api/v1/goals"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(2);
         upstream.verify();
     }
 
@@ -296,6 +304,10 @@ class GatewayControllerTest {
         mockMvc.perform(get("/api/v1/goals"))
                 .andExpect(status().isInternalServerError());
 
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(1);
         upstream.verify();
     }
 

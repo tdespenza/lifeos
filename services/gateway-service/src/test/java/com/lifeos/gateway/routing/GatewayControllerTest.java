@@ -1,7 +1,10 @@
 package com.lifeos.gateway.routing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.matchesPattern;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -17,6 +20,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.lifeos.gateway.auth.GatewayAuthenticationClient;
 import com.lifeos.gateway.auth.GatewayAuthenticationMetrics;
@@ -25,17 +30,33 @@ import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdFilter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import jakarta.servlet.ReadListener;
+import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -72,7 +93,11 @@ class GatewayControllerTest {
                 new GatewayAuthenticationMetrics(meterRegistry),
                 authenticationProperties);
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new GatewayController(new GatewayRouteTable(properties), forwarder, authenticationService))
+                        new GatewayController(
+                                new GatewayRouteTable(properties),
+                                forwarder,
+                                authenticationService,
+                                (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }
@@ -255,6 +280,356 @@ class GatewayControllerTest {
     }
 
     @Test
+    void mapsOpenCircuitsToAControlledRetryableServiceUnavailableResponse() throws Exception {
+        mockMvcForUpstreamFailure("circuit_open", 10)
+                .perform(get("/api/v1/goals"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "10"))
+                .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.title").value("Upstream unavailable"))
+                .andExpect(jsonPath("$.detail").value("The requested service is temporarily unavailable."));
+    }
+
+    @Test
+    void mapsRejectedBulkheadsToAControlledRetryableServiceUnavailableResponse() throws Exception {
+        mockMvcForUpstreamFailure("bulkhead_rejected", 1)
+                .perform(get("/api/v1/goals"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.title").value("Upstream unavailable"))
+                .andExpect(jsonPath("$.detail").value("The requested service is temporarily unavailable."));
+    }
+
+    @Test
+    void doesNotConsumeUpstreamBulkheadWhileInboundUploadIsStalled() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.getUpstream().getBulkhead().setMaxConcurrentRequests(1));
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        GatewayForwarder forwarder = fixture.forwarder();
+        CountDownLatch bodyReadStarted = new CountDownLatch(1);
+        CountDownLatch releaseBody = new CountDownLatch(1);
+        HttpServletRequest stalledRequest = requestWithoutBody("POST");
+        when(stalledRequest.getContentLengthLong()).thenReturn(-1L);
+        when(stalledRequest.getInputStream()).thenReturn(stalledInputStream(bodyReadStarted, releaseBody));
+        HttpServletRequest healthyRequest = requestWithoutBody("GET");
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> stalled = executor.submit(() -> {
+                forwarder.forward(
+                        stalledRequest, new MockHttpServletResponse(), route, CORRELATION_ID);
+                return null;
+            });
+            assertThat(bodyReadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<?> healthy = executor.submit(() -> {
+                forwarder.forward(
+                        healthyRequest, new MockHttpServletResponse(), route, CORRELATION_ID);
+                return null;
+            });
+            assertThat(healthy.get(5, TimeUnit.SECONDS)).isNull();
+            assertThat(stalled.isDone()).isFalse();
+
+            releaseBody.countDown();
+            assertThat(stalled.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseBody.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsASecondInboundBodyWhenRequestBufferCapacityIsFull() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentRequestBodyBuffers(1));
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
+        CountDownLatch bodyReadStarted = new CountDownLatch(1);
+        CountDownLatch releaseBody = new CountDownLatch(1);
+        HttpServletRequest stalledRequest = requestWithoutBody("POST");
+        when(stalledRequest.getContentLengthLong()).thenReturn(-1L);
+        when(stalledRequest.getInputStream()).thenReturn(stalledInputStream(bodyReadStarted, releaseBody));
+        HttpServletRequest rejectedRequest = requestWithoutBody("POST");
+        when(rejectedRequest.getContentLengthLong()).thenReturn(-1L);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> stalled = executor.submit(() -> {
+                forwarder.forward(
+                        stalledRequest, new MockHttpServletResponse(), route, CORRELATION_ID);
+                return null;
+            });
+            assertThat(bodyReadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            rejectedRequest, new MockHttpServletResponse(), route, CORRELATION_ID))
+                    .isInstanceOf(GatewayRequestBodyCapacityException.class);
+            assertThat(registry.get("gateway.request.body.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
+            assertThat(registry.get("gateway.request.body.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
+
+            releaseBody.countDown();
+            assertThat(stalled.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseBody.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void releasesInboundBodyAdmissionAfterRejectingAnOversizedRequestBody() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.setMaxConcurrentRequestBodyBuffers(1);
+            properties.setMaxRequestBodyBytes(4);
+        });
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        HttpServletRequest oversizedRequest = requestWithBody("POST", "12345".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> fixture.forwarder().forward(
+                        oversizedRequest, new MockHttpServletResponse(), route, CORRELATION_ID))
+                .isInstanceOf(GatewayPayloadTooLargeException.class);
+        assertThat(fixture.registry().get("gateway.request.body.available.permits")
+                .gauge()
+                .value()).isEqualTo(1.0);
+        fixture.server().verify();
+    }
+
+    @Test
+    void retainsInboundBodyAdmissionUntilUpstreamForwardingCompletes() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentRequestBodyBuffers(1));
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        CountDownLatch upstreamStarted = new CountDownLatch(1);
+        CountDownLatch releaseUpstream = new CountDownLatch(1);
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(request -> {
+                    upstreamStarted.countDown();
+                    awaitLatch(releaseUpstream, "upstream release");
+                    return withSuccess("[]", MediaType.APPLICATION_JSON).createResponse(request);
+                });
+
+        GatewayForwarder forwarder = fixture.forwarder();
+        HttpServletRequest firstRequest = requestWithBody("POST", "first".getBytes(StandardCharsets.UTF_8));
+        HttpServletRequest secondRequest = requestWithBody("POST", "second".getBytes(StandardCharsets.UTF_8));
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(firstRequest, new MockHttpServletResponse(), route, CORRELATION_ID);
+                return null;
+            });
+            assertThat(upstreamStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            secondRequest, new MockHttpServletResponse(), route, CORRELATION_ID))
+                    .isInstanceOf(GatewayRequestBodyCapacityException.class);
+
+            releaseUpstream.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseUpstream.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void releasesUpstreamPermitBeforeWritingClientResponse() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.getUpstream().getBulkhead().setMaxConcurrentRequests(1);
+            properties.setMaxConcurrentResponseBuffers(2);
+        });
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        GatewayForwarder forwarder = fixture.forwarder();
+        CountDownLatch responseWriteStarted = new CountDownLatch(1);
+        CountDownLatch releaseResponseWrite = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWriteStarted, releaseResponseWrite),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(responseWriteStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<?> second = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        new MockHttpServletResponse(),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(second.get(5, TimeUnit.SECONDS)).isNull();
+
+            releaseResponseWrite.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseResponseWrite.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsAForwarderConfigurationWhoseResponseBuffersExceedItsAggregateBudget() {
+        GatewayProperties forwarderProperties = new GatewayProperties();
+        forwarderProperties.setMaxConcurrentResponseBuffers(2);
+        forwarderProperties.setMaxResponseBodyBytes(4);
+        forwarderProperties.setMaxResponseBufferBytes(7);
+
+        assertThatThrownBy(() -> new GatewayForwarder(
+                        RestClient.builder().build(), forwarderProperties, new SimpleMeterRegistry()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxResponseBufferBytes");
+    }
+
+    @Test
+    void rejectsASecondResponseWhenResponseBufferCapacityIsFull() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentResponseBuffers(1));
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
+        CountDownLatch responseWriteStarted = new CountDownLatch(1);
+        CountDownLatch releaseResponseWrite = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWriteStarted, releaseResponseWrite),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(responseWriteStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            requestWithoutBody("GET"),
+                            new MockHttpServletResponse(),
+                            route,
+                            CORRELATION_ID))
+                    .isInstanceOf(GatewayResponseBufferCapacityException.class);
+            assertThat(registry.get("gateway.response.buffer.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
+            assertThat(registry.get("gateway.response.buffer.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
+
+            releaseResponseWrite.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseResponseWrite.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsAThirdResponseWhenTwoResponseBufferAdmissionsAreFull() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.setMaxConcurrentResponseBuffers(2);
+        });
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        MockRestServiceServer server = fixture.server();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
+        CountDownLatch responseWritesStarted = new CountDownLatch(2);
+        CountDownLatch releaseResponseWrites = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWritesStarted, releaseResponseWrites),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            Future<?> second = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWritesStarted, releaseResponseWrites),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(responseWritesStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            requestWithoutBody("GET"),
+                            new MockHttpServletResponse(),
+                            route,
+                            CORRELATION_ID))
+                    .isInstanceOf(GatewayResponseBufferCapacityException.class);
+            assertThat(registry.get("gateway.response.buffer.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
+            assertThat(registry.get("gateway.response.buffer.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
+
+            releaseResponseWrites.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            assertThat(second.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseResponseWrites.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void mapsOversizedUpstreamResponsesToBadGateway() throws Exception {
         properties.setMaxResponseBodyBytes(4);
         upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
@@ -265,6 +640,10 @@ class GatewayControllerTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
 
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(1);
         upstream.verify();
     }
 
@@ -285,6 +664,10 @@ class GatewayControllerTest {
         mockMvc.perform(get("/api/v1/goals"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(2);
         upstream.verify();
     }
 
@@ -296,6 +679,10 @@ class GatewayControllerTest {
         mockMvc.perform(get("/api/v1/goals"))
                 .andExpect(status().isInternalServerError());
 
+        assertThat(meterRegistry.get("gateway.upstream.failures")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(1);
         upstream.verify();
     }
 
@@ -401,6 +788,158 @@ class GatewayControllerTest {
         useProtectedRoute(Set.of());
     }
 
+    private static HttpServletRequest requestWithoutBody(String method) {
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getMethod()).thenReturn(method);
+        when(request.getRequestURI()).thenReturn("/api/v1/goals");
+        when(request.getContextPath()).thenReturn("");
+        when(request.getQueryString()).thenReturn(null);
+        when(request.getContentLengthLong()).thenReturn(0L);
+        when(request.getHeaderNames()).thenReturn(Collections.emptyEnumeration());
+        when(request.getRemoteAddr()).thenReturn("127.0.0.1");
+        when(request.getScheme()).thenReturn("http");
+        when(request.getServerName()).thenReturn("localhost");
+        return request;
+    }
+
+    private static HttpServletRequest requestWithBody(String method, byte[] body) throws IOException {
+        HttpServletRequest request = requestWithoutBody(method);
+        when(request.getContentLengthLong()).thenReturn((long) body.length);
+        when(request.getInputStream()).thenReturn(bodyInputStream(body));
+        return request;
+    }
+
+    private static ServletInputStream bodyInputStream(byte[] body) {
+        ByteArrayInputStream input = new ByteArrayInputStream(body);
+        return new ServletInputStream() {
+            @Override
+            public int read() {
+                return input.read();
+            }
+
+            @Override
+            public boolean isFinished() {
+                return input.available() == 0;
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setReadListener(ReadListener readListener) {
+                // Servlet async callbacks are not used by this synchronous test.
+            }
+        };
+    }
+
+    private static HttpServletResponse blockingResponse(
+            CountDownLatch writeStarted, CountDownLatch releaseWrite) throws IOException {
+        HttpServletResponse response = mock(HttpServletResponse.class);
+        when(response.getOutputStream()).thenReturn(blockingOutputStream(writeStarted, releaseWrite));
+        return response;
+    }
+
+    private static ServletOutputStream blockingOutputStream(
+            CountDownLatch writeStarted, CountDownLatch releaseWrite) {
+        return new ServletOutputStream() {
+            @Override
+            public void write(int value) throws IOException {
+                writeStarted.countDown();
+                awaitLatch(releaseWrite, "response write release");
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setWriteListener(WriteListener writeListener) {
+                // Servlet async callbacks are not used by this synchronous test.
+            }
+        };
+    }
+
+    private static void awaitLatch(CountDownLatch latch, String description) throws IOException {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IOException("timed out waiting for " + description);
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while waiting for " + description, exception);
+        }
+    }
+
+    private static ServletInputStream stalledInputStream(
+            CountDownLatch bodyReadStarted, CountDownLatch releaseBody) {
+        return new ServletInputStream() {
+            @Override
+            public int read() throws IOException {
+                bodyReadStarted.countDown();
+                try {
+                    if (!releaseBody.await(5, TimeUnit.SECONDS)) {
+                        throw new IOException("timed out waiting for test body release");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted while waiting for test body release", exception);
+                }
+                return -1;
+            }
+
+            @Override
+            public boolean isFinished() {
+                return false;
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setReadListener(ReadListener readListener) {
+                // Servlet async callbacks are not used by this synchronous test.
+            }
+        };
+    }
+
+    private static ForwarderFixture forwarderFixture(Consumer<GatewayProperties> customize) {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", UPSTREAM, false)));
+        customize.accept(properties);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, registry);
+        return new ForwarderFixture(properties, server, registry, forwarder);
+    }
+
+    private MockMvc mockMvcForUpstreamFailure(String failureClass, int retryAfterSeconds) throws IOException {
+        GatewayForwarder forwarder = mock(GatewayForwarder.class);
+        doThrow(GatewayUpstreamException.serviceUnavailable(failureClass, retryAfterSeconds))
+                .when(forwarder)
+                .forward(any(), any(), any(), any(), any());
+        return MockMvcBuilders.standaloneSetup(new GatewayController(
+                        new GatewayRouteTable(properties),
+                        forwarder,
+                        mock(GatewayAuthenticationService.class),
+                        (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
+                .addFilters(new CorrelationIdFilter())
+                .build();
+    }
+
+    private record ForwarderFixture(
+            GatewayProperties properties,
+            MockRestServiceServer server,
+            SimpleMeterRegistry registry,
+            GatewayForwarder forwarder) {
+    }
+
     private void useProtectedRoute(Set<String> authenticationRequiredMethods) {
         GatewayProperties.Route route = new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true);
         route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
@@ -421,7 +960,10 @@ class GatewayControllerTest {
         GatewayForwarder forwarder = new GatewayForwarder(upstreamBuilder.build(), properties, meterRegistry);
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new GatewayController(
-                                new GatewayRouteTable(properties), forwarder, authenticationService))
+                                new GatewayRouteTable(properties),
+                                forwarder,
+                                authenticationService,
+                                (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }

@@ -12,7 +12,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        properties = "gateway.authentication.workload-token=test-only-gateway-workload-token")
+        properties = {
+            "gateway.authentication.workload-token=test-only-gateway-workload-token",
+            "gateway.rate-limit.key-secret=test-only-rate-limit-secret"
+        })
 class GatewayApplicationContextTest {
 
     @Autowired

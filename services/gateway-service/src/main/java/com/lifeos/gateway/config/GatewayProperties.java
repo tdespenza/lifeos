@@ -3,6 +3,7 @@ package com.lifeos.gateway.config;
 import com.lifeos.gateway.routing.GatewayRoute;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -35,14 +36,34 @@ public class GatewayProperties {
     @Min(value = 1, message = "maxRequestBodyBytes must be positive")
     private long maxRequestBodyBytes = 1_048_576L;
 
+    @Min(value = 1, message = "maxConcurrentRequestBodyBuffers must be positive")
+    @Max(value = 4096, message = "maxConcurrentRequestBodyBuffers must be bounded")
+    private int maxConcurrentRequestBodyBuffers = 64;
+
+    @Min(value = 1, message = "maxRequestBodyBufferBytes must be positive")
+    private long maxRequestBodyBufferBytes = 67_108_864L;
+
+    @Min(value = 1, message = "maxConcurrentResponseBuffers must be positive")
+    @Max(value = 4096, message = "maxConcurrentResponseBuffers must be bounded")
+    private int maxConcurrentResponseBuffers = 64;
+
     @Min(value = 1, message = "maxResponseBodyBytes must be positive")
     private long maxResponseBodyBytes = 10_485_760L;
+
+    @Min(value = 1, message = "maxResponseBufferBytes must be positive")
+    private long maxResponseBufferBytes = 671_088_640L;
 
     @NotNull(message = "connectTimeout must be configured")
     private Duration connectTimeout = Duration.ofSeconds(2);
 
     @NotNull(message = "readTimeout must be configured")
     private Duration readTimeout = Duration.ofSeconds(5);
+
+    @Valid
+    private final RateLimit rateLimit = new RateLimit();
+
+    @Valid
+    private final Upstream upstream = new Upstream();
 
     /**
      * Returns the configured public route allow-list.
@@ -81,6 +102,60 @@ public class GatewayProperties {
     }
 
     /**
+     * Returns the maximum number of request bodies that may be buffered concurrently.
+     *
+     * @return request-body buffering admission capacity
+     */
+    public int getMaxConcurrentRequestBodyBuffers() {
+        return maxConcurrentRequestBodyBuffers;
+    }
+
+    /**
+     * Sets the request-body buffering admission capacity during configuration binding.
+     *
+     * @param maxConcurrentRequestBodyBuffers maximum concurrent request-body buffers
+     */
+    public void setMaxConcurrentRequestBodyBuffers(int maxConcurrentRequestBodyBuffers) {
+        this.maxConcurrentRequestBodyBuffers = maxConcurrentRequestBodyBuffers;
+    }
+
+    /**
+     * Returns the aggregate byte budget for retained inbound request bodies.
+     *
+     * @return aggregate request-body buffer budget in bytes
+     */
+    public long getMaxRequestBodyBufferBytes() {
+        return maxRequestBodyBufferBytes;
+    }
+
+    /**
+     * Sets the aggregate inbound request-body buffer budget during configuration binding.
+     *
+     * @param maxRequestBodyBufferBytes aggregate request-body buffer budget in bytes
+     */
+    public void setMaxRequestBodyBufferBytes(long maxRequestBodyBufferBytes) {
+        this.maxRequestBodyBufferBytes = maxRequestBodyBufferBytes;
+    }
+
+    /**
+     * Returns the maximum number of buffered responses that may be retained through client writes.
+     *
+     * @return response-buffer admission capacity
+     */
+    public int getMaxConcurrentResponseBuffers() {
+        return maxConcurrentResponseBuffers;
+    }
+
+    /**
+     * Sets the response-buffer admission capacity during configuration binding.
+     *
+     * @param maxConcurrentResponseBuffers maximum concurrent response buffers
+     */
+    public void setMaxConcurrentResponseBuffers(int maxConcurrentResponseBuffers) {
+        this.maxConcurrentResponseBuffers = maxConcurrentResponseBuffers;
+    }
+
+    /**
      * Returns the maximum buffered upstream response size.
      *
      * @return response body limit in bytes
@@ -96,6 +171,24 @@ public class GatewayProperties {
      */
     public void setMaxResponseBodyBytes(long maxResponseBodyBytes) {
         this.maxResponseBodyBytes = maxResponseBodyBytes;
+    }
+
+    /**
+     * Returns the aggregate byte budget for retained downstream response buffers.
+     *
+     * @return aggregate response-buffer budget in bytes
+     */
+    public long getMaxResponseBufferBytes() {
+        return maxResponseBufferBytes;
+    }
+
+    /**
+     * Sets the aggregate downstream response-buffer budget during configuration binding.
+     *
+     * @param maxResponseBufferBytes aggregate response-buffer budget in bytes
+     */
+    public void setMaxResponseBufferBytes(long maxResponseBufferBytes) {
+        this.maxResponseBufferBytes = maxResponseBufferBytes;
     }
 
     /**
@@ -135,6 +228,25 @@ public class GatewayProperties {
     }
 
     /**
+     * Returns the gateway-wide Redis rate-limit settings. The route identifier is included in
+     * every limiter key, so one configured budget is independently enforced for each route.
+     *
+     * @return Redis rate-limit settings
+     */
+    public RateLimit getRateLimit() {
+        return rateLimit;
+    }
+
+    /**
+     * Returns upstream dependency-isolation settings.
+     *
+     * @return upstream bulkhead and circuit-breaker settings
+     */
+    public Upstream getUpstream() {
+        return upstream;
+    }
+
+    /**
      * Validates timeout values before constructing the HTTP client.
      *
      * @return {@code true} when both timeouts are bounded and positive
@@ -144,11 +256,202 @@ public class GatewayProperties {
         return isBoundedPositive(connectTimeout) && isBoundedPositive(readTimeout);
     }
 
+    /**
+     * Validates that the maximum request-buffer count and size fit the aggregate byte budget.
+     *
+     * @return {@code true} when the request-buffer product is within its budget
+     */
+    @AssertTrue(message = "request body buffer count and size must fit maxRequestBodyBufferBytes")
+    public boolean isRequestBodyBufferBudgetValid() {
+        return productWithinBudget(
+                maxConcurrentRequestBodyBuffers, maxRequestBodyBytes, maxRequestBodyBufferBytes);
+    }
+
+    /**
+     * Validates that the maximum response-buffer count and size fit the aggregate byte budget.
+     *
+     * @return {@code true} when the response-buffer product is within its budget
+     */
+    @AssertTrue(message = "response buffer count and size must fit maxResponseBufferBytes")
+    public boolean isResponseBufferBudgetValid() {
+        return productWithinBudget(
+                maxConcurrentResponseBuffers, maxResponseBodyBytes, maxResponseBufferBytes);
+    }
+
+    private static boolean productWithinBudget(long count, long itemBytes, long budgetBytes) {
+        return count > 0 && itemBytes > 0 && budgetBytes > 0 && count <= budgetBytes / itemBytes;
+    }
+
     private static boolean isBoundedPositive(Duration duration) {
         return duration != null
                 && !duration.isZero()
                 && !duration.isNegative()
                 && duration.compareTo(Duration.ofSeconds(60)) <= 0;
+    }
+
+    /** Redis-backed fixed-window rate-limit settings. */
+    public static class RateLimit {
+
+        @Min(value = 1, message = "rateLimit.maxRequests must be positive")
+        @Max(value = 10_000_000, message = "rateLimit.maxRequests must be bounded")
+        private int maxRequests = 600;
+
+        @Min(value = 1, message = "rateLimit.preAuthenticationMaxRequests must be positive")
+        @Max(value = 10_000_000, message = "rateLimit.preAuthenticationMaxRequests must be bounded")
+        private int preAuthenticationMaxRequests = 6_000;
+
+        @NotNull(message = "rateLimit.window must be configured")
+        private Duration window = Duration.ofMinutes(1);
+
+        /** Secret-manager supplied HMAC key material used to protect Redis client-key digests. */
+        @NotBlank(message = "rateLimit.keySecret must be supplied by secret management")
+        private String keySecret;
+
+        public int getMaxRequests() {
+            return maxRequests;
+        }
+
+        public void setMaxRequests(int maxRequests) {
+            this.maxRequests = maxRequests;
+        }
+
+        /**
+         * Returns the higher address-based budget charged before authentication.
+         *
+         * @return pre-authentication address budget per window
+         */
+        public int getPreAuthenticationMaxRequests() {
+            return preAuthenticationMaxRequests;
+        }
+
+        /**
+         * Sets the address-based budget charged before authentication.
+         *
+         * @param preAuthenticationMaxRequests pre-authentication address budget per window
+         */
+        public void setPreAuthenticationMaxRequests(int preAuthenticationMaxRequests) {
+            this.preAuthenticationMaxRequests = preAuthenticationMaxRequests;
+        }
+
+        /**
+         * Alias for deployments that name the budget requests-per-window.
+         *
+         * @return maximum requests in one window
+         */
+        public int getRequestsPerWindow() {
+            return maxRequests;
+        }
+
+        /**
+         * Binds the common requests-per-window configuration spelling.
+         *
+         * @param requestsPerWindow maximum requests in one window
+         */
+        public void setRequestsPerWindow(int requestsPerWindow) {
+            this.maxRequests = requestsPerWindow;
+        }
+
+        public Duration getWindow() {
+            return window;
+        }
+
+        public void setWindow(Duration window) {
+            this.window = window;
+        }
+
+        public String getKeySecret() {
+            return keySecret;
+        }
+
+        public void setKeySecret(String keySecret) {
+            this.keySecret = keySecret;
+        }
+
+        @AssertTrue(message = "rateLimit.window must be at least one millisecond and no greater than 24 hours")
+        public boolean isWindowValid() {
+            return window != null
+                    && window.compareTo(Duration.ofMillis(1)) >= 0
+                    && window.compareTo(Duration.ofHours(24)) <= 0;
+        }
+
+        /**
+         * Validates that the pre-authentication address budget is not below the account budget.
+         *
+         * @return {@code true} when the pre-authentication budget is sufficient
+         */
+        @AssertTrue(message = "rateLimit.preAuthenticationMaxRequests must be at least maxRequests")
+        public boolean isPreAuthenticationLimitValid() {
+            return preAuthenticationMaxRequests >= maxRequests;
+        }
+    }
+
+    /** Per-route upstream failure-isolation settings. */
+    public static class Upstream {
+
+        @Valid
+        private final Bulkhead bulkhead = new Bulkhead();
+
+        @Valid
+        private final CircuitBreaker circuitBreaker = new CircuitBreaker();
+
+        public Bulkhead getBulkhead() {
+            return bulkhead;
+        }
+
+        public CircuitBreaker getCircuitBreaker() {
+            return circuitBreaker;
+        }
+    }
+
+    /** Non-waiting concurrency bound applied independently to each configured route. */
+    public static class Bulkhead {
+
+        @Min(value = 1, message = "upstream.bulkhead.maxConcurrentRequests must be positive")
+        @Max(value = 4096, message = "upstream.bulkhead.maxConcurrentRequests must be bounded")
+        private int maxConcurrentRequests = 64;
+
+        public int getMaxConcurrentRequests() {
+            return maxConcurrentRequests;
+        }
+
+        public void setMaxConcurrentRequests(int maxConcurrentRequests) {
+            this.maxConcurrentRequests = maxConcurrentRequests;
+        }
+    }
+
+    /** Consecutive-failure circuit-breaker settings applied independently to each route. */
+    public static class CircuitBreaker {
+
+        @Min(value = 1, message = "upstream.circuitBreaker.failureThreshold must be positive")
+        @Max(value = 10_000, message = "upstream.circuitBreaker.failureThreshold must be bounded")
+        private int failureThreshold = 5;
+
+        @NotNull(message = "upstream.circuitBreaker.openDuration must be configured")
+        private Duration openDuration = Duration.ofSeconds(10);
+
+        public int getFailureThreshold() {
+            return failureThreshold;
+        }
+
+        public void setFailureThreshold(int failureThreshold) {
+            this.failureThreshold = failureThreshold;
+        }
+
+        public Duration getOpenDuration() {
+            return openDuration;
+        }
+
+        public void setOpenDuration(Duration openDuration) {
+            this.openDuration = openDuration;
+        }
+
+        @AssertTrue(message = "upstream.circuitBreaker.openDuration must be positive and no greater than 60 seconds")
+        public boolean isOpenDurationValid() {
+            return openDuration != null
+                    && !openDuration.isZero()
+                    && !openDuration.isNegative()
+                    && openDuration.compareTo(Duration.ofSeconds(60)) <= 0;
+        }
     }
 
     /**

@@ -4,6 +4,8 @@ import com.lifeos.gateway.auth.GatewayAuthenticatedSubject;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,7 +16,9 @@ import java.net.URI;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -35,11 +39,12 @@ import org.springframework.web.client.RestClientException;
  * exactly once on the downstream request.
  *
  * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
- * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Across concurrent
- * requests, the worst-case response-buffer footprint is approximately
- * {@code maxResponseBodyBytes * concurrentInFlightRequests}; production alerting must bound JVM
- * heap usage and observe {@code gateway.inflight.requests} before traffic is admitted. A future
- * bulkhead can provide a stricter aggregate bound without changing this per-request behavior.
+ * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Inbound body buffers
+ * are independently bounded by gateway-wide semaphores and aggregate byte budgets. At startup,
+ * {@link GatewayProperties#isResponseBufferBudgetValid()} rejects a response-buffer count and
+ * per-body-size combination that exceeds the aggregate budget. The response-buffer admission is
+ * held through the client write, so the semaphore enforces that validated worst-case footprint,
+ * independent of the upstream route bulkhead.
  */
 @Component
 public class GatewayForwarder {
@@ -74,6 +79,11 @@ public class GatewayForwarder {
 
     private final RestClient restClient;
     private final GatewayProperties properties;
+    private final GatewayUpstreamResilience resilience;
+    private final Semaphore requestBodyAdmission;
+    private final Counter requestBodyCapacityRejections;
+    private final Semaphore responseBufferAdmission;
+    private final Counter responseBufferCapacityRejections;
     private final AtomicInteger inFlightRequests = new AtomicInteger();
 
     /**
@@ -82,11 +92,47 @@ public class GatewayForwarder {
      * @param restClient outbound HTTP client
      * @param properties gateway bounds
      * @param meterRegistry metrics registry for bounded in-flight request instrumentation
+     * @throws IllegalArgumentException when response-buffer bounds exceed their aggregate budget
      */
-    public GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
+    @Autowired
+    public GatewayForwarder(
+            RestClient restClient,
+            GatewayProperties properties,
+            MeterRegistry meterRegistry,
+            GatewayUpstreamResilience resilience) {
+        requireValidResponseBufferBudget(properties);
         this.restClient = restClient;
         this.properties = properties;
+        this.resilience = resilience;
+        this.requestBodyAdmission = new Semaphore(properties.getMaxConcurrentRequestBodyBuffers(), true);
+        this.requestBodyCapacityRejections = Counter.builder("gateway.request.body.capacity.rejections")
+                .description("Requests rejected because bounded inbound body buffering is full")
+                .register(meterRegistry);
+        Gauge.builder(
+                        "gateway.request.body.available.permits",
+                        requestBodyAdmission,
+                        Semaphore::availablePermits)
+                .description("Available inbound request-body buffer permits")
+                .register(meterRegistry);
+        this.responseBufferAdmission = new Semaphore(properties.getMaxConcurrentResponseBuffers(), true);
+        this.responseBufferCapacityRejections = Counter.builder("gateway.response.buffer.capacity.rejections")
+                .description("Requests rejected because bounded response buffering is full")
+                .register(meterRegistry);
+        Gauge.builder(
+                        "gateway.response.buffer.available.permits",
+                        responseBufferAdmission,
+                        Semaphore::availablePermits)
+                .description("Available downstream response-buffer permits")
+                .register(meterRegistry);
         meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
+    }
+
+    /**
+     * Creates a forwarder with its own in-process route resilience. Test-only: production wiring
+     * must use the injected shared {@link GatewayUpstreamResilience}.
+     */
+    GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
+        this(restClient, properties, meterRegistry, new GatewayUpstreamResilience(properties, meterRegistry));
     }
 
     /**
@@ -124,9 +170,10 @@ public class GatewayForwarder {
             String correlationId,
             GatewayAuthenticatedSubject subject)
             throws IOException {
-        inFlightRequests.incrementAndGet();
+        HttpMethod method = HttpMethod.valueOf(request.getMethod());
+        boolean bodyAdmissionAcquired = acquireRequestBodyAdmission(request, method);
+        boolean responseBufferAdmissionAcquired = false;
         try {
-            HttpMethod method = HttpMethod.valueOf(request.getMethod());
             byte[] requestBody = readRequestBody(request, method);
             URI target = targetUri(route, request);
 
@@ -138,26 +185,86 @@ public class GatewayForwarder {
                 outgoing = requestSpec.body(requestBody);
             }
 
-            try {
-                DownstreamResponse downstream = outgoing.exchange(
-                        (clientRequest, clientResponse) -> readResponse(clientResponse));
-                writeResponse(response, downstream, method);
-            } catch (GatewayUpstreamException exception) {
-                logUpstreamFailure(route, exception.getStatus(), "upstream");
-                throw exception;
-            } catch (GatewayPayloadTooLargeException exception) {
-                throw exception;
-            } catch (ResourceAccessException exception) {
-                boolean timeout = isTimeout(exception);
-                HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
-                throw new GatewayUpstreamException(status, exception);
-            } catch (RestClientException exception) {
-                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
-                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+            responseBufferAdmissionAcquired = acquireResponseBufferAdmission();
+            GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
+            DownstreamResponse downstream = null;
+            try (permit) {
+                inFlightRequests.incrementAndGet();
+                try {
+                    downstream = outgoing.exchange(
+                            (clientRequest, clientResponse) -> readResponse(clientResponse));
+                    if (downstream.status().is5xxServerError()) {
+                        permit.recordFailure();
+                    } else {
+                        permit.recordSuccess();
+                    }
+                } catch (GatewayUpstreamException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
+                    throw exception;
+                } catch (GatewayPayloadTooLargeException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                } catch (ResourceAccessException exception) {
+                    permit.recordFailure();
+                    boolean timeout = isTimeout(exception);
+                    HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                    logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
+                    throw new GatewayUpstreamException(status, exception);
+                } catch (RestClientException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                } finally {
+                    inFlightRequests.decrementAndGet();
+                }
             }
+            releaseRequestBodyAdmission(bodyAdmissionAcquired);
+            bodyAdmissionAcquired = false;
+            writeResponse(response, downstream, method);
         } finally {
-            inFlightRequests.decrementAndGet();
+            releaseResponseBufferAdmission(responseBufferAdmissionAcquired);
+            releaseRequestBodyAdmission(bodyAdmissionAcquired);
+        }
+    }
+
+    private boolean acquireResponseBufferAdmission() {
+        if (!responseBufferAdmission.tryAcquire()) {
+            responseBufferCapacityRejections.increment();
+            throw new GatewayResponseBufferCapacityException();
+        }
+        return true;
+    }
+
+    private static void requireValidResponseBufferBudget(GatewayProperties properties) {
+        if (!properties.isResponseBufferBudgetValid()) {
+            throw new IllegalArgumentException(
+                    "response buffer count and size must fit maxResponseBufferBytes");
+        }
+    }
+
+    private void releaseResponseBufferAdmission(boolean acquired) {
+        if (acquired) {
+            responseBufferAdmission.release();
+        }
+    }
+
+    private boolean acquireRequestBodyAdmission(HttpServletRequest request, HttpMethod method) {
+        long declaredLength = request.getContentLengthLong();
+        if (declaredLength == 0 || !mayHaveBody(method)) {
+            return false;
+        }
+        if (!requestBodyAdmission.tryAcquire()) {
+            requestBodyCapacityRejections.increment();
+            throw new GatewayRequestBodyCapacityException();
+        }
+        return true;
+    }
+
+    private void releaseRequestBodyAdmission(boolean acquired) {
+        if (acquired) {
+            requestBodyAdmission.release();
         }
     }
 
@@ -229,12 +336,8 @@ public class GatewayForwarder {
     }
 
     private DownstreamResponse readResponse(ClientHttpResponse response) throws IOException {
-        try {
-            byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
-            return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
-        } catch (GatewayPayloadTooLargeException exception) {
-            throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-        }
+        byte[] body = readBounded(response.getBody(), properties.getMaxResponseBodyBytes());
+        return new DownstreamResponse(response.getStatusCode(), response.getHeaders(), body);
     }
 
     private static void writeResponse(

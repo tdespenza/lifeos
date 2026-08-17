@@ -1,6 +1,7 @@
 package com.lifeos.gateway.ratelimit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -31,22 +32,40 @@ class RedisGatewayRateLimiterUnitTest {
     void rejectsWhenTheAtomicRedisCounterExceedsTheConfiguredRouteBudget() {
         StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
         GatewayProperties properties = properties(5);
-        doReturn(6L).when(redis).execute(any(DefaultRedisScript.class), anyList(), anyString());
+        doReturn(List.of(6L, 12_345L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
                 redis, properties, new GatewayRateLimitMetrics(registry));
+        GatewayAuthenticatedSubject subject = subject();
 
-        assertThatThrownBy(() -> limiter.check(ROUTE, request("127.0.0.1"), null))
+        assertThatThrownBy(() -> limiter.check(ROUTE, request("127.0.0.1"), subject))
                 .isInstanceOf(GatewayRateLimitExceededException.class)
                 .satisfies(error -> {
                     GatewayRateLimitExceededException exception = (GatewayRateLimitExceededException) error;
                     assertThat(exception.getLimit()).isEqualTo(5);
-                    assertThat(exception.getRetryAfterSeconds()).isEqualTo(60);
+                    assertThat(exception.getRetryAfterSeconds()).isEqualTo(13);
                 });
         assertThat(registry.get("gateway.rate.limit.rejections").tag("route", "goals").counter().count())
                 .isEqualTo(1);
         assertThat(registry.get("gateway.rate.limit.latency").tag("route", "goals").timer().count())
                 .isEqualTo(1);
+    }
+
+    @Test
+    void fallsBackToTheFullWindowWhenRedisDoesNotReportATtl() {
+        StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        GatewayProperties properties = properties(5);
+        doReturn(List.of(6L, -1L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
+        RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
+                redis, properties, new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
+
+        assertThatThrownBy(() -> limiter.check(ROUTE, request("127.0.0.1"), subject()))
+                .isInstanceOf(GatewayRateLimitExceededException.class)
+                .satisfies(error -> assertThat(
+                                ((GatewayRateLimitExceededException) error).getRetryAfterSeconds())
+                        .isEqualTo(60));
     }
 
     @Test
@@ -65,7 +84,8 @@ class RedisGatewayRateLimiterUnitTest {
     void doesNotStoreRawAnonymousAddressesOrAccountIdsInRedisKeys() {
         StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
         GatewayProperties properties = properties(5);
-        doReturn(1L).when(redis).execute(any(DefaultRedisScript.class), anyList(), anyString());
+        doReturn(List.of(1L, 60_000L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
         RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
                 redis, properties, new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
         GatewayAuthenticatedSubject subject = new GatewayAuthenticatedSubject(
@@ -85,7 +105,8 @@ class RedisGatewayRateLimiterUnitTest {
     @Test
     void doesNotStoreRawAnonymousAddressesInRedisKeys() {
         StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
-        doReturn(1L).when(redis).execute(any(DefaultRedisScript.class), anyList(), anyString());
+        doReturn(List.of(1L, 60_000L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
         RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
                 redis, properties(5), new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
 
@@ -112,9 +133,51 @@ class RedisGatewayRateLimiterUnitTest {
                 .isInstanceOf(GatewayRateLimitDependencyUnavailableException.class);
     }
 
+    @Test
+    void rejectsBlankKeySecretsAtConstruction() {
+        StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        GatewayProperties properties = properties(5);
+        properties.getRateLimit().setKeySecret(" ");
+
+        assertThatThrownBy(() -> new RedisGatewayRateLimiter(
+                        redis, properties, new GatewayRateLimitMetrics(new SimpleMeterRegistry())))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void admitsTheInclusiveConfiguredLimitBoundary() {
+        StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        GatewayProperties properties = properties(5);
+        doReturn(List.of(5L, 60_000L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
+                redis, properties, new GatewayRateLimitMetrics(registry));
+
+        assertThatCode(() -> limiter.check(ROUTE, request("127.0.0.1"), subject()))
+                .doesNotThrowAnyException();
+        assertThat(registry.get("gateway.rate.limit.allowed").tag("route", "goals").counter().count())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void usesTheSeparateHigherBudgetForPreAuthenticationAddressCharges() {
+        StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        GatewayProperties properties = properties(5);
+        properties.getRateLimit().setPreAuthenticationMaxRequests(6);
+        doReturn(List.of(6L, 60_000L)).when(redis)
+                .execute(any(DefaultRedisScript.class), anyList(), anyString());
+        RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
+                redis, properties, new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
+
+        assertThatCode(() -> limiter.check(ROUTE, request("127.0.0.1"), null))
+                .doesNotThrowAnyException();
+    }
+
     private static GatewayProperties properties(int maxRequests) {
         GatewayProperties properties = new GatewayProperties();
         properties.getRateLimit().setMaxRequests(maxRequests);
+        properties.getRateLimit().setPreAuthenticationMaxRequests(maxRequests);
         properties.getRateLimit().setWindow(Duration.ofSeconds(60));
         properties.getRateLimit().setKeySecret("test-only-rate-limit-secret");
         return properties;
@@ -124,5 +187,10 @@ class RedisGatewayRateLimiterUnitTest {
         HttpServletRequest request = org.mockito.Mockito.mock(HttpServletRequest.class);
         doReturn(remoteAddress).when(request).getRemoteAddr();
         return request;
+    }
+
+    private static GatewayAuthenticatedSubject subject() {
+        return new GatewayAuthenticatedSubject(
+                UUID.randomUUID(), UUID.randomUUID(), "PASSWORD");
     }
 }

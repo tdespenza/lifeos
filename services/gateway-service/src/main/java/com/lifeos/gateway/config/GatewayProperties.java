@@ -40,12 +40,18 @@ public class GatewayProperties {
     @Max(value = 4096, message = "maxConcurrentRequestBodyBuffers must be bounded")
     private int maxConcurrentRequestBodyBuffers = 64;
 
+    @Min(value = 1, message = "maxRequestBodyBufferBytes must be positive")
+    private long maxRequestBodyBufferBytes = 67_108_864L;
+
     @Min(value = 1, message = "maxConcurrentResponseBuffers must be positive")
     @Max(value = 4096, message = "maxConcurrentResponseBuffers must be bounded")
     private int maxConcurrentResponseBuffers = 64;
 
     @Min(value = 1, message = "maxResponseBodyBytes must be positive")
     private long maxResponseBodyBytes = 10_485_760L;
+
+    @Min(value = 1, message = "maxResponseBufferBytes must be positive")
+    private long maxResponseBufferBytes = 671_088_640L;
 
     @NotNull(message = "connectTimeout must be configured")
     private Duration connectTimeout = Duration.ofSeconds(2);
@@ -114,6 +120,24 @@ public class GatewayProperties {
     }
 
     /**
+     * Returns the aggregate byte budget for retained inbound request bodies.
+     *
+     * @return aggregate request-body buffer budget in bytes
+     */
+    public long getMaxRequestBodyBufferBytes() {
+        return maxRequestBodyBufferBytes;
+    }
+
+    /**
+     * Sets the aggregate inbound request-body buffer budget during configuration binding.
+     *
+     * @param maxRequestBodyBufferBytes aggregate request-body buffer budget in bytes
+     */
+    public void setMaxRequestBodyBufferBytes(long maxRequestBodyBufferBytes) {
+        this.maxRequestBodyBufferBytes = maxRequestBodyBufferBytes;
+    }
+
+    /**
      * Returns the maximum number of buffered responses that may be retained through client writes.
      *
      * @return response-buffer admission capacity
@@ -147,6 +171,24 @@ public class GatewayProperties {
      */
     public void setMaxResponseBodyBytes(long maxResponseBodyBytes) {
         this.maxResponseBodyBytes = maxResponseBodyBytes;
+    }
+
+    /**
+     * Returns the aggregate byte budget for retained downstream response buffers.
+     *
+     * @return aggregate response-buffer budget in bytes
+     */
+    public long getMaxResponseBufferBytes() {
+        return maxResponseBufferBytes;
+    }
+
+    /**
+     * Sets the aggregate downstream response-buffer budget during configuration binding.
+     *
+     * @param maxResponseBufferBytes aggregate response-buffer budget in bytes
+     */
+    public void setMaxResponseBufferBytes(long maxResponseBufferBytes) {
+        this.maxResponseBufferBytes = maxResponseBufferBytes;
     }
 
     /**
@@ -214,6 +256,32 @@ public class GatewayProperties {
         return isBoundedPositive(connectTimeout) && isBoundedPositive(readTimeout);
     }
 
+    /**
+     * Validates that the maximum request-buffer count and size fit the aggregate byte budget.
+     *
+     * @return {@code true} when the request-buffer product is within its budget
+     */
+    @AssertTrue(message = "request body buffer count and size must fit maxRequestBodyBufferBytes")
+    public boolean isRequestBodyBufferBudgetValid() {
+        return productWithinBudget(
+                maxConcurrentRequestBodyBuffers, maxRequestBodyBytes, maxRequestBodyBufferBytes);
+    }
+
+    /**
+     * Validates that the maximum response-buffer count and size fit the aggregate byte budget.
+     *
+     * @return {@code true} when the response-buffer product is within its budget
+     */
+    @AssertTrue(message = "response buffer count and size must fit maxResponseBufferBytes")
+    public boolean isResponseBufferBudgetValid() {
+        return productWithinBudget(
+                maxConcurrentResponseBuffers, maxResponseBodyBytes, maxResponseBufferBytes);
+    }
+
+    private static boolean productWithinBudget(long count, long itemBytes, long budgetBytes) {
+        return count > 0 && itemBytes > 0 && budgetBytes > 0 && count <= budgetBytes / itemBytes;
+    }
+
     private static boolean isBoundedPositive(Duration duration) {
         return duration != null
                 && !duration.isZero()
@@ -228,6 +296,10 @@ public class GatewayProperties {
         @Max(value = 10_000_000, message = "rateLimit.maxRequests must be bounded")
         private int maxRequests = 600;
 
+        @Min(value = 1, message = "rateLimit.preAuthenticationMaxRequests must be positive")
+        @Max(value = 10_000_000, message = "rateLimit.preAuthenticationMaxRequests must be bounded")
+        private int preAuthenticationMaxRequests = 6_000;
+
         @NotNull(message = "rateLimit.window must be configured")
         private Duration window = Duration.ofMinutes(1);
 
@@ -241,6 +313,24 @@ public class GatewayProperties {
 
         public void setMaxRequests(int maxRequests) {
             this.maxRequests = maxRequests;
+        }
+
+        /**
+         * Returns the higher address-based budget charged before authentication.
+         *
+         * @return pre-authentication address budget per window
+         */
+        public int getPreAuthenticationMaxRequests() {
+            return preAuthenticationMaxRequests;
+        }
+
+        /**
+         * Sets the address-based budget charged before authentication.
+         *
+         * @param preAuthenticationMaxRequests pre-authentication address budget per window
+         */
+        public void setPreAuthenticationMaxRequests(int preAuthenticationMaxRequests) {
+            this.preAuthenticationMaxRequests = preAuthenticationMaxRequests;
         }
 
         /**
@@ -282,6 +372,16 @@ public class GatewayProperties {
             return window != null
                     && window.compareTo(Duration.ofMillis(1)) >= 0
                     && window.compareTo(Duration.ofHours(24)) <= 0;
+        }
+
+        /**
+         * Validates that the pre-authentication address budget is not below the account budget.
+         *
+         * @return {@code true} when the pre-authentication budget is sufficient
+         */
+        @AssertTrue(message = "rateLimit.preAuthenticationMaxRequests must be at least maxRequests")
+        public boolean isPreAuthenticationLimitValid() {
+            return preAuthenticationMaxRequests >= maxRequests;
         }
     }
 

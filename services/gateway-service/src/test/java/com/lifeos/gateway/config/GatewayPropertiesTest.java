@@ -48,4 +48,48 @@ class GatewayPropertiesTest {
                             .equals("maxConcurrentResponseBuffers"));
         }
     }
+
+    @Test
+    void rejectsRequestBufferConfigurationThatExceedsItsAggregateBudget() {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setMaxConcurrentRequestBodyBuffers(2);
+        properties.setMaxRequestBodyBytes(4);
+        properties.setMaxRequestBodyBufferBytes(7);
+
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(properties))
+                    .anyMatch(violation -> violation.getPropertyPath().toString()
+                            .equals("requestBodyBufferBudgetValid"));
+        }
+    }
+
+    @Test
+    void rejectsResponseBufferConfigurationThatExceedsItsAggregateBudget() {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setMaxConcurrentResponseBuffers(2);
+        properties.setMaxResponseBodyBytes(4);
+        properties.setMaxResponseBufferBytes(7);
+
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(properties))
+                    .anyMatch(violation -> violation.getPropertyPath().toString()
+                            .equals("responseBufferBudgetValid"));
+        }
+    }
+
+    @Test
+    void rejectsPreAuthenticationBudgetBelowTheAccountBudget() {
+        GatewayProperties.RateLimit rateLimit = new GatewayProperties.RateLimit();
+        rateLimit.setMaxRequests(600);
+        rateLimit.setPreAuthenticationMaxRequests(599);
+
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(rateLimit))
+                    .anyMatch(violation -> violation.getPropertyPath().toString()
+                            .equals("preAuthenticationLimitValid"));
+        }
+    }
 }

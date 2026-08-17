@@ -103,6 +103,7 @@ class RedisGatewayRateLimiterTest {
     private static GatewayProperties properties(int maxRequests) {
         GatewayProperties properties = new GatewayProperties();
         properties.getRateLimit().setMaxRequests(maxRequests);
+        properties.getRateLimit().setPreAuthenticationMaxRequests(maxRequests);
         properties.getRateLimit().setWindow(Duration.ofSeconds(60));
         properties.getRateLimit().setKeySecret("test-only-rate-limit-secret");
         return properties;

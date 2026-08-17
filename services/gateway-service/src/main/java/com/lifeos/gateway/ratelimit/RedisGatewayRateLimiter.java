@@ -28,12 +28,12 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
     private static final Logger LOGGER = LoggerFactory.getLogger(RedisGatewayRateLimiter.class);
     private static final String KEY_PREFIX = "lifeos:gateway:rate-limit:";
     private static final String HMAC_ALGORITHM = "HmacSHA256";
-    private static final DefaultRedisScript<Long> INCREMENT_SCRIPT = new DefaultRedisScript<>(
+    private static final DefaultRedisScript<List> INCREMENT_SCRIPT = new DefaultRedisScript<>(
             "local count = redis.call('INCR', KEYS[1]); "
                     + "if count == 1 or redis.call('PTTL', KEYS[1]) < 0 "
                     + "then redis.call('PEXPIRE', KEYS[1], ARGV[1]); end; "
-                    + "return count;",
-            Long.class);
+                    + "return {count, redis.call('PTTL', KEYS[1])};",
+            List.class);
 
     private final StringRedisTemplate redisTemplate;
     private final GatewayProperties.RateLimit properties;
@@ -67,19 +67,23 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
     public void check(GatewayRoute route, HttpServletRequest request, GatewayAuthenticatedSubject subject) {
         long startNanos = System.nanoTime();
         String routeId = route == null ? "unknown" : route.id();
-        metrics.recordLimit(routeId, properties.getMaxRequests());
+        int limit = subject == null
+                ? properties.getPreAuthenticationMaxRequests()
+                : properties.getMaxRequests();
         try {
             String key = KEY_PREFIX + digest(rateLimitMaterial(route, request, subject));
             long windowMillis = Math.max(1L, properties.getWindow().toMillis());
-            Long count = redisTemplate.execute(
+            List<?> decision = redisTemplate.execute(
                     INCREMENT_SCRIPT, List.of(key), Long.toString(windowMillis));
-            if (count == null) {
+            if (decision == null || decision.size() < 2) {
                 throw new GatewayRateLimitDependencyUnavailableException();
             }
-            if (count > properties.getMaxRequests()) {
+            long count = decisionValue(decision.get(0));
+            long remainingTtlMillis = decisionValue(decision.get(1));
+            if (count > limit) {
                 metrics.recordRejected(routeId);
                 throw new GatewayRateLimitExceededException(
-                        properties.getMaxRequests(), retryAfterSeconds(windowMillis));
+                        limit, retryAfterSeconds(windowMillis, remainingTtlMillis));
             }
             metrics.recordAllowed(routeId);
         } catch (GatewayRateLimitExceededException exception) {
@@ -122,7 +126,15 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
         }
     }
 
-    private static int retryAfterSeconds(long windowMillis) {
-        return (int) Math.max(1L, (windowMillis + 999L) / 1000L);
+    private static long decisionValue(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        throw new GatewayRateLimitDependencyUnavailableException();
+    }
+
+    private static int retryAfterSeconds(long windowMillis, long remainingTtlMillis) {
+        long retryMillis = remainingTtlMillis >= 0 ? remainingTtlMillis : windowMillis;
+        return (int) Math.max(1L, (retryMillis + 999L) / 1000L);
     }
 }

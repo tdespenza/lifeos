@@ -117,10 +117,36 @@ class GatewayUpstreamResilienceTest {
         GatewayUpstreamResilience.Permit staleProbe = resilience.acquire(ROUTE);
         clock.advance(Duration.ofMillis(51));
 
-        GatewayUpstreamResilience.Permit freshProbe = resilience.acquire(ROUTE);
+        assertThatCode(() -> {
+            GatewayUpstreamResilience.Permit freshProbe = resilience.acquire(ROUTE);
+            freshProbe.recordSuccess();
+            freshProbe.close();
+        }).doesNotThrowAnyException();
         staleProbe.close();
-        freshProbe.recordSuccess();
-        freshProbe.close();
+    }
+
+    @Test
+    void resetsClosedFailureCountAfterASuccess() {
+        GatewayProperties properties = properties(2, 2);
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
+                properties, new SimpleMeterRegistry());
+
+        GatewayUpstreamResilience.Permit firstFailure = resilience.acquire(ROUTE);
+        firstFailure.recordFailure();
+        firstFailure.close();
+
+        GatewayUpstreamResilience.Permit success = resilience.acquire(ROUTE);
+        success.recordSuccess();
+        success.close();
+
+        GatewayUpstreamResilience.Permit secondFailure = resilience.acquire(ROUTE);
+        secondFailure.recordFailure();
+        secondFailure.close();
+
+        assertThatCode(() -> {
+            GatewayUpstreamResilience.Permit admitted = resilience.acquire(ROUTE);
+            admitted.close();
+        }).doesNotThrowAnyException();
     }
 
     @Test

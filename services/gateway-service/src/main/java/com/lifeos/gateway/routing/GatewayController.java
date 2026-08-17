@@ -126,7 +126,7 @@ public class GatewayController {
         problem.setTitle("Rate limiter unavailable");
         problem.setProperty("code", "RATE_LIMITER_UNAVAILABLE");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, "5")
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
                 .body(problem);
     }
 
@@ -259,7 +259,7 @@ public class GatewayController {
         problem.setTitle("Request capacity unavailable");
         problem.setProperty("code", "REQUEST_BODY_CAPACITY");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, "1")
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
                 .body(problem);
     }
 
@@ -275,7 +275,7 @@ public class GatewayController {
         problem.setTitle("Response capacity unavailable");
         problem.setProperty("code", "RESPONSE_BUFFER_CAPACITY");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, "1")
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
                 .body(problem);
     }
 

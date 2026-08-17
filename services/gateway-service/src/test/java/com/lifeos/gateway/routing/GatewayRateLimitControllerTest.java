@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.matchesPattern;
 
 import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.auth.GatewayAuthenticatedSubject;
@@ -76,7 +77,7 @@ class GatewayRateLimitControllerTest {
 
         mockMvc.perform(get("/api/v1/public/resource"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "5"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, matchesPattern("(?:[5-9]|1[0-5])")))
                 .andExpect(jsonPath("$.code").value("RATE_LIMITER_UNAVAILABLE"));
 
         verifyNoInteractions(forwarder);
@@ -101,7 +102,7 @@ class GatewayRateLimitControllerTest {
 
         mockMvc.perform(get("/api/v1/public/resource"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, matchesPattern("(?:[5-9]|1[0-5])")))
                 .andExpect(jsonPath("$.code").value("REQUEST_BODY_CAPACITY"));
     }
 
@@ -124,7 +125,7 @@ class GatewayRateLimitControllerTest {
 
         mockMvc.perform(get("/api/v1/public/resource"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, matchesPattern("(?:[5-9]|1[0-5])")))
                 .andExpect(jsonPath("$.code").value("RESPONSE_BUFFER_CAPACITY"));
     }
 

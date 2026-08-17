@@ -432,6 +432,7 @@ class GatewayControllerTest {
         forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
                 "goals", "/api/v1/goals", UPSTREAM, false)));
         forwarderProperties.getUpstream().getBulkhead().setMaxConcurrentRequests(1);
+        forwarderProperties.setMaxConcurrentResponseBuffers(2);
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
         RestClient.Builder builder = RestClient.builder();
@@ -525,6 +526,70 @@ class GatewayControllerTest {
             server.verify();
         } finally {
             releaseResponseWrite.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsExcessResponsesAtTheAggregateBufferBudget() throws Exception {
+        GatewayProperties forwarderProperties = new GatewayProperties();
+        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", UPSTREAM, false)));
+        forwarderProperties.setMaxResponseBodyBytes(4);
+        forwarderProperties.setMaxConcurrentResponseBuffers(2);
+        forwarderProperties.setMaxResponseBufferBytes(8);
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(
+                builder.build(), forwarderProperties, registry,
+                new GatewayUpstreamResilience(forwarderProperties, registry));
+        CountDownLatch responseWritesStarted = new CountDownLatch(2);
+        CountDownLatch releaseResponseWrites = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWritesStarted, releaseResponseWrites),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            Future<?> second = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWritesStarted, releaseResponseWrites),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(responseWritesStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            requestWithoutBody("GET"),
+                            new MockHttpServletResponse(),
+                            route,
+                            CORRELATION_ID))
+                    .isInstanceOf(GatewayResponseBufferCapacityException.class);
+            assertThat(registry.get("gateway.response.buffer.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
+
+            releaseResponseWrites.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            assertThat(second.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseResponseWrites.countDown();
             executor.shutdownNow();
         }
     }

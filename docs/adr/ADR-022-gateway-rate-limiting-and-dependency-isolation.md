@@ -16,10 +16,11 @@ needs one shared admission decision and bounded per-route dependency capacity.
 Use Redis for a fixed-window request counter. One Lua script performs `INCR` and applies `PEXPIRE`
 only to the first request, making the counter atomic across gateway instances. The key contains a
 digest of the deployment-owned route ID plus the immediate client address for anonymous requests
-or the validated account ID for authenticated requests. Protected requests receive both an
+or the validated account ID for authenticated requests. Protected requests receive both a higher
 address-based pre-authentication charge and an account-based post-authentication charge; public
 requests receive only the address-based charge. The digest uses HMAC-SHA-256 with the mandatory
-secret-manager supplied key; there is no unkeyed development fallback.
+secret-manager supplied key; there is no unkeyed development fallback. The script returns the
+remaining window TTL so rejected clients receive precise reset guidance.
 
 Apply a non-waiting semaphore bulkhead and a consecutive-failure circuit breaker independently to
 each configured route. Transport errors, timeouts, oversized upstream responses, and upstream 5xx
@@ -35,10 +36,9 @@ connection/read timeouts remain the final bound on one admitted upstream call.
   remove the abuse protection during the dependency incident.
 - Bulkhead and circuit state is local to one gateway instance. It is bounded operational state, not
   authorization state; each instance protects its own resources independently.
-- Response buffering is bounded by the configured response limit multiplied by the gateway-wide
-  response-buffer admission capacity. That admission is held through the downstream client write,
-  while the per-route bulkhead independently bounds active upstream work; neither path has an
-  unbounded wait queue.
+- Request and response buffering use independent gateway-wide admission counts and aggregate byte
+  budgets. Response admission is held through the downstream client write, while the per-route
+  bulkhead independently bounds active upstream work; neither path has an unbounded wait queue.
 - Metrics use route-only labels. Account IDs, addresses, tokens, Redis keys, and free-form request
   input are excluded from metrics and logs.
 

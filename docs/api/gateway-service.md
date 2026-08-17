@@ -26,11 +26,12 @@ gateway routes.
 ## Rate limiting
 
 Every resolved route is independently rate-limited by Redis fixed-window counters. Protected
-requests receive a pre-authentication charge to the immediate client address before identity
+requests receive a higher pre-authentication charge to the immediate client address before identity
 validation, then a second charge to the validated account ID after successful authentication;
 public requests receive only the address charge. Redis keys contain only a route-and-client digest,
-never a raw address, account ID, bearer token, or request path. `INCR` and the first-request
-`PEXPIRE` execute in one Lua script, and Redis failures fail closed with
+never a raw address, account ID, bearer token, or request path. `INCR`, the first-request
+`PEXPIRE`, and the remaining TTL are returned by one Lua script, so rejection retry guidance tracks
+the actual window reset. Redis failures fail closed with
 `503 RATE_LIMITER_UNAVAILABLE` rather than falling back to divergent per-instance counters.
 
 Rejected requests return `429 RATE_LIMIT_EXCEEDED` with `Retry-After`, `RateLimit-Limit`,
@@ -58,9 +59,10 @@ account ID, session ID, and authentication method. The gateway forwards those fa
 credential headers are always removed. The bearer header remains available to downstream services,
 which retain responsibility for object-level authorization and may repeat the identity check.
 
-The pre-authentication address budget bounds invalid-credential attempts before they reach
-identity-service; the post-authentication account budget protects each validated account's route
-traffic. The gateway authenticates itself to identity-service with `X-LifeOS-Workload-Identity` and
+The higher pre-authentication address budget bounds invalid-credential attempts before they reach
+identity-service without making shared egress addresses consume the normal per-account budget; the
+post-authentication account budget protects each validated account's route traffic. The gateway
+authenticates itself to identity-service with `X-LifeOS-Workload-Identity` and
 `X-LifeOS-Workload-Token`; the token is supplied by `IDENTITY_GATEWAY_WORKLOAD_TOKEN` and has no
 repository default. Non-loopback identity URLs must use HTTPS. Identity connection and read
 timeouts are explicit and bounded to 60 seconds. A fair validation bulkhead admits at most
@@ -107,14 +109,20 @@ remains owned by the domain service.
 deployments. `LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES` defaults to 1 MiB and
 `LIFEOS_GATEWAY_MAX_CONCURRENT_REQUEST_BODY_BUFFERS` defaults to 64. The latter is a global,
 non-waiting admission bound for concurrent inbound request-body buffers; a full bound returns a
-controlled `503 REQUEST_BODY_CAPACITY`. `LIFEOS_GATEWAY_MAX_CONCURRENT_RESPONSE_BUFFERS` defaults
-to 64 and is a global, non-waiting admission bound for retained downstream response buffers through
-client writes; a full bound returns `503 RESPONSE_BUFFER_CAPACITY`.
-`LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES` defaults to 10 MiB.
+controlled `503 REQUEST_BODY_CAPACITY`. `LIFEOS_GATEWAY_MAX_REQUEST_BODY_BUFFER_BYTES` defaults
+to 64 MiB and must be at least the product of the request-body count and byte limits.
+`LIFEOS_GATEWAY_MAX_CONCURRENT_RESPONSE_BUFFERS` defaults to 64 and is a global, non-waiting
+admission bound for retained downstream response buffers through client writes; a full bound
+returns `503 RESPONSE_BUFFER_CAPACITY`. `LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES` defaults to
+10 MiB. `LIFEOS_GATEWAY_MAX_RESPONSE_BUFFER_BYTES` defaults to 640 MiB and must be at least the
+product of the response-buffer count and byte limits. Incompatible count, per-buffer, and aggregate
+budgets fail startup.
 Connection and read timeouts default to 2 seconds and 5 seconds and are bounded to 60 seconds. Each route's upstream must be an absolute
 HTTP(S) origin without userinfo, query, fragment, or a base path; duplicate route IDs and prefixes
-fail startup. `LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS` defaults to 600 per
-`LIFEOS_GATEWAY_RATE_LIMIT_WINDOW` (one minute). `LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET` is a
+fail startup. `LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS` defaults to 600 per account per
+`LIFEOS_GATEWAY_RATE_LIMIT_WINDOW`; `LIFEOS_GATEWAY_RATE_LIMIT_PRE_AUTHENTICATION_MAX_REQUESTS`
+defaults to 6000 per address per window and must not be lower than the account budget. The
+`LIFEOS_GATEWAY_RATE_LIMIT_WINDOW` defaults to one minute. `LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET` is a
 required HMAC key supplied by secret management; the gateway fails startup when it is absent or
 blank. Redis connect and command timeouts default to 500 milliseconds.
 
@@ -125,9 +133,11 @@ one half-open probe is admitted. Bulkhead rejections and circuit-open responses 
 
 Authentication validation is O(1) remote calls per protected request and adds no unbounded gateway
 state. Redis rate-limit state is bounded by counter TTLs. Inbound request buffering is bounded by
-the configured byte limit and the independent gateway-wide body-buffer admission semaphore;
+the configured byte limit, aggregate byte budget, and independent gateway-wide body-buffer admission
+semaphore;
 downstream response buffering is bounded by its byte limit and the independent gateway-wide
-response-buffer admission semaphore held through client writes. Downstream object-level
+response-buffer admission semaphore held through client writes and its aggregate byte budget.
+Downstream object-level
 authorization remains the domain service's responsibility. The gateway-side identity bulkhead,
 request-body admission, response-buffer admission, and upstream route bulkheads provide bounded
 concurrency guards for each dependency or buffer class; capacity rejections are observable through

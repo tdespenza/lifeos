@@ -35,6 +35,8 @@ assert_contains "group: coderabbit-review-\${{ github.event.pull_request.number 
 assert_contains 'cancel-in-progress: false'
 assert_contains 'permissions: {}'
 assert_contains '      issues: write'
+assert_contains '      # The pull-request conversation endpoint returned HTTP 403 with only issues: write.'
+assert_contains '      pull-requests: write'
 assert_contains "marker=\"<!-- lifeos-coderabbit-review:\${HEAD_SHA} -->\""
 assert_contains "grep -Fq \"\${marker}\" \"\${comments_file}\""
 assert_contains 'gh api --paginate'

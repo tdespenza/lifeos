@@ -17,6 +17,7 @@ jobs:
     permissions:
       # The workflow creates one issue-style conversation comment on the pull request.
       issues: write
+      # The pull-request conversation endpoint returned HTTP 403 with only issues: write.
       pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 5

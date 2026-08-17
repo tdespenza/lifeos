@@ -64,12 +64,12 @@ public class GatewayUpstreamResilience {
             throw unavailable("circuit_open", openDurationSeconds());
         }
         if (!state.bulkhead.tryAcquire()) {
-            state.circuit.cancelProbe(circuitPermit.probe());
+            state.circuit.cancelProbe(circuitPermit.probe(), circuitPermit.probeGeneration());
             counter("gateway.upstream.bulkhead.rejections", routeId,
                     "Requests rejected because the upstream route bulkhead is full").increment();
             throw unavailable("bulkhead_rejected", 1);
         }
-        return new Permit(routeId, state, circuitPermit.probe());
+        return new Permit(routeId, state, circuitPermit.probe(), circuitPermit.probeGeneration());
     }
 
     private GatewayUpstreamException unavailable(String failureClass, int retryAfterSeconds) {
@@ -106,21 +106,23 @@ public class GatewayUpstreamResilience {
         private final String routeId;
         private final RouteState state;
         private final boolean circuitProbe;
+        private final long probeGeneration;
         private final long startNanos = System.nanoTime();
         private boolean outcomeRecorded;
         private boolean closed;
 
-        private Permit(String routeId, RouteState state, boolean circuitProbe) {
+        private Permit(String routeId, RouteState state, boolean circuitProbe, long probeGeneration) {
             this.routeId = routeId;
             this.state = state;
             this.circuitProbe = circuitProbe;
+            this.probeGeneration = probeGeneration;
         }
 
         /** Records an upstream response that should count as a healthy dependency call. */
         public void recordSuccess() {
             if (!outcomeRecorded) {
                 outcomeRecorded = true;
-                state.circuit.recordSuccess(circuitProbe);
+                state.circuit.recordSuccess(circuitProbe, probeGeneration);
             }
         }
 
@@ -128,7 +130,7 @@ public class GatewayUpstreamResilience {
         public void recordFailure() {
             if (!outcomeRecorded) {
                 outcomeRecorded = true;
-                state.circuit.recordFailure(circuitProbe);
+                state.circuit.recordFailure(circuitProbe, probeGeneration);
                 counter("gateway.upstream.failures", routeId,
                         "Upstream failures observed by the gateway").increment();
             }
@@ -138,13 +140,16 @@ public class GatewayUpstreamResilience {
         public void close() {
             if (!closed) {
                 closed = true;
+                if (!outcomeRecorded) {
+                    recordFailure();
+                }
                 state.bulkhead.release();
                 recordLatency(routeId, startNanos);
             }
         }
     }
 
-    private record CircuitPermit(boolean admitted, boolean probe) {
+    private record CircuitPermit(boolean admitted, boolean probe, long probeGeneration) {
     }
 
     private static final class RouteState {
@@ -168,6 +173,8 @@ public class GatewayUpstreamResilience {
         private final LongSupplier nanoTime;
         private int consecutiveFailures;
         private long openedAtNanos;
+        private long halfOpenAtNanos;
+        private long probeGeneration;
         private State state = State.CLOSED;
 
         private Circuit(int failureThreshold, Duration openDuration, LongSupplier nanoTime) {
@@ -178,45 +185,61 @@ public class GatewayUpstreamResilience {
 
         private synchronized CircuitPermit tryAcquire() {
             long now = nanoTime.getAsLong();
+            if (state == State.HALF_OPEN
+                    && elapsedNanos(now, halfOpenAtNanos) >= openDurationNanos) {
+                state = State.OPEN;
+                openedAtNanos = now - openDurationNanos;
+            }
             if (state == State.OPEN) {
-                if (now - openedAtNanos < openDurationNanos) {
-                    return new CircuitPermit(false, false);
+                if (elapsedNanos(now, openedAtNanos) < openDurationNanos) {
+                    return new CircuitPermit(false, false, 0);
                 }
                 state = State.HALF_OPEN;
-                return new CircuitPermit(true, true);
+                halfOpenAtNanos = now;
+                probeGeneration++;
+                return new CircuitPermit(true, true, probeGeneration);
             }
             if (state == State.HALF_OPEN) {
-                return new CircuitPermit(false, false);
+                return new CircuitPermit(false, false, 0);
             }
-            return new CircuitPermit(true, false);
+            return new CircuitPermit(true, false, 0);
         }
 
-        private synchronized void cancelProbe(boolean probe) {
-            if (probe && state == State.HALF_OPEN) {
-                state = State.OPEN;
-                openedAtNanos = nanoTime.getAsLong();
+        private synchronized void cancelProbe(boolean probe, long generation) {
+            if (probe && state == State.HALF_OPEN && generation == probeGeneration) {
+                open(nanoTime.getAsLong());
             }
         }
 
-        private synchronized void recordSuccess(boolean probe) {
+        private synchronized void recordSuccess(boolean probe, long generation) {
             if (probe) {
-                state = State.CLOSED;
-                consecutiveFailures = 0;
+                if (state == State.HALF_OPEN && generation == probeGeneration) {
+                    state = State.CLOSED;
+                    consecutiveFailures = 0;
+                }
             } else if (state == State.CLOSED) {
                 consecutiveFailures = 0;
             }
         }
 
-        private synchronized void recordFailure(boolean probe) {
+        private synchronized void recordFailure(boolean probe, long generation) {
             if (probe) {
-                state = State.OPEN;
-                openedAtNanos = nanoTime.getAsLong();
-                consecutiveFailures = 0;
+                if (state == State.HALF_OPEN && generation == probeGeneration) {
+                    open(nanoTime.getAsLong());
+                }
             } else if (state == State.CLOSED && ++consecutiveFailures >= failureThreshold) {
-                state = State.OPEN;
-                openedAtNanos = nanoTime.getAsLong();
-                consecutiveFailures = 0;
+                open(nanoTime.getAsLong());
             }
+        }
+
+        private void open(long now) {
+            state = State.OPEN;
+            openedAtNanos = now;
+            consecutiveFailures = 0;
+        }
+
+        private static long elapsedNanos(long now, long start) {
+            return now - start;
         }
 
         private enum State {

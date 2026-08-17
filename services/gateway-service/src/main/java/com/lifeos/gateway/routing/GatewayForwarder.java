@@ -96,10 +96,10 @@ public class GatewayForwarder {
     }
 
     /**
-     * Creates a forwarder with its default in-process route resilience for isolated tests and
-     * source-compatible local callers.
+     * Creates a forwarder with its own in-process route resilience. Test-only: production wiring
+     * must use the injected shared {@link GatewayUpstreamResilience}.
      */
-    public GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
+    GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
         this(restClient, properties, meterRegistry, new GatewayUpstreamResilience(properties, meterRegistry));
     }
 

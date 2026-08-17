@@ -78,6 +78,52 @@ class GatewayUpstreamResilienceTest {
     }
 
     @Test
+    void treatsAClosedHalfOpenProbeWithoutOutcomeAsAFailure() {
+        GatewayProperties properties = properties(2, 1);
+        properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
+        MutableNanoClock clock = new MutableNanoClock();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
+                properties, new SimpleMeterRegistry(), clock);
+
+        fail(resilience);
+
+        clock.advance(Duration.ofMillis(51));
+        GatewayUpstreamResilience.Permit probe = resilience.acquire(ROUTE);
+        probe.close();
+
+        assertThatThrownBy(() -> resilience.acquire(ROUTE))
+                .isInstanceOf(GatewayUpstreamException.class)
+                .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
+                                ((GatewayUpstreamException) error).getFailureClass())
+                        .isEqualTo("circuit_open"));
+
+        clock.advance(Duration.ofMillis(51));
+        GatewayUpstreamResilience.Permit retry = resilience.acquire(ROUTE);
+        retry.recordSuccess();
+        retry.close();
+    }
+
+    @Test
+    void expiresAnUnfinishedHalfOpenProbeBeforeAdmittingAFreshProbe() {
+        GatewayProperties properties = properties(2, 1);
+        properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
+        MutableNanoClock clock = new MutableNanoClock();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
+                properties, new SimpleMeterRegistry(), clock);
+
+        fail(resilience);
+
+        clock.advance(Duration.ofMillis(51));
+        GatewayUpstreamResilience.Permit staleProbe = resilience.acquire(ROUTE);
+        clock.advance(Duration.ofMillis(51));
+
+        GatewayUpstreamResilience.Permit freshProbe = resilience.acquire(ROUTE);
+        staleProbe.close();
+        freshProbe.recordSuccess();
+        freshProbe.close();
+    }
+
+    @Test
     void ignoresAStalePermitWhileAHalfOpenProbeOwnsTheCircuitTransition() {
         GatewayProperties properties = properties(2, 1);
         properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));

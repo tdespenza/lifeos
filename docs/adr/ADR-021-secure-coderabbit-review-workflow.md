@@ -28,7 +28,9 @@ with the following invariants:
 - Workflow-level permissions are default-deny (`permissions: {}`). The job has
   only `issues: write` and `pull-requests: write`, which GitHub requires for the
   single issue-style conversation comment that requests CodeRabbit on a pull
-  request.
+  request. The explicit pull-request permission is retained because the
+  repository's `pull_request_target` token returned HTTP 403 when the job was
+  restricted to `issues: write` alone.
 - The workflow never checks out, imports, or executes pull-request code. Its
   shell step contains only hardcoded GitHub API and marker logic.
 - A concurrency group is keyed by both pull-request number and head SHA, and

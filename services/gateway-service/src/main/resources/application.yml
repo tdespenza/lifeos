@@ -24,6 +24,7 @@ gateway:
     max-concurrent-validations: ${LIFEOS_GATEWAY_AUTH_MAX_CONCURRENT_VALIDATIONS:64}
   max-request-body-bytes: ${LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES:1048576}
   max-concurrent-request-body-buffers: ${LIFEOS_GATEWAY_MAX_CONCURRENT_REQUEST_BODY_BUFFERS:64}
+  max-concurrent-response-buffers: ${LIFEOS_GATEWAY_MAX_CONCURRENT_RESPONSE_BUFFERS:64}
   max-response-body-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES:10485760}
   connect-timeout: ${LIFEOS_GATEWAY_CONNECT_TIMEOUT:2s}
   read-timeout: ${LIFEOS_GATEWAY_READ_TIMEOUT:5s}

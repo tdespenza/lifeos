@@ -263,6 +263,22 @@ public class GatewayController {
                 .body(problem);
     }
 
+    /**
+     * Returns a controlled response when bounded response buffering is at capacity.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayResponseBufferCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleResponseBufferCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Response buffer capacity is temporarily unavailable.");
+        problem.setTitle("Response capacity unavailable");
+        problem.setProperty("code", "RESPONSE_BUFFER_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "1")
+                .body(problem);
+    }
+
     private static String correlationId(HttpServletRequest request) {
         Object requestValue = request.getAttribute(CorrelationIdSupport.REQUEST_ATTRIBUTE);
         if (requestValue instanceof String value && CorrelationIdSupport.isValid(value)) {

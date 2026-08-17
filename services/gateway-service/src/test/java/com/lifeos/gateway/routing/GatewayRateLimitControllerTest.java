@@ -106,6 +106,29 @@ class GatewayRateLimitControllerTest {
     }
 
     @Test
+    void returns503WhenResponseBufferCapacityIsFull() throws Exception {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "public", "/api/v1/public", "https://public.test", false)));
+        GatewayForwarder forwarder = mock(GatewayForwarder.class);
+        doThrow(new GatewayResponseBufferCapacityException())
+                .when(forwarder)
+                .forward(any(), any(), any(), any(), any());
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new GatewayController(
+                        new GatewayRouteTable(properties),
+                        forwarder,
+                        mock(GatewayAuthenticationService.class),
+                        GatewayRateLimiter.allowAll()))
+                .addFilters(new CorrelationIdFilter())
+                .build();
+
+        mockMvc.perform(get("/api/v1/public/resource"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(jsonPath("$.code").value("RESPONSE_BUFFER_CAPACITY"));
+    }
+
+    @Test
     void chargesProtectedRequestsBeforeAndAfterIdentityValidation() throws Exception {
         GatewayProperties properties = new GatewayProperties();
         properties.setRoutes(List.of(new GatewayProperties.Route(

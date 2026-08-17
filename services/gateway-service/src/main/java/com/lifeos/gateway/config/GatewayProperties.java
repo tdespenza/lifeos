@@ -40,6 +40,10 @@ public class GatewayProperties {
     @Max(value = 4096, message = "maxConcurrentRequestBodyBuffers must be bounded")
     private int maxConcurrentRequestBodyBuffers = 64;
 
+    @Min(value = 1, message = "maxConcurrentResponseBuffers must be positive")
+    @Max(value = 4096, message = "maxConcurrentResponseBuffers must be bounded")
+    private int maxConcurrentResponseBuffers = 64;
+
     @Min(value = 1, message = "maxResponseBodyBytes must be positive")
     private long maxResponseBodyBytes = 10_485_760L;
 
@@ -107,6 +111,24 @@ public class GatewayProperties {
      */
     public void setMaxConcurrentRequestBodyBuffers(int maxConcurrentRequestBodyBuffers) {
         this.maxConcurrentRequestBodyBuffers = maxConcurrentRequestBodyBuffers;
+    }
+
+    /**
+     * Returns the maximum number of buffered responses that may be retained through client writes.
+     *
+     * @return response-buffer admission capacity
+     */
+    public int getMaxConcurrentResponseBuffers() {
+        return maxConcurrentResponseBuffers;
+    }
+
+    /**
+     * Sets the response-buffer admission capacity during configuration binding.
+     *
+     * @param maxConcurrentResponseBuffers maximum concurrent response buffers
+     */
+    public void setMaxConcurrentResponseBuffers(int maxConcurrentResponseBuffers) {
+        this.maxConcurrentResponseBuffers = maxConcurrentResponseBuffers;
     }
 
     /**

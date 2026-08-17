@@ -1,6 +1,7 @@
 package com.lifeos.gateway.ratelimit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doReturn;
 
 import com.lifeos.gateway.config.GatewayProperties;
@@ -75,6 +76,11 @@ class RedisGatewayRateLimiterTest {
             assertThat(allowed).isEqualTo(5);
 
             awaitWindowReset(limiter);
+            for (int index = 1; index < 5; index++) {
+                limiter.check(ROUTE, request("198.51.100.42"), null);
+            }
+            assertThatThrownBy(() -> limiter.check(ROUTE, request("198.51.100.42"), null))
+                    .isInstanceOf(GatewayRateLimitExceededException.class);
         } finally {
             executor.shutdownNow();
             connectionFactory.destroy();

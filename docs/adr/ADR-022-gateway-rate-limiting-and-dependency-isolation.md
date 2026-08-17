@@ -35,18 +35,21 @@ connection/read timeouts remain the final bound on one admitted upstream call.
   remove the abuse protection during the dependency incident.
 - Bulkhead and circuit state is local to one gateway instance. It is bounded operational state, not
   authorization state; each instance protects its own resources independently.
-- Per-route response buffering is bounded by the configured response limit multiplied by that route's
-  bulkhead capacity. There is no unbounded wait queue.
+- Response buffering is bounded by the configured response limit multiplied by the gateway-wide
+  response-buffer admission capacity. That admission is held through the downstream client write,
+  while the per-route bulkhead independently bounds active upstream work; neither path has an
+  unbounded wait queue.
 - Metrics use route-only labels. Account IDs, addresses, tokens, Redis keys, and free-form request
   input are excluded from metrics and logs.
 
 ## Observability
 
 The gateway exposes configured rate budgets, allowed/rejected/unavailable rate-limit counters, and
-rate-limit latency timers. Upstream latency, failures, bulkhead rejections, and circuit-open
-rejections are also emitted with route-only labels. Management endpoints remain on the private
-management listener and Prometheus scraping should alert on Redis failures, circuit-open events,
-bulkhead saturation, and elevated p95/p99 dependency latency.
+rate-limit latency timers. Upstream latency, failures, bulkhead rejections, circuit-open
+rejections, and response-buffer capacity rejections are also emitted with route-only labels.
+Management endpoints remain on the private management listener and Prometheus scraping should alert
+on Redis failures, circuit-open events, bulkhead saturation, response-buffer capacity rejection,
+and elevated p95/p99 dependency latency.
 
 ## Validation
 

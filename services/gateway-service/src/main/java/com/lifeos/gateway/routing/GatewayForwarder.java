@@ -39,9 +39,10 @@ import org.springframework.web.client.RestClientException;
  *
  * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
  * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Inbound body buffers
- * are independently bounded by a gateway-wide semaphore, while the route bulkhead bounds
- * concurrent response buffers. The worst-case response-buffer footprint is approximately
- * {@code maxResponseBodyBytes * configuredRouteBulkheadCapacity} per gateway route.
+ * are independently bounded by gateway-wide semaphores. The response-buffer admission is held
+ * through the client write, so the worst-case response-buffer footprint is approximately
+ * {@code maxResponseBodyBytes * maxConcurrentResponseBuffers} per gateway instance, independent
+ * of the upstream route bulkhead.
  */
 @Component
 public class GatewayForwarder {
@@ -79,6 +80,8 @@ public class GatewayForwarder {
     private final GatewayUpstreamResilience resilience;
     private final Semaphore requestBodyAdmission;
     private final Counter requestBodyCapacityRejections;
+    private final Semaphore responseBufferAdmission;
+    private final Counter responseBufferCapacityRejections;
     private final AtomicInteger inFlightRequests = new AtomicInteger();
 
     /**
@@ -100,6 +103,10 @@ public class GatewayForwarder {
         this.requestBodyAdmission = new Semaphore(properties.getMaxConcurrentRequestBodyBuffers(), true);
         this.requestBodyCapacityRejections = Counter.builder("gateway.request.body.capacity.rejections")
                 .description("Requests rejected because bounded inbound body buffering is full")
+                .register(meterRegistry);
+        this.responseBufferAdmission = new Semaphore(properties.getMaxConcurrentResponseBuffers(), true);
+        this.responseBufferCapacityRejections = Counter.builder("gateway.response.buffer.capacity.rejections")
+                .description("Requests rejected because bounded response buffering is full")
                 .register(meterRegistry);
         meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
     }
@@ -149,6 +156,7 @@ public class GatewayForwarder {
             throws IOException {
         HttpMethod method = HttpMethod.valueOf(request.getMethod());
         boolean bodyAdmissionAcquired = acquireRequestBodyAdmission(request, method);
+        boolean responseBufferAdmissionAcquired = false;
         try {
             byte[] requestBody = readRequestBody(request, method);
             URI target = targetUri(route, request);
@@ -161,6 +169,7 @@ public class GatewayForwarder {
                 outgoing = requestSpec.body(requestBody);
             }
 
+            responseBufferAdmissionAcquired = acquireResponseBufferAdmission();
             GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
             DownstreamResponse downstream = null;
             try (permit) {
@@ -199,7 +208,22 @@ public class GatewayForwarder {
             bodyAdmissionAcquired = false;
             writeResponse(response, downstream, method);
         } finally {
+            releaseResponseBufferAdmission(responseBufferAdmissionAcquired);
             releaseRequestBodyAdmission(bodyAdmissionAcquired);
+        }
+    }
+
+    private boolean acquireResponseBufferAdmission() {
+        if (!responseBufferAdmission.tryAcquire()) {
+            responseBufferCapacityRejections.increment();
+            throw new GatewayResponseBufferCapacityException();
+        }
+        return true;
+    }
+
+    private void releaseResponseBufferAdmission(boolean acquired) {
+        if (acquired) {
+            responseBufferAdmission.release();
         }
     }
 

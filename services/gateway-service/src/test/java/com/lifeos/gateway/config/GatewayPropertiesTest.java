@@ -35,4 +35,17 @@ class GatewayPropertiesTest {
                             .equals("maxConcurrentRequestBodyBuffers"));
         }
     }
+
+    @Test
+    void rejectsInvalidResponseBufferCapacity() {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setMaxConcurrentResponseBuffers(0);
+
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(properties))
+                    .anyMatch(violation -> violation.getPropertyPath().toString()
+                            .equals("maxConcurrentResponseBuffers"));
+        }
+    }
 }

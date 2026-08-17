@@ -479,6 +479,57 @@ class GatewayControllerTest {
     }
 
     @Test
+    void rejectsASecondResponseWhenResponseBufferCapacityIsFull() throws Exception {
+        GatewayProperties forwarderProperties = new GatewayProperties();
+        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", UPSTREAM, false)));
+        forwarderProperties.setMaxConcurrentResponseBuffers(1);
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(
+                builder.build(), forwarderProperties, registry,
+                new GatewayUpstreamResilience(forwarderProperties, registry));
+        CountDownLatch responseWriteStarted = new CountDownLatch(1);
+        CountDownLatch releaseResponseWrite = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> first = executor.submit(() -> {
+                forwarder.forward(
+                        requestWithoutBody("GET"),
+                        blockingResponse(responseWriteStarted, releaseResponseWrite),
+                        route,
+                        CORRELATION_ID);
+                return null;
+            });
+            assertThat(responseWriteStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            requestWithoutBody("GET"),
+                            new MockHttpServletResponse(),
+                            route,
+                            CORRELATION_ID))
+                    .isInstanceOf(GatewayResponseBufferCapacityException.class);
+            assertThat(registry.get("gateway.response.buffer.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
+
+            releaseResponseWrite.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseResponseWrite.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void mapsOversizedUpstreamResponsesToBadGateway() throws Exception {
         properties.setMaxResponseBodyBytes(4);
         upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))

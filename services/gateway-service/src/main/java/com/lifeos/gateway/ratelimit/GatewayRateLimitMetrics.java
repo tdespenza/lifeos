@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 public class GatewayRateLimitMetrics {
 
     private final MeterRegistry meterRegistry;
-    private final ConcurrentMap<String, AtomicInteger> configuredLimits = new ConcurrentHashMap<>();
+    private final ConcurrentMap<ConfiguredLimitKey, AtomicInteger> configuredLimits = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Counter> allowedCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Counter> rejectedCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Counter> unavailableCounters = new ConcurrentHashMap<>();
@@ -27,14 +27,22 @@ public class GatewayRateLimitMetrics {
         this.meterRegistry = meterRegistry;
     }
 
-    /** Records the configured route budget as a Prometheus gauge. */
-    public void recordLimit(String routeId, int limit) {
+    /**
+     * Records one configured route budget as a Prometheus gauge.
+     *
+     * @param routeId deployment-owned route identifier
+     * @param stage address or validated-account admission stage
+     * @param limit configured requests-per-window budget
+     */
+    public void recordLimit(String routeId, AdmissionStage stage, int limit) {
         String route = routeTag(routeId);
-        AtomicInteger value = configuredLimits.computeIfAbsent(route, ignored -> {
+        ConfiguredLimitKey key = new ConfiguredLimitKey(route, stage);
+        AtomicInteger value = configuredLimits.computeIfAbsent(key, ignored -> {
             AtomicInteger holder = new AtomicInteger(limit);
             Gauge.builder("gateway.rate.limit", holder, AtomicInteger::get)
                     .description("Configured Redis request budget per gateway route")
                     .tag("route", route)
+                    .tag("stage", stage.tagValue)
                     .register(meterRegistry);
             return holder;
         });
@@ -85,5 +93,20 @@ public class GatewayRateLimitMetrics {
 
     private static String routeTag(String routeId) {
         return routeId == null || routeId.isBlank() ? "unknown" : routeId;
+    }
+
+    /** Low-cardinality identity used to distinguish configured admission budgets. */
+    public enum AdmissionStage {
+        ADDRESS("address"),
+        ACCOUNT("account");
+
+        private final String tagValue;
+
+        AdmissionStage(String tagValue) {
+            this.tagValue = tagValue;
+        }
+    }
+
+    private record ConfiguredLimitKey(String route, AdmissionStage stage) {
     }
 }

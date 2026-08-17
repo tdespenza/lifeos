@@ -3,6 +3,8 @@ package com.lifeos.gateway.routing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.matchesPattern;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -278,6 +280,28 @@ class GatewayControllerTest {
     }
 
     @Test
+    void mapsOpenCircuitsToAControlledRetryableServiceUnavailableResponse() throws Exception {
+        mockMvcForUpstreamFailure("circuit_open", 10)
+                .perform(get("/api/v1/goals"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "10"))
+                .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.title").value("Upstream unavailable"))
+                .andExpect(jsonPath("$.detail").value("The requested service is temporarily unavailable."));
+    }
+
+    @Test
+    void mapsRejectedBulkheadsToAControlledRetryableServiceUnavailableResponse() throws Exception {
+        mockMvcForUpstreamFailure("bulkhead_rejected", 1)
+                .perform(get("/api/v1/goals"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.title").value("Upstream unavailable"))
+                .andExpect(jsonPath("$.detail").value("The requested service is temporarily unavailable."));
+    }
+
+    @Test
     void doesNotConsumeUpstreamBulkheadWhileInboundUploadIsStalled() throws Exception {
         ForwarderFixture fixture = forwarderFixture(properties ->
                 properties.getUpstream().getBulkhead().setMaxConcurrentRequests(1));
@@ -459,6 +483,19 @@ class GatewayControllerTest {
             releaseResponseWrite.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void rejectsAForwarderConfigurationWhoseResponseBuffersExceedItsAggregateBudget() {
+        GatewayProperties forwarderProperties = new GatewayProperties();
+        forwarderProperties.setMaxConcurrentResponseBuffers(2);
+        forwarderProperties.setMaxResponseBodyBytes(4);
+        forwarderProperties.setMaxResponseBufferBytes(7);
+
+        assertThatThrownBy(() -> new GatewayForwarder(
+                        RestClient.builder().build(), forwarderProperties, new SimpleMeterRegistry()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxResponseBufferBytes");
     }
 
     @Test
@@ -861,6 +898,20 @@ class GatewayControllerTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, registry);
         return new ForwarderFixture(properties, server, registry, forwarder);
+    }
+
+    private MockMvc mockMvcForUpstreamFailure(String failureClass, int retryAfterSeconds) throws IOException {
+        GatewayForwarder forwarder = mock(GatewayForwarder.class);
+        doThrow(GatewayUpstreamException.serviceUnavailable(failureClass, retryAfterSeconds))
+                .when(forwarder)
+                .forward(any(), any(), any(), any(), any());
+        return MockMvcBuilders.standaloneSetup(new GatewayController(
+                        new GatewayRouteTable(properties),
+                        forwarder,
+                        mock(GatewayAuthenticationService.class),
+                        (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
+                .addFilters(new CorrelationIdFilter())
+                .build();
     }
 
     private record ForwarderFixture(

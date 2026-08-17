@@ -1,5 +1,6 @@
 package com.lifeos.gateway.routing;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
@@ -20,8 +21,8 @@ class GatewayUpstreamResilienceTest {
     @Test
     void rejectsWithoutWaitingWhenTheRouteBulkheadIsFull() {
         GatewayProperties properties = properties(1, 5);
-        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
-                properties, new SimpleMeterRegistry());
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(properties, registry);
 
         GatewayUpstreamResilience.Permit first = resilience.acquire(ROUTE);
         try {
@@ -34,6 +35,10 @@ class GatewayUpstreamResilienceTest {
                         org.assertj.core.api.Assertions.assertThat(exception.getFailureClass())
                                 .isEqualTo("bulkhead_rejected");
                     });
+            assertThat(registry.get("gateway.upstream.bulkhead.rejections")
+                    .tag("route", "goals")
+                    .counter()
+                    .count()).isEqualTo(1.0);
         } finally {
             first.recordSuccess();
             first.close();
@@ -51,8 +56,8 @@ class GatewayUpstreamResilienceTest {
         GatewayProperties properties = properties(2, 2);
         properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
         MutableNanoClock clock = new MutableNanoClock();
-        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
-                properties, new SimpleMeterRegistry(), clock);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(properties, registry, clock);
 
         fail(resilience);
         fail(resilience);
@@ -62,6 +67,10 @@ class GatewayUpstreamResilienceTest {
                 .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
                                 ((GatewayUpstreamException) error).getFailureClass())
                         .isEqualTo("circuit_open"));
+        assertThat(registry.get("gateway.upstream.circuit.open")
+                .tag("route", "goals")
+                .counter()
+                .count()).isEqualTo(1.0);
 
         clock.advance(Duration.ofMillis(51));
         GatewayUpstreamResilience.Permit probe = resilience.acquire(ROUTE);
@@ -71,6 +80,10 @@ class GatewayUpstreamResilienceTest {
                     .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
                                     ((GatewayUpstreamException) error).getFailureClass())
                             .isEqualTo("circuit_open"));
+            assertThat(registry.get("gateway.upstream.circuit.open")
+                    .tag("route", "goals")
+                    .counter()
+                    .count()).isEqualTo(2.0);
         } finally {
             probe.recordSuccess();
             probe.close();

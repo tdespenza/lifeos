@@ -174,6 +174,31 @@ class RedisGatewayRateLimiterUnitTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test
+    void publishesBothConfiguredAdmissionBudgets() {
+        GatewayProperties properties = properties(5);
+        properties.getRateLimit().setPreAuthenticationMaxRequests(6);
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", "https://task-goal.test", true)));
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+
+        new RedisGatewayRateLimiter(
+                org.mockito.Mockito.mock(StringRedisTemplate.class),
+                properties,
+                new GatewayRateLimitMetrics(registry));
+
+        assertThat(registry.get("gateway.rate.limit")
+                .tag("route", "goals")
+                .tag("stage", "address")
+                .gauge()
+                .value()).isEqualTo(6.0);
+        assertThat(registry.get("gateway.rate.limit")
+                .tag("route", "goals")
+                .tag("stage", "account")
+                .gauge()
+                .value()).isEqualTo(5.0);
+    }
+
     private static GatewayProperties properties(int maxRequests) {
         GatewayProperties properties = new GatewayProperties();
         properties.getRateLimit().setMaxRequests(maxRequests);

@@ -65,7 +65,14 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
             }
         });
         for (GatewayProperties.Route route : gatewayProperties.getRoutes()) {
-            metrics.recordLimit(route.getId(), properties.getMaxRequests());
+            metrics.recordLimit(
+                    route.getId(),
+                    GatewayRateLimitMetrics.AdmissionStage.ADDRESS,
+                    properties.getPreAuthenticationMaxRequests());
+            metrics.recordLimit(
+                    route.getId(),
+                    GatewayRateLimitMetrics.AdmissionStage.ACCOUNT,
+                    properties.getMaxRequests());
         }
     }
 

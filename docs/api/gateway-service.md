@@ -43,7 +43,8 @@ exposing the gateway publicly rather than trusting arbitrary `X-Forwarded-For` v
 
 Rejected requests return `429 RATE_LIMIT_EXCEEDED` with `Retry-After`, `RateLimit-Limit`,
 `RateLimit-Remaining: 0`, and `RateLimit-Reset` headers. The gateway exposes the route-only metrics
-`gateway.rate.limit` (configured budget), `gateway.rate.limit.allowed`,
+`gateway.rate.limit` (configured budget, with `stage=address` for pre-authentication and public
+admission or `stage=account` after subject validation), `gateway.rate.limit.allowed`,
 `gateway.rate.limit.rejections`, `gateway.rate.limit.unavailable`, and
 `gateway.rate.limit.latency` (with percentile histogram buckets); no client identifier is a metric
 label.

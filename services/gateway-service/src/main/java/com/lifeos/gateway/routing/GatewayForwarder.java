@@ -92,6 +92,7 @@ public class GatewayForwarder {
      * @param restClient outbound HTTP client
      * @param properties gateway bounds
      * @param meterRegistry metrics registry for bounded in-flight request instrumentation
+     * @throws IllegalArgumentException when response-buffer bounds exceed their aggregate budget
      */
     @Autowired
     public GatewayForwarder(
@@ -99,6 +100,7 @@ public class GatewayForwarder {
             GatewayProperties properties,
             MeterRegistry meterRegistry,
             GatewayUpstreamResilience resilience) {
+        requireValidResponseBufferBudget(properties);
         this.restClient = restClient;
         this.properties = properties;
         this.resilience = resilience;
@@ -233,6 +235,13 @@ public class GatewayForwarder {
             throw new GatewayResponseBufferCapacityException();
         }
         return true;
+    }
+
+    private static void requireValidResponseBufferBudget(GatewayProperties properties) {
+        if (!properties.isResponseBufferBudgetValid()) {
+            throw new IllegalArgumentException(
+                    "response buffer count and size must fit maxResponseBufferBytes");
+        }
     }
 
     private void releaseResponseBufferAdmission(boolean acquired) {

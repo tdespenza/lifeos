@@ -40,11 +40,11 @@ import org.springframework.web.client.RestClientException;
  *
  * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
  * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Inbound body buffers
- * are independently bounded by gateway-wide semaphores and aggregate byte budgets. The
- * response-buffer admission is held through the client write, so the worst-case response-buffer
- * footprint is approximately {@code maxResponseBodyBytes * maxConcurrentResponseBuffers} per
- * gateway instance and must fit the configured aggregate response budget, independent of the
- * upstream route bulkhead.
+ * are independently bounded by gateway-wide semaphores and aggregate byte budgets. At startup,
+ * {@link GatewayProperties#isResponseBufferBudgetValid()} rejects a response-buffer count and
+ * per-body-size combination that exceeds the aggregate budget. The response-buffer admission is
+ * held through the client write, so the semaphore enforces that validated worst-case footprint,
+ * independent of the upstream route bulkhead.
  */
 @Component
 public class GatewayForwarder {

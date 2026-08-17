@@ -84,7 +84,7 @@ public class GatewayUpstreamResilience {
             state.bulkheadRejections.increment();
             throw unavailable("bulkhead_rejected", 1);
         }
-        return new Permit(routeId, state, circuitPermit.probe(), circuitPermit.probeGeneration());
+        return new Permit(state, circuitPermit.probe(), circuitPermit.probeGeneration());
     }
 
     private GatewayUpstreamException unavailable(String failureClass, int retryAfterSeconds) {
@@ -103,7 +103,6 @@ public class GatewayUpstreamResilience {
     /** A single in-flight route admission that releases its bulkhead permit exactly once. */
     public final class Permit implements AutoCloseable {
 
-        private final String routeId;
         private final RouteState state;
         private final boolean circuitProbe;
         private final long probeGeneration;
@@ -111,8 +110,7 @@ public class GatewayUpstreamResilience {
         private boolean outcomeRecorded;
         private boolean closed;
 
-        private Permit(String routeId, RouteState state, boolean circuitProbe, long probeGeneration) {
-            this.routeId = routeId;
+        private Permit(RouteState state, boolean circuitProbe, long probeGeneration) {
             this.state = state;
             this.circuitProbe = circuitProbe;
             this.probeGeneration = probeGeneration;

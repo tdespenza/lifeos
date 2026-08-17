@@ -12,11 +12,12 @@ import jakarta.servlet.http.HttpServletRequest;
 public interface GatewayRateLimiter {
 
     /**
-     * Charges one request to the route and its authenticated or anonymous client identity.
+     * Charges one request to the route and its authenticated or address-based client identity.
      *
      * @param route resolved gateway route
      * @param request inbound request
-     * @param subject validated account subject, or {@code null} for an anonymous request
+     * @param subject validated account subject, or {@code null} for address-based admission before
+     *     a subject is validated, including anonymous requests
      * @throws GatewayRateLimitExceededException when the client budget is exhausted
      * @throws GatewayRateLimitDependencyUnavailableException when the distributed decision cannot
      *     be made safely

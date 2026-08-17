@@ -512,19 +512,17 @@ class GatewayControllerTest {
     }
 
     @Test
-    void rejectsExcessResponsesAtTheAggregateBufferBudget() throws Exception {
+    void rejectsAThirdResponseWhenTwoResponseBufferAdmissionsAreFull() throws Exception {
         ForwarderFixture fixture = forwarderFixture(properties -> {
-            properties.setMaxResponseBodyBytes(4);
             properties.setMaxConcurrentResponseBuffers(2);
-            properties.setMaxResponseBufferBytes(8);
         });
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
         MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
-                .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
-                .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
         SimpleMeterRegistry registry = fixture.registry();
         GatewayForwarder forwarder = fixture.forwarder();

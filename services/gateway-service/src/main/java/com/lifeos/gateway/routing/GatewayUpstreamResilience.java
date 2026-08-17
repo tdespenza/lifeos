@@ -231,7 +231,9 @@ public class GatewayUpstreamResilience {
 
         private synchronized void cancelProbe(boolean probe, long generation) {
             if (probe && state == State.HALF_OPEN && generation == probeGeneration) {
-                open(nanoTime.getAsLong());
+                // Local saturation is not an upstream failure, so retain the existing cool-down.
+                state = State.OPEN;
+                probeGeneration++;
             }
         }
 

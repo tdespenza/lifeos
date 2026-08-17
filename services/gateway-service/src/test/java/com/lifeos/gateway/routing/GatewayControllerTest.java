@@ -398,6 +398,25 @@ class GatewayControllerTest {
     }
 
     @Test
+    void releasesInboundBodyAdmissionAfterRejectingAnOversizedRequestBody() throws Exception {
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.setMaxConcurrentRequestBodyBuffers(1);
+            properties.setMaxRequestBodyBytes(4);
+        });
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        HttpServletRequest oversizedRequest = requestWithBody("POST", "12345".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> fixture.forwarder().forward(
+                        oversizedRequest, new MockHttpServletResponse(), route, CORRELATION_ID))
+                .isInstanceOf(GatewayPayloadTooLargeException.class);
+        assertThat(fixture.registry().get("gateway.request.body.available.permits")
+                .gauge()
+                .value()).isEqualTo(1.0);
+        fixture.server().verify();
+    }
+
+    @Test
     void retainsInboundBodyAdmissionUntilUpstreamForwardingCompletes() throws Exception {
         ForwarderFixture fixture = forwarderFixture(properties ->
                 properties.setMaxConcurrentRequestBodyBuffers(1));

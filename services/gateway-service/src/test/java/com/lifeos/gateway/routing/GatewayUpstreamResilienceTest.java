@@ -10,6 +10,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
@@ -88,6 +89,57 @@ class GatewayUpstreamResilienceTest {
             probe.recordSuccess();
             probe.close();
         }
+    }
+
+    @Test
+    void doesNotExtendCooldownWhenAHalfOpenProbeCannotEnterTheFullBulkhead() {
+        GatewayProperties properties = properties(1, 1);
+        properties.getUpstream().getCircuitBreaker().setOpenDuration(Duration.ofMillis(50));
+        MutableNanoClock clock = new MutableNanoClock();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(
+                properties, new SimpleMeterRegistry(), clock);
+
+        GatewayUpstreamResilience.Permit blocker = resilience.acquire(ROUTE);
+        try {
+            blocker.recordFailure();
+            clock.advance(Duration.ofMillis(51));
+
+            assertThatThrownBy(() -> resilience.acquire(ROUTE))
+                    .isInstanceOf(GatewayUpstreamException.class)
+                    .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
+                                    ((GatewayUpstreamException) error).getFailureClass())
+                            .isEqualTo("bulkhead_rejected"));
+        } finally {
+            blocker.close();
+        }
+
+        assertThatCode(() -> {
+            GatewayUpstreamResilience.Permit resumedProbe = resilience.acquire(ROUTE);
+            resumedProbe.recordSuccess();
+            resumedProbe.close();
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void recordsRouteTaggedLatencyUsingTheInjectedClock() {
+        GatewayProperties properties = properties(1, 1);
+        MutableNanoClock clock = new MutableNanoClock();
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(properties, registry, clock);
+
+        GatewayUpstreamResilience.Permit permit = resilience.acquire(ROUTE);
+        clock.advance(Duration.ofMillis(25));
+        permit.recordSuccess();
+        permit.close();
+
+        assertThat(registry.get("gateway.upstream.latency")
+                .tag("route", "goals")
+                .timer()
+                .count()).isEqualTo(1L);
+        assertThat(registry.get("gateway.upstream.latency")
+                .tag("route", "goals")
+                .timer()
+                .totalTime(TimeUnit.MILLISECONDS)).isEqualTo(25.0);
     }
 
     @Test

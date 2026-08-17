@@ -22,16 +22,4 @@ public interface GatewayRateLimiter {
      *     be made safely
      */
     void check(GatewayRoute route, HttpServletRequest request, GatewayAuthenticatedSubject subject);
-
-    /**
-     * Creates an allow-all policy for source-compatible isolated controller tests. Production
-     * wiring always supplies {@link RedisGatewayRateLimiter}.
-     *
-     * @return no-op limiter
-     */
-    static GatewayRateLimiter allowAll() {
-        return (route, request, subject) -> {
-            // Deliberately empty: this is only used by legacy isolated forwarding fixtures.
-        };
-    }
 }

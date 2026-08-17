@@ -38,7 +38,8 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
     private final StringRedisTemplate redisTemplate;
     private final GatewayProperties.RateLimit properties;
     private final GatewayRateLimitMetrics metrics;
-    private final byte[] keySecret;
+    private final SecretKeySpec keySpec;
+    private final ThreadLocal<Mac> macs;
 
     public RedisGatewayRateLimiter(
             StringRedisTemplate redisTemplate,
@@ -52,7 +53,17 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
             throw new IllegalStateException(
                     "gateway.rate-limit.key-secret must be supplied by secret management");
         }
-        this.keySecret = configuredKeySecret.getBytes(StandardCharsets.UTF_8);
+        this.keySpec = new SecretKeySpec(
+                configuredKeySecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
+        this.macs = ThreadLocal.withInitial(() -> {
+            try {
+                Mac mac = Mac.getInstance(HMAC_ALGORITHM);
+                mac.init(keySpec);
+                return mac;
+            } catch (Exception exception) {
+                throw new IllegalStateException("gateway rate-limit key digest unavailable", exception);
+            }
+        });
         for (GatewayProperties.Route route : gatewayProperties.getRoutes()) {
             metrics.recordLimit(route.getId(), properties.getMaxRequests());
         }
@@ -117,13 +128,9 @@ public class RedisGatewayRateLimiter implements GatewayRateLimiter {
     }
 
     private String digest(String value) {
-        try {
-            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            mac.init(new SecretKeySpec(keySecret, HMAC_ALGORITHM));
-            return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception exception) {
-            throw new IllegalStateException("gateway rate-limit key digest unavailable", exception);
-        }
+        Mac mac = macs.get();
+        mac.reset();
+        return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static long decisionValue(Object value) {

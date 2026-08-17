@@ -27,7 +27,6 @@ import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdFilter;
-import com.lifeos.gateway.ratelimit.GatewayRateLimiter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
@@ -49,6 +48,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -95,7 +95,7 @@ class GatewayControllerTest {
                                 new GatewayRouteTable(properties),
                                 forwarder,
                                 authenticationService,
-                                GatewayRateLimiter.allowAll()))
+                                (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }
@@ -279,14 +279,11 @@ class GatewayControllerTest {
 
     @Test
     void doesNotConsumeUpstreamBulkheadWhileInboundUploadIsStalled() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.getUpstream().getBulkhead().setMaxConcurrentRequests(1);
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.getUpstream().getBulkhead().setMaxConcurrentRequests(1));
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
@@ -294,10 +291,7 @@ class GatewayControllerTest {
                 .andExpect(method(HttpMethod.POST))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayUpstreamResilience resilience = new GatewayUpstreamResilience(forwarderProperties, registry);
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry, resilience);
+        GatewayForwarder forwarder = fixture.forwarder();
         CountDownLatch bodyReadStarted = new CountDownLatch(1);
         CountDownLatch releaseBody = new CountDownLatch(1);
         HttpServletRequest stalledRequest = requestWithoutBody("POST");
@@ -332,21 +326,16 @@ class GatewayControllerTest {
 
     @Test
     void rejectsASecondInboundBodyWhenRequestBufferCapacityIsFull() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.setMaxConcurrentRequestBodyBuffers(1);
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentRequestBodyBuffers(1));
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry,
-                new GatewayUpstreamResilience(forwarderProperties, registry));
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
         CountDownLatch bodyReadStarted = new CountDownLatch(1);
         CountDownLatch releaseBody = new CountDownLatch(1);
         HttpServletRequest stalledRequest = requestWithoutBody("POST");
@@ -370,6 +359,10 @@ class GatewayControllerTest {
                     .counter()
                     .count())
                     .isEqualTo(1.0);
+            assertThat(registry.get("gateway.request.body.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
 
             releaseBody.countDown();
             assertThat(stalled.get(5, TimeUnit.SECONDS)).isNull();
@@ -382,14 +375,11 @@ class GatewayControllerTest {
 
     @Test
     void retainsInboundBodyAdmissionUntilUpstreamForwardingCompletes() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.setMaxConcurrentRequestBodyBuffers(1);
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentRequestBodyBuffers(1));
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        MockRestServiceServer server = fixture.server();
         CountDownLatch upstreamStarted = new CountDownLatch(1);
         CountDownLatch releaseUpstream = new CountDownLatch(1);
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
@@ -399,10 +389,7 @@ class GatewayControllerTest {
                     return withSuccess("[]", MediaType.APPLICATION_JSON).createResponse(request);
                 });
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry,
-                new GatewayUpstreamResilience(forwarderProperties, registry));
+        GatewayForwarder forwarder = fixture.forwarder();
         HttpServletRequest firstRequest = requestWithBody("POST", "first".getBytes(StandardCharsets.UTF_8));
         HttpServletRequest secondRequest = requestWithBody("POST", "second".getBytes(StandardCharsets.UTF_8));
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -428,24 +415,19 @@ class GatewayControllerTest {
 
     @Test
     void releasesUpstreamPermitBeforeWritingClientResponse() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.getUpstream().getBulkhead().setMaxConcurrentRequests(1);
-        forwarderProperties.setMaxConcurrentResponseBuffers(2);
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.getUpstream().getBulkhead().setMaxConcurrentRequests(1);
+            properties.setMaxConcurrentResponseBuffers(2);
+        });
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry,
-                new GatewayUpstreamResilience(forwarderProperties, registry));
+        GatewayForwarder forwarder = fixture.forwarder();
         CountDownLatch responseWriteStarted = new CountDownLatch(1);
         CountDownLatch releaseResponseWrite = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -481,21 +463,16 @@ class GatewayControllerTest {
 
     @Test
     void rejectsASecondResponseWhenResponseBufferCapacityIsFull() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.setMaxConcurrentResponseBuffers(1);
+        ForwarderFixture fixture = forwarderFixture(properties ->
+                properties.setMaxConcurrentResponseBuffers(1));
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry,
-                new GatewayUpstreamResilience(forwarderProperties, registry));
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
         CountDownLatch responseWriteStarted = new CountDownLatch(1);
         CountDownLatch releaseResponseWrite = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -520,6 +497,10 @@ class GatewayControllerTest {
                     .counter()
                     .count())
                     .isEqualTo(1.0);
+            assertThat(registry.get("gateway.response.buffer.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
 
             releaseResponseWrite.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
@@ -532,25 +513,21 @@ class GatewayControllerTest {
 
     @Test
     void rejectsExcessResponsesAtTheAggregateBufferBudget() throws Exception {
-        GatewayProperties forwarderProperties = new GatewayProperties();
-        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
-                "goals", "/api/v1/goals", UPSTREAM, false)));
-        forwarderProperties.setMaxResponseBodyBytes(4);
-        forwarderProperties.setMaxConcurrentResponseBuffers(2);
-        forwarderProperties.setMaxResponseBufferBytes(8);
+        ForwarderFixture fixture = forwarderFixture(properties -> {
+            properties.setMaxResponseBodyBytes(4);
+            properties.setMaxConcurrentResponseBuffers(2);
+            properties.setMaxResponseBufferBytes(8);
+        });
         GatewayRoute route = new GatewayRoute(
                 "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        MockRestServiceServer server = fixture.server();
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
         server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withSuccess("1234", MediaType.TEXT_PLAIN));
 
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        GatewayForwarder forwarder = new GatewayForwarder(
-                builder.build(), forwarderProperties, registry,
-                new GatewayUpstreamResilience(forwarderProperties, registry));
+        SimpleMeterRegistry registry = fixture.registry();
+        GatewayForwarder forwarder = fixture.forwarder();
         CountDownLatch responseWritesStarted = new CountDownLatch(2);
         CountDownLatch releaseResponseWrites = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -583,6 +560,10 @@ class GatewayControllerTest {
                     .counter()
                     .count())
                     .isEqualTo(1.0);
+            assertThat(registry.get("gateway.response.buffer.available.permits")
+                    .gauge()
+                    .value())
+                    .isEqualTo(0.0);
 
             releaseResponseWrites.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS)).isNull();
@@ -872,6 +853,25 @@ class GatewayControllerTest {
         };
     }
 
+    private static ForwarderFixture forwarderFixture(Consumer<GatewayProperties> customize) {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", UPSTREAM, false)));
+        customize.accept(properties);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(builder.build(), properties, registry);
+        return new ForwarderFixture(properties, server, registry, forwarder);
+    }
+
+    private record ForwarderFixture(
+            GatewayProperties properties,
+            MockRestServiceServer server,
+            SimpleMeterRegistry registry,
+            GatewayForwarder forwarder) {
+    }
+
     private void useProtectedRoute(Set<String> authenticationRequiredMethods) {
         GatewayProperties.Route route = new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true);
         route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
@@ -895,7 +895,7 @@ class GatewayControllerTest {
                                 new GatewayRouteTable(properties),
                                 forwarder,
                                 authenticationService,
-                                GatewayRateLimiter.allowAll()))
+                                (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }

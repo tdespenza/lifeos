@@ -53,6 +53,7 @@ class GatewayRateLimitControllerTest {
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "60"))
                 .andExpect(header().string("RateLimit-Limit", "10"))
                 .andExpect(header().string("RateLimit-Remaining", "0"))
+                .andExpect(header().string("RateLimit-Reset", "60"))
                 .andExpect(jsonPath("$.code").value("RATE_LIMIT_EXCEEDED"));
 
         verifyNoInteractions(forwarder);
@@ -96,7 +97,7 @@ class GatewayRateLimitControllerTest {
                         new GatewayRouteTable(properties),
                         forwarder,
                         mock(GatewayAuthenticationService.class),
-                        GatewayRateLimiter.allowAll()))
+                        (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
 
@@ -119,7 +120,7 @@ class GatewayRateLimitControllerTest {
                         new GatewayRouteTable(properties),
                         forwarder,
                         mock(GatewayAuthenticationService.class),
-                        GatewayRateLimiter.allowAll()))
+                        (ignoredRoute, ignoredRequest, ignoredSubject) -> {}))
                 .addFilters(new CorrelationIdFilter())
                 .build();
 

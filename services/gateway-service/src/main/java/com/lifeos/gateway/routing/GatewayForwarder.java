@@ -5,6 +5,7 @@ import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -105,9 +106,21 @@ public class GatewayForwarder {
         this.requestBodyCapacityRejections = Counter.builder("gateway.request.body.capacity.rejections")
                 .description("Requests rejected because bounded inbound body buffering is full")
                 .register(meterRegistry);
+        Gauge.builder(
+                        "gateway.request.body.available.permits",
+                        requestBodyAdmission,
+                        Semaphore::availablePermits)
+                .description("Available inbound request-body buffer permits")
+                .register(meterRegistry);
         this.responseBufferAdmission = new Semaphore(properties.getMaxConcurrentResponseBuffers(), true);
         this.responseBufferCapacityRejections = Counter.builder("gateway.response.buffer.capacity.rejections")
                 .description("Requests rejected because bounded response buffering is full")
+                .register(meterRegistry);
+        Gauge.builder(
+                        "gateway.response.buffer.available.permits",
+                        responseBufferAdmission,
+                        Semaphore::availablePermits)
+                .description("Available downstream response-buffer permits")
                 .register(meterRegistry);
         meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
     }

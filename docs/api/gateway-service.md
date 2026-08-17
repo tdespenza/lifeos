@@ -34,11 +34,19 @@ never a raw address, account ID, bearer token, or request path. `INCR`, the firs
 the actual window reset. Redis failures fail closed with
 `503 RATE_LIMITER_UNAVAILABLE` rather than falling back to divergent per-instance counters.
 
+Anonymous rate-limit keys use the servlet peer address, and the gateway deliberately strips
+caller-supplied forwarding headers. The public ingress must therefore preserve the actual client
+peer address to the gateway, such as through direct L4 pass-through or a trusted PROXY protocol
+integration. If a load balancer or CDN terminates the connection and presents one shared peer
+address, all anonymous traffic will share one bucket; deployments must correct that topology before
+exposing the gateway publicly rather than trusting arbitrary `X-Forwarded-For` values.
+
 Rejected requests return `429 RATE_LIMIT_EXCEEDED` with `Retry-After`, `RateLimit-Limit`,
 `RateLimit-Remaining: 0`, and `RateLimit-Reset` headers. The gateway exposes the route-only metrics
 `gateway.rate.limit` (configured budget), `gateway.rate.limit.allowed`,
 `gateway.rate.limit.rejections`, `gateway.rate.limit.unavailable`, and
-`gateway.rate.limit.latency`; no client identifier is a metric label.
+`gateway.rate.limit.latency` (with percentile histogram buckets); no client identifier is a metric
+label.
 
 ## Authentication contract
 
@@ -134,14 +142,12 @@ one half-open probe is admitted. Bulkhead rejections and circuit-open responses 
 Authentication validation is O(1) remote calls per protected request and adds no unbounded gateway
 state. Redis rate-limit state is bounded by counter TTLs. Inbound request buffering is bounded by
 the configured byte limit, aggregate byte budget, and independent gateway-wide body-buffer admission
-semaphore;
-downstream response buffering is bounded by its byte limit and the independent gateway-wide
-response-buffer admission semaphore held through client writes and its aggregate byte budget.
-Downstream object-level
-authorization remains the domain service's responsibility. The gateway-side identity bulkhead,
-request-body admission, response-buffer admission, and upstream route bulkheads provide bounded
-concurrency guards for each dependency or buffer class; capacity rejections are observable through
-the `gateway.request.body.capacity.rejections` and
+semaphore. Downstream response buffering is bounded by its byte limit, aggregate byte budget, and
+the independent gateway-wide response-buffer admission semaphore held through client writes.
+Downstream object-level authorization remains the domain service's responsibility. The gateway-side
+identity bulkhead, request-body admission, response-buffer admission, and upstream route bulkheads
+provide bounded concurrency guards for each dependency or buffer class; capacity rejections are
+observable through the `gateway.request.body.capacity.rejections` and
 `gateway.response.buffer.capacity.rejections` counters and the controlled response contract.
 
 ## Operational guardrails
@@ -151,5 +157,6 @@ endpoint. Before production traffic, configure a heap-pressure alert such as
 `sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.85`
 for five minutes, and page or shed traffic when `gateway_inflight_requests` approaches the
 deployment's concurrency budget. Monitor `gateway.upstream.latency`, `gateway.upstream.failures`,
-`gateway.upstream.bulkhead.rejections`, `gateway.upstream.circuit.open`, and both buffer-capacity
-rejection counters alongside the rate-limit metrics.
+`gateway.upstream.bulkhead.rejections`, `gateway.upstream.circuit.open`, the request-body and
+response-buffer available-permit gauges, and both buffer-capacity rejection counters alongside the
+rate-limit metrics.

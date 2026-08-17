@@ -18,6 +18,10 @@ public class GatewayRateLimitMetrics {
 
     private final MeterRegistry meterRegistry;
     private final ConcurrentMap<String, AtomicInteger> configuredLimits = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> allowedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> rejectedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> unavailableCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Timer> latencyTimers = new ConcurrentHashMap<>();
 
     public GatewayRateLimitMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -39,36 +43,44 @@ public class GatewayRateLimitMetrics {
 
     /** Records one rate-limit decision admitted by Redis. */
     public void recordAllowed(String routeId) {
-        counter("gateway.rate.limit.allowed", routeId,
+        counter(allowedCounters, "gateway.rate.limit.allowed", routeId,
                 "Rate-limit decisions admitted by the gateway Redis rate limiter").increment();
     }
 
     /** Records one rate-limit decision rejected because its Redis counter exceeded the route budget. */
     public void recordRejected(String routeId) {
-        counter("gateway.rate.limit.rejections", routeId,
+        counter(rejectedCounters, "gateway.rate.limit.rejections", routeId,
                 "Rate-limit decisions rejected by the gateway Redis rate limiter").increment();
     }
 
     /** Records one rate-limit decision that Redis could not make safely. */
     public void recordUnavailable(String routeId) {
-        counter("gateway.rate.limit.unavailable", routeId,
+        counter(unavailableCounters, "gateway.rate.limit.unavailable", routeId,
                 "Rate-limit decisions unavailable because Redis failed").increment();
     }
 
     /** Records the complete Redis decision latency. */
     public void recordLatency(String routeId, long startNanos) {
-        Timer.builder("gateway.rate.limit.latency")
-                .description("Redis-backed gateway rate-limit decision latency")
-                .tag("route", routeTag(routeId))
-                .register(meterRegistry)
-                .record(System.nanoTime() - startNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+        timer(routeId).record(
+                System.nanoTime() - startNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
     }
 
-    private Counter counter(String name, String routeId, String description) {
-        return Counter.builder(name)
+    private Counter counter(
+            ConcurrentMap<String, Counter> counters, String name, String routeId, String description) {
+        String route = routeTag(routeId);
+        return counters.computeIfAbsent(route, ignored -> Counter.builder(name)
                 .description(description)
-                .tag("route", routeTag(routeId))
-                .register(meterRegistry);
+                .tag("route", route)
+                .register(meterRegistry));
+    }
+
+    private Timer timer(String routeId) {
+        String route = routeTag(routeId);
+        return latencyTimers.computeIfAbsent(route, ignored -> Timer.builder("gateway.rate.limit.latency")
+                .description("Redis-backed gateway rate-limit decision latency")
+                .tag("route", route)
+                .publishPercentileHistogram()
+                .register(meterRegistry));
     }
 
     private static String routeTag(String routeId) {

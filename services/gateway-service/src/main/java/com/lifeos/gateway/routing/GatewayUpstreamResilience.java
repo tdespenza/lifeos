@@ -58,7 +58,7 @@ public class GatewayUpstreamResilience {
         this.nanoTime = nanoTime;
         for (GatewayProperties.Route route : properties.getRoutes()) {
             if (route.getId() != null) {
-                states.put(route.getId(), new RouteState(this.properties, nanoTime));
+                states.put(route.getId(), new RouteState(this.properties, nanoTime, meterRegistry, route.getId()));
             }
         }
     }
@@ -72,17 +72,16 @@ public class GatewayUpstreamResilience {
      */
     public Permit acquire(GatewayRoute route) {
         String routeId = route == null ? "unknown" : route.id();
-        RouteState state = states.computeIfAbsent(routeId, ignored -> new RouteState(properties, nanoTime));
+        RouteState state = states.computeIfAbsent(
+                routeId, ignored -> new RouteState(properties, nanoTime, meterRegistry, routeId));
         CircuitPermit circuitPermit = state.circuit.tryAcquire();
         if (!circuitPermit.admitted()) {
-            counter("gateway.upstream.circuit.open", routeId,
-                    "Requests rejected because the upstream circuit is open").increment();
+            state.circuitOpenRejections.increment();
             throw unavailable("circuit_open", openDurationSeconds());
         }
         if (!state.bulkhead.tryAcquire()) {
             state.circuit.cancelProbe(circuitPermit.probe(), circuitPermit.probeGeneration());
-            counter("gateway.upstream.bulkhead.rejections", routeId,
-                    "Requests rejected because the upstream route bulkhead is full").increment();
+            state.bulkheadRejections.increment();
             throw unavailable("bulkhead_rejected", 1);
         }
         return new Permit(routeId, state, circuitPermit.probe(), circuitPermit.probeGeneration());
@@ -97,21 +96,6 @@ public class GatewayUpstreamResilience {
         return (int) Math.max(1L, (openDuration.toMillis() + 999L) / 1000L);
     }
 
-    private Counter counter(String name, String routeId, String description) {
-        return Counter.builder(name)
-                .description(description)
-                .tag("route", routeTag(routeId))
-                .register(meterRegistry);
-    }
-
-    private void recordLatency(String routeId, long startNanos) {
-        Timer.builder("gateway.upstream.latency")
-                .description("Gateway upstream forwarding latency")
-                .tag("route", routeTag(routeId))
-                .register(meterRegistry)
-                .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-    }
-
     private static String routeTag(String routeId) {
         return routeId == null || routeId.isBlank() ? "unknown" : routeId;
     }
@@ -123,7 +107,7 @@ public class GatewayUpstreamResilience {
         private final RouteState state;
         private final boolean circuitProbe;
         private final long probeGeneration;
-        private final long startNanos = System.nanoTime();
+        private final long startNanos;
         private boolean outcomeRecorded;
         private boolean closed;
 
@@ -132,6 +116,7 @@ public class GatewayUpstreamResilience {
             this.state = state;
             this.circuitProbe = circuitProbe;
             this.probeGeneration = probeGeneration;
+            this.startNanos = nanoTime.getAsLong();
         }
 
         /** Records an upstream response that should count as a healthy dependency call. */
@@ -147,8 +132,7 @@ public class GatewayUpstreamResilience {
             if (!outcomeRecorded) {
                 outcomeRecorded = true;
                 state.circuit.recordFailure(circuitProbe, probeGeneration);
-                counter("gateway.upstream.failures", routeId,
-                        "Upstream failures observed by the gateway").increment();
+                state.failures.increment();
             }
         }
 
@@ -160,7 +144,7 @@ public class GatewayUpstreamResilience {
                     recordFailure();
                 }
                 state.bulkhead.release();
-                recordLatency(routeId, startNanos);
+                state.latency.record(nanoTime.getAsLong() - startNanos, TimeUnit.NANOSECONDS);
             }
         }
     }
@@ -172,13 +156,39 @@ public class GatewayUpstreamResilience {
 
         private final Semaphore bulkhead;
         private final Circuit circuit;
+        private final Counter circuitOpenRejections;
+        private final Counter bulkheadRejections;
+        private final Counter failures;
+        private final Timer latency;
 
-        private RouteState(GatewayProperties.Upstream properties, LongSupplier nanoTime) {
+        private RouteState(
+                GatewayProperties.Upstream properties,
+                LongSupplier nanoTime,
+                MeterRegistry meterRegistry,
+                String routeId) {
             this.bulkhead = new Semaphore(properties.getBulkhead().getMaxConcurrentRequests(), true);
             this.circuit = new Circuit(
                     properties.getCircuitBreaker().getFailureThreshold(),
                     properties.getCircuitBreaker().getOpenDuration(),
                     nanoTime);
+            String route = routeTag(routeId);
+            this.circuitOpenRejections = Counter.builder("gateway.upstream.circuit.open")
+                    .description("Requests rejected because the upstream circuit is open")
+                    .tag("route", route)
+                    .register(meterRegistry);
+            this.bulkheadRejections = Counter.builder("gateway.upstream.bulkhead.rejections")
+                    .description("Requests rejected because the upstream route bulkhead is full")
+                    .tag("route", route)
+                    .register(meterRegistry);
+            this.failures = Counter.builder("gateway.upstream.failures")
+                    .description("Upstream failures observed by the gateway")
+                    .tag("route", route)
+                    .register(meterRegistry);
+            this.latency = Timer.builder("gateway.upstream.latency")
+                    .description("Gateway upstream forwarding latency")
+                    .tag("route", route)
+                    .publishPercentileHistogram()
+                    .register(meterRegistry);
         }
     }
 

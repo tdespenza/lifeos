@@ -1,6 +1,7 @@
 package com.lifeos.gateway.routing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
@@ -26,6 +27,7 @@ import com.lifeos.gateway.auth.GatewayAuthenticationService;
 import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdFilter;
+import com.lifeos.gateway.ratelimit.GatewayRateLimiter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
@@ -84,7 +86,11 @@ class GatewayControllerTest {
                 new GatewayAuthenticationMetrics(meterRegistry),
                 authenticationProperties);
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new GatewayController(new GatewayRouteTable(properties), forwarder, authenticationService))
+                        new GatewayController(
+                                new GatewayRouteTable(properties),
+                                forwarder,
+                                authenticationService,
+                                GatewayRateLimiter.allowAll()))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }
@@ -309,6 +315,56 @@ class GatewayControllerTest {
             });
             assertThat(healthy.get(5, TimeUnit.SECONDS)).isNull();
             assertThat(stalled.isDone()).isFalse();
+
+            releaseBody.countDown();
+            assertThat(stalled.get(5, TimeUnit.SECONDS)).isNull();
+            server.verify();
+        } finally {
+            releaseBody.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsASecondInboundBodyWhenRequestBufferCapacityIsFull() throws Exception {
+        GatewayProperties forwarderProperties = new GatewayProperties();
+        forwarderProperties.setRoutes(List.of(new GatewayProperties.Route(
+                "goals", "/api/v1/goals", UPSTREAM, false)));
+        forwarderProperties.setMaxConcurrentRequestBodyBuffers(1);
+        GatewayRoute route = new GatewayRoute(
+                "goals", "/api/v1/goals", URI.create(UPSTREAM), false, Set.of());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        GatewayForwarder forwarder = new GatewayForwarder(
+                builder.build(), forwarderProperties, registry,
+                new GatewayUpstreamResilience(forwarderProperties, registry));
+        CountDownLatch bodyReadStarted = new CountDownLatch(1);
+        CountDownLatch releaseBody = new CountDownLatch(1);
+        HttpServletRequest stalledRequest = requestWithoutBody("POST");
+        when(stalledRequest.getContentLengthLong()).thenReturn(-1L);
+        when(stalledRequest.getInputStream()).thenReturn(stalledInputStream(bodyReadStarted, releaseBody));
+        HttpServletRequest rejectedRequest = requestWithoutBody("POST");
+        when(rejectedRequest.getContentLengthLong()).thenReturn(-1L);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> stalled = executor.submit(() -> {
+                forwarder.forward(
+                        stalledRequest, new MockHttpServletResponse(), route, CORRELATION_ID);
+                return null;
+            });
+            assertThat(bodyReadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> forwarder.forward(
+                            rejectedRequest, new MockHttpServletResponse(), route, CORRELATION_ID))
+                    .isInstanceOf(GatewayRequestBodyCapacityException.class);
+            assertThat(registry.get("gateway.request.body.capacity.rejections")
+                    .counter()
+                    .count())
+                    .isEqualTo(1.0);
 
             releaseBody.countDown();
             assertThat(stalled.get(5, TimeUnit.SECONDS)).isNull();
@@ -546,7 +602,10 @@ class GatewayControllerTest {
         GatewayForwarder forwarder = new GatewayForwarder(upstreamBuilder.build(), properties, meterRegistry);
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new GatewayController(
-                                new GatewayRouteTable(properties), forwarder, authenticationService))
+                                new GatewayRouteTable(properties),
+                                forwarder,
+                                authenticationService,
+                                GatewayRateLimiter.allowAll()))
                 .addFilters(new CorrelationIdFilter())
                 .build();
     }

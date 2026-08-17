@@ -90,6 +90,7 @@ deadlines.
 | `503 Service Unavailable` | `AUTHENTICATION_UNAVAILABLE` | Identity validation cannot complete safely; the gateway fails closed |
 | `429 Too Many Requests` | `RATE_LIMIT_EXCEEDED` | Redis counter exceeds the configured route/client budget |
 | `503 Service Unavailable` | `RATE_LIMITER_UNAVAILABLE` | Redis cannot make a safe rate-limit decision; the gateway fails closed |
+| `503 Service Unavailable` | `REQUEST_BODY_CAPACITY` | Bounded request-body buffering capacity is full; retry later |
 | `413 Payload Too Large` | `PAYLOAD_TOO_LARGE` | Request exceeds its configured bound |
 | `502 Bad Gateway` | `UPSTREAM_UNAVAILABLE` | Upstream cannot be reached, returns an unusable transport response, or exceeds its response-size bound |
 | `504 Gateway Timeout` | `UPSTREAM_TIMEOUT` | Upstream connection or response read exceeds its deadline |
@@ -103,8 +104,10 @@ remains owned by the domain service.
 
 `IDENTITY_GATEWAY_WORKLOAD_TOKEN` must be configured independently in gateway and identity-service
 deployments. `LIFEOS_GATEWAY_MAX_REQUEST_BODY_BYTES` defaults to 1 MiB and
-`LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES` defaults to 10 MiB. Connection and read timeouts default to
-2 seconds and 5 seconds and are bounded to 60 seconds. Each route's upstream must be an absolute
+`LIFEOS_GATEWAY_MAX_CONCURRENT_REQUEST_BODY_BUFFERS` defaults to 64. The latter is a global,
+non-waiting admission bound for concurrent inbound request-body buffers; a full bound returns a
+controlled `503 REQUEST_BODY_CAPACITY`. `LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES` defaults to 10 MiB.
+Connection and read timeouts default to 2 seconds and 5 seconds and are bounded to 60 seconds. Each route's upstream must be an absolute
 HTTP(S) origin without userinfo, query, fragment, or a base path; duplicate route IDs and prefixes
 fail startup. `LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS` defaults to 600 per
 `LIFEOS_GATEWAY_RATE_LIMIT_WINDOW` (one minute). `LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET` is a
@@ -117,11 +120,13 @@ one half-open probe is admitted. Bulkhead rejections and circuit-open responses 
 `Retry-After` value and do not wait for a slow upstream.
 
 Authentication validation is O(1) remote calls per protected request and adds no unbounded gateway
-state. Redis rate-limit state is bounded by counter TTLs, and request/response buffering is bounded
-by byte limits plus the per-route bulkhead. Downstream object-level authorization remains the
-domain service's responsibility. The gateway-side identity bulkhead and upstream route bulkheads
-provide bounded concurrency guards for both dependency classes; rejected capacity is observable in
-metrics.
+state. Redis rate-limit state is bounded by counter TTLs. Inbound request buffering is bounded by
+the configured byte limit and the independent gateway-wide body-buffer admission semaphore;
+upstream response buffering is bounded by its byte limit and the per-route upstream bulkhead.
+Downstream object-level authorization remains the domain service's responsibility. The gateway-side
+identity bulkhead, request-body admission, and upstream route bulkheads provide bounded concurrency
+guards for each dependency or buffer class; request-body capacity rejections are observable through
+the `gateway.request.body.capacity.rejections` counter and the controlled response contract.
 
 ## Operational guardrails
 

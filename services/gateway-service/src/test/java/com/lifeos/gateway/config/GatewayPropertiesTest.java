@@ -22,4 +22,17 @@ class GatewayPropertiesTest {
                     .anyMatch(violation -> violation.getPropertyPath().toString().equals("windowValid"));
         }
     }
+
+    @Test
+    void rejectsInvalidRequestBodyBufferCapacity() {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setMaxConcurrentRequestBodyBuffers(0);
+
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(properties))
+                    .anyMatch(violation -> violation.getPropertyPath().toString()
+                            .equals("maxConcurrentRequestBodyBuffers"));
+        }
+    }
 }

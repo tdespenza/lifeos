@@ -42,20 +42,6 @@ public class GatewayController {
     private final GatewayRateLimiter rateLimiter;
 
     /**
-     * Creates the gateway controller with its protected-route authentication boundary.
-     *
-     * @param routeTable configured route table
-     * @param forwarder bounded HTTP forwarder
-     * @param authenticationService identity-service authentication boundary
-     */
-    public GatewayController(
-            GatewayRouteTable routeTable,
-            GatewayForwarder forwarder,
-            GatewayAuthenticationService authenticationService) {
-        this(routeTable, forwarder, authenticationService, GatewayRateLimiter.allowAll());
-    }
-
-    /**
      * Creates the production controller with the distributed request-admission boundary.
      *
      * @param routeTable configured route table
@@ -259,6 +245,22 @@ public class GatewayController {
         problem.setTitle("Payload too large");
         problem.setProperty("code", "PAYLOAD_TOO_LARGE");
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(problem);
+    }
+
+    /**
+     * Returns a controlled response when bounded request-body buffering is at capacity.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayRequestBodyCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleRequestBodyCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Request body capacity is temporarily unavailable.");
+        problem.setTitle("Request capacity unavailable");
+        problem.setProperty("code", "REQUEST_BODY_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "1")
+                .body(problem);
     }
 
     private static String correlationId(HttpServletRequest request) {

@@ -4,6 +4,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -79,6 +80,29 @@ class GatewayRateLimitControllerTest {
                 .andExpect(jsonPath("$.code").value("RATE_LIMITER_UNAVAILABLE"));
 
         verifyNoInteractions(forwarder);
+    }
+
+    @Test
+    void returns503WhenRequestBodyBufferCapacityIsFull() throws Exception {
+        GatewayProperties properties = new GatewayProperties();
+        properties.setRoutes(List.of(new GatewayProperties.Route(
+                "public", "/api/v1/public", "https://public.test", false)));
+        GatewayForwarder forwarder = mock(GatewayForwarder.class);
+        doThrow(new GatewayRequestBodyCapacityException())
+                .when(forwarder)
+                .forward(any(), any(), any(), any(), any());
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new GatewayController(
+                        new GatewayRouteTable(properties),
+                        forwarder,
+                        mock(GatewayAuthenticationService.class),
+                        GatewayRateLimiter.allowAll()))
+                .addFilters(new CorrelationIdFilter())
+                .build();
+
+        mockMvc.perform(get("/api/v1/public/resource"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(jsonPath("$.code").value("REQUEST_BODY_CAPACITY"));
     }
 
     @Test

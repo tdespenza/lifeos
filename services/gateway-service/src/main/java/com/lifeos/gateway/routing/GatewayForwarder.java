@@ -4,6 +4,7 @@ import com.lifeos.gateway.auth.GatewayAuthenticatedSubject;
 import com.lifeos.gateway.config.GatewayProperties;
 import com.lifeos.gateway.observability.CorrelationIdSupport;
 import com.lifeos.gateway.observability.RequestContext;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,6 +15,7 @@ import java.net.URI;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
@@ -36,8 +38,9 @@ import org.springframework.web.client.RestClientException;
  * exactly once on the downstream request.
  *
  * <p>{@code readBounded} consumes at most the configured limit plus one fixed-size read buffer,
- * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. The route bulkhead
- * bounds concurrent response buffers, so the worst-case response-buffer footprint is approximately
+ * runs in O(n) time for n bytes consumed, and uses O(limit) space per request. Inbound body buffers
+ * are independently bounded by a gateway-wide semaphore, while the route bulkhead bounds
+ * concurrent response buffers. The worst-case response-buffer footprint is approximately
  * {@code maxResponseBodyBytes * configuredRouteBulkheadCapacity} per gateway route.
  */
 @Component
@@ -74,6 +77,8 @@ public class GatewayForwarder {
     private final RestClient restClient;
     private final GatewayProperties properties;
     private final GatewayUpstreamResilience resilience;
+    private final Semaphore requestBodyAdmission;
+    private final Counter requestBodyCapacityRejections;
     private final AtomicInteger inFlightRequests = new AtomicInteger();
 
     /**
@@ -92,6 +97,10 @@ public class GatewayForwarder {
         this.restClient = restClient;
         this.properties = properties;
         this.resilience = resilience;
+        this.requestBodyAdmission = new Semaphore(properties.getMaxConcurrentRequestBodyBuffers(), true);
+        this.requestBodyCapacityRejections = Counter.builder("gateway.request.body.capacity.rejections")
+                .description("Requests rejected because bounded inbound body buffering is full")
+                .register(meterRegistry);
         meterRegistry.gauge("gateway.inflight.requests", inFlightRequests);
     }
 
@@ -191,10 +200,18 @@ public class GatewayForwarder {
         if (declaredLength == 0 || !mayHaveBody(method)) {
             return new byte[0];
         }
-        if (declaredLength > properties.getMaxRequestBodyBytes()) {
-            throw new GatewayPayloadTooLargeException();
+        if (!requestBodyAdmission.tryAcquire()) {
+            requestBodyCapacityRejections.increment();
+            throw new GatewayRequestBodyCapacityException();
         }
-        return readBounded(request.getInputStream(), properties.getMaxRequestBodyBytes());
+        try {
+            if (declaredLength > properties.getMaxRequestBodyBytes()) {
+                throw new GatewayPayloadTooLargeException();
+            }
+            return readBounded(request.getInputStream(), properties.getMaxRequestBodyBytes());
+        } finally {
+            requestBodyAdmission.release();
+        }
     }
 
     private static boolean mayHaveBody(HttpMethod method) {

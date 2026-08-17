@@ -36,6 +36,10 @@ public class GatewayProperties {
     @Min(value = 1, message = "maxRequestBodyBytes must be positive")
     private long maxRequestBodyBytes = 1_048_576L;
 
+    @Min(value = 1, message = "maxConcurrentRequestBodyBuffers must be positive")
+    @Max(value = 4096, message = "maxConcurrentRequestBodyBuffers must be bounded")
+    private int maxConcurrentRequestBodyBuffers = 64;
+
     @Min(value = 1, message = "maxResponseBodyBytes must be positive")
     private long maxResponseBodyBytes = 10_485_760L;
 
@@ -85,6 +89,24 @@ public class GatewayProperties {
      */
     public void setMaxRequestBodyBytes(long maxRequestBodyBytes) {
         this.maxRequestBodyBytes = maxRequestBodyBytes;
+    }
+
+    /**
+     * Returns the maximum number of request bodies that may be buffered concurrently.
+     *
+     * @return request-body buffering admission capacity
+     */
+    public int getMaxConcurrentRequestBodyBuffers() {
+        return maxConcurrentRequestBodyBuffers;
+    }
+
+    /**
+     * Sets the request-body buffering admission capacity during configuration binding.
+     *
+     * @param maxConcurrentRequestBodyBuffers maximum concurrent request-body buffers
+     */
+    public void setMaxConcurrentRequestBodyBuffers(int maxConcurrentRequestBodyBuffers) {
+        this.maxConcurrentRequestBodyBuffers = maxConcurrentRequestBodyBuffers;
     }
 
     /**

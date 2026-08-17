@@ -83,6 +83,23 @@ class RedisGatewayRateLimiterUnitTest {
     }
 
     @Test
+    void doesNotStoreRawAnonymousAddressesInRedisKeys() {
+        StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        doReturn(1L).when(redis).execute(any(DefaultRedisScript.class), anyList(), anyString());
+        RedisGatewayRateLimiter limiter = new RedisGatewayRateLimiter(
+                redis, properties(5), new GatewayRateLimitMetrics(new SimpleMeterRegistry()));
+
+        limiter.check(ROUTE, request("203.0.113.8"), null);
+
+        org.mockito.ArgumentCaptor<List<String>> keys = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(redis).execute(any(DefaultRedisScript.class), keys.capture(), anyString());
+        assertThat(keys.getValue()).hasSize(1);
+        assertThat(keys.getValue().getFirst())
+                .startsWith("lifeos:gateway:rate-limit:")
+                .doesNotContain("203.0.113.8");
+    }
+
+    @Test
     void failsClosedWhenRedisThrows() {
         StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
         GatewayProperties properties = properties(5);

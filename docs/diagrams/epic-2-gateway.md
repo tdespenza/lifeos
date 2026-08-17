@@ -20,6 +20,7 @@ flowchart LR
     I -- Redis failure --> L[503 fail closed]
     J -- Redis failure --> L
     I -- allowed --> M[Validate bearer with identity-service]
+    J -- allowed --> R{Route circuit and bulkhead admit?}
     M -- invalid --> N[401; redacted security metric]
     M -- unavailable --> O[503 fail closed; redacted security metric]
     M -- valid --> P[Derive validated account digest]

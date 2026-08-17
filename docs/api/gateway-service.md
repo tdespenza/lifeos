@@ -25,7 +25,7 @@ gateway routes.
 
 ## Rate limiting
 
-Every resolved route is independently rate limited by Redis fixed-window counters. Protected
+Every resolved route is independently rate-limited by Redis fixed-window counters. Protected
 requests receive a pre-authentication charge to the immediate client address before identity
 validation, then a second charge to the validated account ID after successful authentication;
 public requests receive only the address charge. Redis keys contain only a route-and-client digest,

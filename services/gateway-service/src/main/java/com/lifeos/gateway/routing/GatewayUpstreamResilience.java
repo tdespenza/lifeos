@@ -17,10 +17,26 @@ import org.springframework.stereotype.Component;
 /**
  * Per-route upstream bulkheads and consecutive-failure circuit breakers.
  *
- * <p>Admission never waits for a permit. A request either acquires the route's bounded bulkhead
- * immediately or receives a controlled degraded response, so slow upstreams cannot create an
- * unbounded queue in the gateway. Circuit state is local operational state: it protects one
- * gateway instance and is deliberately not treated as authorization or business state.
+ * <p>For a finite set of configured route IDs, the state machine keeps one semaphore and one
+ * circuit state per route. Admission never waits for a permit: a request either acquires the
+ * route's bounded bulkhead immediately or receives a controlled degraded response, so slow
+ * upstreams cannot create an unbounded queue in the gateway. Circuit state is local operational
+ * state: it protects one gateway instance and is deliberately not treated as authorization or
+ * business state.
+ *
+ * <p>Under the configured-route invariant, an admission attempt is O(1) average time for the
+ * concurrent route-map lookup, semaphore operation, and synchronized circuit transition. Memory
+ * is O(R) for {@code R} configured routes, plus O(1) state per in-flight permit; there is no
+ * unbounded wait queue. The worst case is immediate rejection when the circuit is open, a
+ * half-open probe is already active, or the route bulkhead is full. Callers must pass only
+ * startup-validated route IDs; passing arbitrary unbounded route IDs would grow the map and
+ * violate the O(R) bound.
+ *
+ * <p>A distributed circuit state or a resilience library could coordinate decisions across gateway
+ * instances, but would add network failure modes and shared state to this local protection layer.
+ * The local route-keyed design is preferred because it gives bounded, instance-local isolation
+ * with deterministic no-wait admission; cross-instance consistency remains the rate limiter's
+ * responsibility.
  */
 @Component
 public class GatewayUpstreamResilience {

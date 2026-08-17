@@ -233,11 +233,10 @@ public class GatewayProperties {
             this.keySecret = keySecret;
         }
 
-        @AssertTrue(message = "rateLimit.window must be positive and no greater than 24 hours")
+        @AssertTrue(message = "rateLimit.window must be at least one millisecond and no greater than 24 hours")
         public boolean isWindowValid() {
             return window != null
-                    && !window.isZero()
-                    && !window.isNegative()
+                    && window.compareTo(Duration.ofMillis(1)) >= 0
                     && window.compareTo(Duration.ofHours(24)) <= 0;
         }
     }

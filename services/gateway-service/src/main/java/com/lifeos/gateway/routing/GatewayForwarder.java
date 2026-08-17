@@ -138,50 +138,48 @@ public class GatewayForwarder {
             String correlationId,
             GatewayAuthenticatedSubject subject)
             throws IOException {
+        HttpMethod method = HttpMethod.valueOf(request.getMethod());
+        byte[] requestBody = readRequestBody(request, method);
+        URI target = targetUri(route, request);
+
+        RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
+        requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
+
+        RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
+        if (requestBody.length > 0) {
+            outgoing = requestSpec.body(requestBody);
+        }
+
         GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
         try (permit) {
             inFlightRequests.incrementAndGet();
             try {
-                HttpMethod method = HttpMethod.valueOf(request.getMethod());
-                byte[] requestBody = readRequestBody(request, method);
-                URI target = targetUri(route, request);
-
-                RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-                requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
-
-                RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
-                if (requestBody.length > 0) {
-                    outgoing = requestSpec.body(requestBody);
+                DownstreamResponse downstream = outgoing.exchange(
+                        (clientRequest, clientResponse) -> readResponse(clientResponse));
+                if (downstream.status().is5xxServerError()) {
+                    permit.recordFailure();
+                } else {
+                    permit.recordSuccess();
                 }
-
-                try {
-                    DownstreamResponse downstream = outgoing.exchange(
-                            (clientRequest, clientResponse) -> readResponse(clientResponse));
-                    if (downstream.status().is5xxServerError()) {
-                        permit.recordFailure();
-                    } else {
-                        permit.recordSuccess();
-                    }
-                    writeResponse(response, downstream, method);
-                } catch (GatewayUpstreamException exception) {
-                    permit.recordFailure();
-                    logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
-                    throw exception;
-                } catch (GatewayPayloadTooLargeException exception) {
-                    permit.recordFailure();
-                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
-                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-                } catch (ResourceAccessException exception) {
-                    permit.recordFailure();
-                    boolean timeout = isTimeout(exception);
-                    HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                    logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
-                    throw new GatewayUpstreamException(status, exception);
-                } catch (RestClientException exception) {
-                    permit.recordFailure();
-                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
-                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-                }
+                writeResponse(response, downstream, method);
+            } catch (GatewayUpstreamException exception) {
+                permit.recordFailure();
+                logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
+                throw exception;
+            } catch (GatewayPayloadTooLargeException exception) {
+                permit.recordFailure();
+                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
+                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+            } catch (ResourceAccessException exception) {
+                permit.recordFailure();
+                boolean timeout = isTimeout(exception);
+                HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
+                throw new GatewayUpstreamException(status, exception);
+            } catch (RestClientException exception) {
+                permit.recordFailure();
+                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
+                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
             } finally {
                 inFlightRequests.decrementAndGet();
             }

@@ -37,19 +37,19 @@ public class GatewayRateLimitMetrics {
         value.set(limit);
     }
 
-    /** Records one request admitted by Redis. */
+    /** Records one rate-limit decision admitted by Redis. */
     public void recordAllowed(String routeId) {
         counter("gateway.rate.limit.allowed", routeId,
-                "Requests admitted by the gateway Redis rate limiter").increment();
+                "Rate-limit decisions admitted by the gateway Redis rate limiter").increment();
     }
 
-    /** Records one request rejected because its Redis counter exceeded the route budget. */
+    /** Records one rate-limit decision rejected because its Redis counter exceeded the route budget. */
     public void recordRejected(String routeId) {
         counter("gateway.rate.limit.rejections", routeId,
-                "Requests rejected by the gateway Redis rate limiter").increment();
+                "Rate-limit decisions rejected by the gateway Redis rate limiter").increment();
     }
 
-    /** Records one request rejected because Redis could not make a safe decision. */
+    /** Records one rate-limit decision that Redis could not make safely. */
     public void recordUnavailable(String routeId) {
         counter("gateway.rate.limit.unavailable", routeId,
                 "Rate-limit decisions unavailable because Redis failed").increment();

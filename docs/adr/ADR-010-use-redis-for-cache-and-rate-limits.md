@@ -26,7 +26,7 @@ Redis is the only option among those considered that satisfies the distributed, 
 
 ## Tradeoffs
 
-- We introduce a new stateful dependency that must be operated, monitored, and kept highly available; a Redis outage degrades rate limiting, session validation, and Finance Service read paths simultaneously, since they share the same cluster.
+- We introduce stateful dependencies that must be operated, monitored, and kept highly available. Rate-limit counter availability depends on its isolated no-eviction tier, while session-validation acceleration and Finance Service cache availability depend on their respective Redis tiers.
 - Redis is primarily in-memory: data is not durable by default (AOF/RDB persistence adds latency and operational complexity we're deliberately not fully enabling for cache/session use cases), so a hard restart can momentarily reopen a rate-limit window. Any future refresh-token or revocation-cache state must be treated as restart-sensitive; current sessions remain durable in PostgreSQL.
 - Clustering Redis for HA adds operational surface (Sentinel or Cluster mode, failover behavior, client-side topology awareness) beyond a single-node deployment.
 - Using Redis as a cache in front of PostgreSQL in the Finance Service introduces cache-invalidation correctness risk — stale financial reads are a real hazard that requires explicit TTL and write-through/invalidation discipline, not a "cache everything" default.

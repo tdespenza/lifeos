@@ -148,50 +148,76 @@ public class GatewayForwarder {
             GatewayAuthenticatedSubject subject)
             throws IOException {
         HttpMethod method = HttpMethod.valueOf(request.getMethod());
-        byte[] requestBody = readRequestBody(request, method);
-        URI target = targetUri(route, request);
+        boolean bodyAdmissionAcquired = acquireRequestBodyAdmission(request, method);
+        try {
+            byte[] requestBody = readRequestBody(request, method);
+            URI target = targetUri(route, request);
 
-        RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-        requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
+            RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
+            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
 
-        RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
-        if (requestBody.length > 0) {
-            outgoing = requestSpec.body(requestBody);
-        }
-
-        GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
-        try (permit) {
-            inFlightRequests.incrementAndGet();
-            try {
-                DownstreamResponse downstream = outgoing.exchange(
-                        (clientRequest, clientResponse) -> readResponse(clientResponse));
-                if (downstream.status().is5xxServerError()) {
-                    permit.recordFailure();
-                } else {
-                    permit.recordSuccess();
-                }
-                writeResponse(response, downstream, method);
-            } catch (GatewayUpstreamException exception) {
-                permit.recordFailure();
-                logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
-                throw exception;
-            } catch (GatewayPayloadTooLargeException exception) {
-                permit.recordFailure();
-                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
-                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-            } catch (ResourceAccessException exception) {
-                permit.recordFailure();
-                boolean timeout = isTimeout(exception);
-                HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
-                throw new GatewayUpstreamException(status, exception);
-            } catch (RestClientException exception) {
-                permit.recordFailure();
-                logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
-                throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-            } finally {
-                inFlightRequests.decrementAndGet();
+            RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
+            if (requestBody.length > 0) {
+                outgoing = requestSpec.body(requestBody);
             }
+
+            GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
+            DownstreamResponse downstream = null;
+            try (permit) {
+                inFlightRequests.incrementAndGet();
+                try {
+                    downstream = outgoing.exchange(
+                            (clientRequest, clientResponse) -> readResponse(clientResponse));
+                    if (downstream.status().is5xxServerError()) {
+                        permit.recordFailure();
+                    } else {
+                        permit.recordSuccess();
+                    }
+                } catch (GatewayUpstreamException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
+                    throw exception;
+                } catch (GatewayPayloadTooLargeException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "oversized-response");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                } catch (ResourceAccessException exception) {
+                    permit.recordFailure();
+                    boolean timeout = isTimeout(exception);
+                    HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+                    logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
+                    throw new GatewayUpstreamException(status, exception);
+                } catch (RestClientException exception) {
+                    permit.recordFailure();
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "client");
+                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
+                } finally {
+                    inFlightRequests.decrementAndGet();
+                }
+            }
+            releaseRequestBodyAdmission(bodyAdmissionAcquired);
+            bodyAdmissionAcquired = false;
+            writeResponse(response, downstream, method);
+        } finally {
+            releaseRequestBodyAdmission(bodyAdmissionAcquired);
+        }
+    }
+
+    private boolean acquireRequestBodyAdmission(HttpServletRequest request, HttpMethod method) {
+        long declaredLength = request.getContentLengthLong();
+        if (declaredLength == 0 || !mayHaveBody(method)) {
+            return false;
+        }
+        if (!requestBodyAdmission.tryAcquire()) {
+            requestBodyCapacityRejections.increment();
+            throw new GatewayRequestBodyCapacityException();
+        }
+        return true;
+    }
+
+    private void releaseRequestBodyAdmission(boolean acquired) {
+        if (acquired) {
+            requestBodyAdmission.release();
         }
     }
 
@@ -200,18 +226,10 @@ public class GatewayForwarder {
         if (declaredLength == 0 || !mayHaveBody(method)) {
             return new byte[0];
         }
-        if (!requestBodyAdmission.tryAcquire()) {
-            requestBodyCapacityRejections.increment();
-            throw new GatewayRequestBodyCapacityException();
+        if (declaredLength > properties.getMaxRequestBodyBytes()) {
+            throw new GatewayPayloadTooLargeException();
         }
-        try {
-            if (declaredLength > properties.getMaxRequestBodyBytes()) {
-                throw new GatewayPayloadTooLargeException();
-            }
-            return readBounded(request.getInputStream(), properties.getMaxRequestBodyBytes());
-        } finally {
-            requestBodyAdmission.release();
-        }
+        return readBounded(request.getInputStream(), properties.getMaxRequestBodyBytes());
     }
 
     private static boolean mayHaveBody(HttpMethod method) {

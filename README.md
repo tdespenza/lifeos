@@ -8,16 +8,38 @@ The project is designed to showcase senior-level engineering ability and FAANG-s
 
 ## Status
 
-Early-stage. Phase 1 of the roadmap is underway: three backend services are built and running (see below), with the rest of the target architecture still ahead. See [`docs/architecture/current-state.md`](docs/architecture/current-state.md) for a precise built-vs-planned breakdown.
+Early-stage. Twelve bounded backend service modules are implemented and independently packageable,
+but this is not a production-deployment claim: several target capabilities deliberately fail closed
+until their external dependencies are reviewed and provisioned. See
+[`docs/architecture/current-state.md`](docs/architecture/current-state.md) for the precise
+built-versus-planned breakdown.
 
 ## What's Actually Built
 
-* **identity-service** — account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn assertion login, short-lived JWT/JWKS validation, one-time refresh-token rotation, and deterministic RBAC/ABAC policy decisions over PostgreSQL, with Redis-backed rate limiting and single-use callback state. See [`docs/api/identity-service.md`](docs/api/identity-service.md) and [`docs/diagrams/identity-authorization.md`](docs/diagrams/identity-authorization.md).
-* **task-goal-service** — authenticated owner/tenant-scoped goal create/list/read plus a topological-sort dependency-ordering endpoint (Kahn's algorithm) over PostgreSQL. It validates bearer sessions and enforces identity authorization decisions before object access. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md) and [`docs/algorithms/topological-sort-goal-dependencies.md`](docs/algorithms/topological-sort-goal-dependencies.md).
-* **gateway-service** — one public REST ingress for the configured `/api/v1/accounts`, `/api/v1/auth`, and `/api/v1/goals` route prefixes. It forwards only to deployment-configured upstream origins, enforces Redis-backed route/client budgets, isolates upstreams with bounded timeouts, bulkheads, and circuit breakers, preserves downstream HTTP responses, rejects unknown routes with controlled problem details, and propagates one validated `X-Correlation-ID`. See [`docs/api/gateway-service.md`](docs/api/gateway-service.md), [`docs/architecture/current-state.md`](docs/architecture/current-state.md), [`docs/diagrams/epic-2-gateway.md`](docs/diagrams/epic-2-gateway.md), and [`docs/epics.md`](docs/epics.md) for the corresponding API, architecture, diagram, and roadmap evidence.
-* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`) — Redis is used by the gateway and identity-service for bounded rate limiting and short-lived security state.
+* **identity-service** — account registration, first-party email/password login, configured OAuth2/OIDC authorization-code login, passkey/WebAuthn registration/assertion login, one-time recovery-code login, short-lived JWT/JWKS validation, one-time refresh-token rotation, and deterministic RBAC/ABAC policy decisions over PostgreSQL, with Redis-backed rate limiting and single-use callback state. See [`docs/api/identity-service.md`](docs/api/identity-service.md) and [`docs/diagrams/identity-authorization.md`](docs/diagrams/identity-authorization.md).
+* **task-goal-service** — authenticated owner/tenant-scoped Task and Goal lifecycles, durable
+  idempotency, persisted mixed dependencies, and bounded deterministic execution ordering over
+  PostgreSQL. See [`docs/api/task-goal-service.md`](docs/api/task-goal-service.md).
+* **gateway-service** — one public REST ingress for finite, deployment-configured route prefixes.
+  It enforces Redis-backed budgets, bounded timeouts, bulkheads/circuits, authentication, and a
+  validated `X-Correlation-ID`. See [`docs/api/gateway-service.md`](docs/api/gateway-service.md).
+* **profile, notification, calendar, finance, trust-ledger, document-vault, media, AI assistant,
+  and analytics services** — bounded domain foundations with their exact implemented/pending scope in
+  [`docs/architecture/current-state.md`](docs/architecture/current-state.md) and `docs/api/`.
+* Local dev infrastructure (PostgreSQL + Redis via `infrastructure/docker-compose/`, plus optional
+  Kafka, observability, and loopback-only Besu blockchain profiles) — copy
+  [`infrastructure/docker-compose/.env.example`](infrastructure/docker-compose/.env.example) to a
+  gitignored `.env` and supply local-only database credentials before starting it.
+  The blockchain profile and digest-only contract are documented in
+  [`docs/operations/local-blockchain.md`](docs/operations/local-blockchain.md).
 
-Production gRPC/mTLS contracts, other services, clients (web/desktop/mobile), event bus, and deployed observability remain planned. The current internal authorization adapter is bounded and workload-authenticated; the gateway's deployment-managed upstream connections still require the future infrastructure mTLS rollout. See `CONTRIBUTING.md` (once merged — see #14) to build and run this yourself.
+Complete gRPC client-mesh migration, production Kafka/provider/ledger operations, full
+client domain workflows, and a production observability deployment remain planned. Web, JavaFX, and
+Flutter client shells are present under `clients/`, share the core information architecture, and use bounded gateway contracts. A local opt-in
+Collector/Prometheus/Loki/Tempo/Grafana reference profile is available via the
+[observability runbook](docs/operations/observability.md). The current internal authorization
+adapter is bounded and workload-authenticated; deployment-managed upstream connections still need
+a production mTLS rollout.
 
 ## Target Feature Set
 
@@ -64,8 +86,8 @@ The full product vision (not all built yet — see Status above):
 
 * `REQUIREMENTS.md` — product vision, architecture, technology decisions, and roadmap (source of truth for all development). Intentionally gitignored — a fresh clone won't have it, and it isn't needed to build/run/test the code. Its substance is mirrored across the tracked docs below (ADRs, interview docs, architecture doc) and this README; the source document itself requires the project owner.
 * [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) — engineering standards and required workflow for contributors and AI coding agents
-* `docs/adr/` — 18 architecture decision records covering the major technology/architecture choices
-* `docs/algorithms/`, `docs/api/`, `docs/architecture/`, `docs/concurrency/`, `docs/diagrams/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, API docs, current-state architecture, and interview-prep docs for what's actually built so far (each one explicitly distinguishes built vs. planned); `docs/benchmarks/` is a plan only — no numbers until something's actually been measured
+* `docs/adr/` — architecture decision records covering major technology and architecture choices
+* `docs/algorithms/`, `docs/api/`, `docs/architecture/`, `docs/concurrency/`, `docs/diagrams/`, `docs/interview/`, `docs/benchmarks/` — algorithm write-ups, API docs, current-state architecture, and interview-prep docs for what's actually built so far (each one explicitly distinguishes built vs. planned); `docs/benchmarks/` records only dated, reproducible measurements and keeps unrun targets clearly marked
 
 ## Roadmap
 
@@ -73,8 +95,23 @@ The full 8-phase roadmap — from foundation and core algorithms through microse
 
 ## Verification
 
-The gateway implementation and its documentation are validated with `./gradlew --no-daemon check`
-and `git diff --check`. The seven changed Markdown documents — this README, ADR-010, ADR-022, the
-gateway API, current architecture, Epic 2 gateway diagram, and epics roadmap — are prose-only, so
-link consistency review and whitespace validation are the applicable documentation checks; no
-executable documentation test exists yet.
+Run the repository checks with:
+
+```bash
+./gradlew --no-daemon check
+git diff --check
+bash scripts/verify-observability-stack.sh
+```
+
+The Gradle build covers the currently implemented services; the observability script statically
+validates the local telemetry profile's YAML, JSON, and topology invariants without Docker or
+service secrets. For a local Compose configuration check, copy
+`infrastructure/docker-compose/.env.example` to the ignored `.env` file, fill the required local
+database values, then run:
+
+```bash
+docker compose -f infrastructure/docker-compose/docker-compose.yml config -q
+```
+
+See the [observability runbook](docs/operations/observability.md) for the optional profile and its
+explicitly local-only boundary.

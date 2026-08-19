@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
   pull_request:
-    branches: [dev, main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -14,7 +12,36 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  format:
+    name: Format and pipeline script checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Validate CI/CD script syntax
+        run: bash scripts/verify-pipeline-scripts.sh
+
+      - name: Test release version helper
+        run: bash scripts/test-release-version.sh
+
+      - name: Check formatting
+        run: ./gradlew --no-daemon formatCheck
+
+  compile:
+    name: Compile services
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -32,8 +59,478 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
-      - name: Compile and run tests
-        run: ./gradlew build
+      - name: Compile all Java modules
+        run: ./gradlew --no-daemon compileProject
 
-      - name: Test release version helper
-        run: bash scripts/test-release-version.sh
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Run Checkstyle
+        run: ./gradlew --no-daemon staticAnalysis
+
+      - name: Publish static-analysis reports
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: static-analysis-reports-${{ github.run_attempt }}
+          path: "**/build/reports/checkstyle/**"
+          if-no-files-found: warn
+          retention-days: 14
+
+  architecture:
+    name: Architecture boundary tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Verify service architecture boundaries
+        run: ./gradlew --no-daemon architectureTest
+
+  tests:
+    name: Unit, integration, and contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Run unit, integration, and contract suites
+        run: ./gradlew --no-daemon test integrationTest contractTest
+
+      - name: Publish test reports
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: test-reports-${{ github.run_attempt }}
+          path: |
+            **/build/test-results/**
+            **/build/reports/tests/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  mutation:
+    name: Mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Run PIT mutation analysis
+        run: ./gradlew --no-daemon mutationTest
+
+      - name: Publish mutation reports
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: mutation-reports-${{ github.run_attempt }}
+          path: services/*/build/reports/pitest/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  sbom:
+    name: Generate and validate SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Generate CycloneDX SBOM
+        run: ./gradlew --no-daemon cyclonedxBom
+
+      - name: Validate SBOM structure
+        run: bash scripts/verify-sbom.sh
+
+      - name: Publish SBOM
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: cyclonedx-sbom-${{ github.run_attempt }}
+          path: build/reports/cyclonedx/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  source-security:
+    name: Source and dependency security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Package services for dependency scanning
+        run: ./gradlew --no-daemon packageServices
+
+      - name: Run Trivy filesystem scan
+        run: bash scripts/scan-source-security.sh
+
+  container:
+    name: Build and scan container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Package services
+        run: ./gradlew --no-daemon packageServices
+
+      - name: Build runtime images
+        env:
+          LIFEOS_IMAGE_TAG: ${{ github.sha }}
+        run: bash scripts/build-container-images.sh
+
+      - name: Run Trivy container scans
+        env:
+          LIFEOS_IMAGE_TAG: ${{ github.sha }}
+        run: bash scripts/scan-container-images.sh
+
+  staging-status:
+    name: Staging deployment status
+    needs: [format, compile, static-analysis, architecture, tests, mutation, sbom, source-security, container]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report staging gate state
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          STAGING_ENABLED: ${{ vars.LIFEOS_STAGING_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" ]]; then
+            echo "::notice::Staging deploy/smoke is intentionally not run for untrusted pull-request code."
+          elif [[ "${REF_NAME}" != "dev" && "${REF_NAME}" != "main" ]]; then
+            echo "::notice::Staging deploy/smoke is intentionally not run for feature-branch pushes; the local quality gates still ran for this change."
+          elif [[ "${STAGING_ENABLED}" != "true" ]]; then
+            echo "::notice::Staging deploy/smoke is pending infrastructure. Set LIFEOS_STAGING_ENABLED=true after configuring the staging environment described in docs/operations/ci-cd-quality-gates.md."
+          else
+            echo "Staging deployment and smoke jobs are enabled for this protected branch push."
+          fi
+
+  staging-deploy:
+    name: Deploy verified images to staging
+    needs: [format, compile, static-analysis, architecture, tests, mutation, sbom, source-security, container]
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      vars.LIFEOS_STAGING_ENABLED == 'true' &&
+      needs.format.result == 'success' &&
+      needs.compile.result == 'success' &&
+      needs['static-analysis'].result == 'success' &&
+      needs.architecture.result == 'success' &&
+      needs.tests.result == 'success' &&
+      needs.mutation.result == 'success' &&
+      needs.sbom.result == 'success' &&
+      needs['source-security'].result == 'success' &&
+      needs.container.result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout verified commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Package service images
+        run: ./gradlew --no-daemon packageServices
+
+      - name: Authenticate to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${REGISTRY_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build and publish immutable staging images
+        env:
+          LIFEOS_IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          LIFEOS_IMAGE_TAG: ${{ github.sha }}
+          LIFEOS_PUSH_IMAGES: "true"
+        run: bash scripts/build-container-images.sh
+
+      - name: Request idempotent staging deployment
+        env:
+          STAGING_DEPLOY_WEBHOOK_URL: ${{ secrets.STAGING_DEPLOY_WEBHOOK_URL }}
+          LIFEOS_IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          LIFEOS_IMAGE_TAG: ${{ github.sha }}
+        run: bash scripts/deploy-staging.sh
+
+  staging-smoke:
+    name: Smoke test staging
+    needs: staging-deploy
+    if: >
+      github.event_name == 'push' &&
+      vars.LIFEOS_STAGING_ENABLED == 'true' &&
+      needs['staging-deploy'].result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout smoke test script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify staging readiness
+        env:
+          STAGING_SERVICE_URLS_JSON: ${{ vars.STAGING_SERVICE_URLS_JSON }}
+        run: bash scripts/staging-smoke-test.sh
+
+  end-to-end-status:
+    name: End-to-end test status
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report end-to-end gate state
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          STAGING_ENABLED: ${{ vars.LIFEOS_STAGING_ENABLED }}
+          E2E_ENABLED: ${{ vars.LIFEOS_E2E_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" || ( "${REF_NAME}" != "dev" && "${REF_NAME}" != "main" ) ]]; then
+            echo "::notice::The live end-to-end test is not eligible for this untrusted or non-protected change."
+          elif [[ "${STAGING_ENABLED}" != "true" || "${E2E_ENABLED}" != "true" ]]; then
+            echo "::notice::The live end-to-end test is pending protected staging configuration. See docs/operations/ci-cd-quality-gates.md."
+          else
+            echo "The live end-to-end test is enabled and will run after successful staging smoke checks."
+          fi
+
+  end-to-end:
+    name: Live end-to-end smoke test
+    needs: staging-smoke
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      vars.LIFEOS_STAGING_ENABLED == 'true' &&
+      vars.LIFEOS_E2E_ENABLED == 'true' &&
+      needs['staging-smoke'].result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout end-to-end test
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Exercise the Gateway-to-Identity live path
+        env:
+          LIFEOS_E2E_GATEWAY_BASE_URL: ${{ vars.STAGING_GATEWAY_BASE_URL }}
+          LIFEOS_E2E_IDENTITY_BASE_URL: ${{ vars.STAGING_IDENTITY_BASE_URL }}
+          LIFEOS_E2E_TASK_GOAL_BASE_URL: ${{ vars.STAGING_TASK_GOAL_BASE_URL }}
+        run: bash scripts/end-to-end-smoke-test.sh
+
+  performance-status:
+    name: Performance test status
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report performance gate state
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          STAGING_ENABLED: ${{ vars.LIFEOS_STAGING_ENABLED }}
+          PERFORMANCE_ENABLED: ${{ vars.LIFEOS_PERFORMANCE_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" || ( "${REF_NAME}" != "dev" && "${REF_NAME}" != "main" ) ]]; then
+            echo "::notice::The bounded live performance test is not eligible for this untrusted or non-protected change."
+          elif [[ "${STAGING_ENABLED}" != "true" || "${PERFORMANCE_ENABLED}" != "true" ]]; then
+            echo "::notice::The bounded live performance test is pending protected staging configuration. See docs/operations/ci-cd-quality-gates.md."
+          else
+            echo "The bounded live performance test is enabled and will run after successful staging smoke checks."
+          fi
+
+  performance:
+    name: Bounded live performance smoke test
+    needs: staging-smoke
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      vars.LIFEOS_STAGING_ENABLED == 'true' &&
+      vars.LIFEOS_PERFORMANCE_ENABLED == 'true' &&
+      needs['staging-smoke'].result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout performance test
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run bounded k6 readiness smoke test
+        env:
+          LIFEOS_PERFORMANCE_GATEWAY_BASE_URL: ${{ vars.STAGING_GATEWAY_BASE_URL }}
+          LIFEOS_PERFORMANCE_VUS: "10"
+          LIFEOS_PERFORMANCE_DURATION: 15s
+        run: bash scripts/performance-smoke-test.sh
+
+      - name: Publish performance report
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: performance-report-${{ github.run_attempt }}
+          path: build/reports/performance/k6-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  chaos-status:
+    name: Chaos test status
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report chaos gate state
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          STAGING_ENABLED: ${{ vars.LIFEOS_STAGING_ENABLED }}
+          CHAOS_ENABLED: ${{ vars.LIFEOS_CHAOS_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" || ( "${REF_NAME}" != "dev" && "${REF_NAME}" != "main" ) ]]; then
+            echo "::notice::The destructive-chaos experiment is not eligible for this untrusted or non-protected change."
+          elif [[ "${STAGING_ENABLED}" != "true" || "${CHAOS_ENABLED}" != "true" ]]; then
+            echo "::notice::The chaos experiment is pending an approved, rollback-capable staging runner. See docs/operations/ci-cd-quality-gates.md."
+          else
+            echo "The chaos experiment is enabled and will run after successful staging smoke checks."
+          fi
+
+  chaos:
+    name: Approved chaos recovery experiment
+    needs: staging-smoke
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      vars.LIFEOS_STAGING_ENABLED == 'true' &&
+      vars.LIFEOS_CHAOS_ENABLED == 'true' &&
+      needs['staging-smoke'].result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout chaos experiment
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify dependency failure injection and recovery
+        env:
+          LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL: ${{ secrets.CHAOS_EXPERIMENT_WEBHOOK_URL }}
+          LIFEOS_CHAOS_GATEWAY_BASE_URL: ${{ vars.STAGING_GATEWAY_BASE_URL }}
+          LIFEOS_CHAOS_IDENTITY_BASE_URL: ${{ vars.STAGING_IDENTITY_BASE_URL }}
+          LIFEOS_CHAOS_TASK_GOAL_BASE_URL: ${{ vars.STAGING_TASK_GOAL_BASE_URL }}
+        run: bash scripts/run-chaos-experiment.sh

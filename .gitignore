@@ -63,6 +63,8 @@ out/
 !gradle/wrapper/gradle-wrapper.jar
 coverage/
 .cache/
+.angular/
+.dart_tool/
 .parcel-cache/
 .turbo/
 .next/

@@ -1,0 +1,50 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    external_labels:
+      environment: local
+      platform: lifeos
+
+scrape_configs:
+  # The default reference workflow runs the current Spring Boot services on the host. Redirect
+  # their ECS stdout to LIFEOS_OBSERVABILITY_LOG_DIRECTORY, mounted read-only above.
+  - job_name: lifeos-host-processes
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: lifeos-host-processes
+          __path__: /var/log/lifeos/*.log
+
+  - job_name: lifeos-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Never scrape every local container. An application must opt in with the exact label
+      # com.lifeos.observability.logs=true, which avoids leaking unrelated local logs to Loki.
+      - source_labels: [__meta_docker_container_label_com_lifeos_observability_logs]
+        regex: "true"
+        action: keep
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - target_label: job
+        replacement: lifeos-containers
+      - action: labeldrop
+        regex: __meta_docker_.+
+    pipeline_stages:
+      # Spring Boot's ECS console format preserves trace.id/span.id as structured metadata.
+      # Do not promote correlation IDs, account IDs, or trace IDs to Loki labels.
+      - json:
+          expressions:
+            level: log.level
+      - labels:
+          level:

@@ -1,0 +1,32 @@
+groups:
+  - name: lifeos-epic-2-gateway
+    rules:
+      - alert: GatewayUpstreamFailures
+        expr: sum(rate(gateway_upstream_failures_total{job="lifeos-gateway"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: gateway-service
+        annotations:
+          summary: Gateway is recording upstream failures
+          description: Investigate the affected route in the Epic 2 dashboard and its correlated Tempo trace.
+
+      - alert: GatewayRateLimiterUnavailable
+        expr: increase(gateway_rate_limit_unavailable_total{job="lifeos-gateway"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: gateway-service
+        annotations:
+          summary: Gateway cannot safely make Redis rate-limit decisions
+          description: The gateway fails closed when Redis rate-limit decisions are unavailable.
+
+      - alert: GatewayRequestBufferCapacityExhausted
+        expr: increase(gateway_request_body_capacity_rejections_total{job="lifeos-gateway"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: gateway-service
+        annotations:
+          summary: Gateway request-body buffer capacity was exhausted
+          description: Inspect request volume, buffer permits, and heap pressure before raising capacity limits.

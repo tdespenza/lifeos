@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
@@ -133,6 +134,17 @@ class JwtValidationServiceTest {
         assertThatThrownBy(() -> service.validate("malformed"))
                 .isInstanceOf(AuthenticationFailureException.class)
                 .hasMessage("The supplied credentials could not be verified.");
+    }
+
+    @Test
+    void failsClosedWhenDurableSessionAuthorityIsUnavailable() {
+        when(jwtDecoder.decode("signed-access-token")).thenReturn(jwt("signed-access-token", NOW.plusSeconds(300)));
+        when(sessionRepository.findById(sessionId))
+                .thenThrow(new DataAccessResourceFailureException("database unavailable"));
+
+        assertThatThrownBy(() -> service.validate("signed-access-token"))
+                .isInstanceOf(AuthenticationDependencyUnavailableException.class)
+                .hasMessage("Authentication is temporarily unavailable.");
     }
 
     @Test

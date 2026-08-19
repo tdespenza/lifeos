@@ -17,34 +17,34 @@ class InternalWorkloadIdentityVerifierTest {
     void setUp() {
         IdentityAuthProperties properties = new IdentityAuthProperties();
         properties.getAuthorization().setWorkloadIdentities(Map.of(
-                "task-goal-service", "test-workload-credential"));
+                "ai-assistant-service", "test-ai-assistant-workload-credential"));
         verifier = new InternalWorkloadIdentityVerifier(properties);
     }
 
     @Test
-    void acceptsConfiguredWorkloadWithMatchingCredential() {
-        MockHttpServletRequest request = request("task-goal-service", "test-workload-credential");
+    void acceptsConfiguredAiAssistantWorkloadWithMatchingCredential() {
+        MockHttpServletRequest request = request("ai-assistant-service", "test-ai-assistant-workload-credential");
 
         assertThatCode(() -> verifier.verify(request)).doesNotThrowAnyException();
     }
 
     @Test
-    void rejectsMissingUnknownAndMismatchedWorkloadsWithOneFailureType() {
-        assertThatThrownBy(() -> verifier.verify(request(null, null)))
+    void rejectsMissingUnknownAndMismatchedAiAssistantCredentialsWithOneFailureType() {
+        assertThatThrownBy(() -> verifier.verify(request("ai-assistant-service", null)))
                 .isInstanceOf(InternalWorkloadAuthenticationException.class);
-        assertThatThrownBy(() -> verifier.verify(request("unknown-service", "test-workload-credential")))
+        assertThatThrownBy(() -> verifier.verify(request("unknown-service", "test-ai-assistant-workload-credential")))
                 .isInstanceOf(InternalWorkloadAuthenticationException.class);
-        assertThatThrownBy(() -> verifier.verify(request("task-goal-service", "wrong-credential")))
+        assertThatThrownBy(() -> verifier.verify(request("ai-assistant-service", "wrong-credential")))
                 .isInstanceOf(InternalWorkloadAuthenticationException.class);
     }
 
     @Test
-    void rejectsConfiguredIdentityWhenDeploymentOmittedItsCredential() {
+    void rejectsAiAssistantIdentityWhenDeploymentOmittedItsCredential() {
         IdentityAuthProperties properties = new IdentityAuthProperties();
-        properties.getAuthorization().setWorkloadIdentities(Map.of("task-goal-service", ""));
+        properties.getAuthorization().setWorkloadIdentities(Map.of("ai-assistant-service", ""));
 
         assertThatThrownBy(() -> new InternalWorkloadIdentityVerifier(properties)
-                .verify(request("task-goal-service", "anything")))
+                .verify(request("ai-assistant-service", "anything")))
                 .isInstanceOf(InternalWorkloadAuthenticationException.class);
     }
 

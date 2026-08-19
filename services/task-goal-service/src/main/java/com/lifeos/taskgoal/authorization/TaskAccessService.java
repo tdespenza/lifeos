@@ -17,10 +17,10 @@ public interface TaskAccessService {
      * Requires an allow decision for an already authenticated subject and trusted resource facts.
      *
      * @param subject validated subject
-     * @param action canonical goal action
+     * @param action canonical goal or task action
      * @param resource trusted resource facts
      * @throws TaskAuthorizationDenied when policy does not allow the action
      * @throws TaskAuthorizationDependencyUnavailable when identity cannot safely decide
      */
-    void authorize(TaskSubject subject, String action, GoalAuthorizationResource resource);
+    void authorize(TaskSubject subject, String action, TaskGoalAuthorizationResource resource);
 }

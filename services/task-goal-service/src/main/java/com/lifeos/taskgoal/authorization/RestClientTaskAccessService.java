@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -39,8 +40,9 @@ public class RestClientTaskAccessService implements TaskAccessService {
     private final RestClient restClient;
     private final TaskGoalIdentityProperties properties;
 
-    public RestClientTaskAccessService(TaskGoalIdentityProperties properties) {
-        this(buildRestClient(properties), properties);
+    @Autowired
+    public RestClientTaskAccessService(RestClient.Builder restClientBuilder, TaskGoalIdentityProperties properties) {
+        this(buildRestClient(restClientBuilder, properties), properties);
     }
 
     RestClientTaskAccessService(RestClient restClient, TaskGoalIdentityProperties properties) {
@@ -74,7 +76,7 @@ public class RestClientTaskAccessService implements TaskAccessService {
     }
 
     @Override
-    public void authorize(TaskSubject subject, String action, GoalAuthorizationResource resource) {
+    public void authorize(TaskSubject subject, String action, TaskGoalAuthorizationResource resource) {
         try {
             RestClient.RequestBodySpec requestSpec = restClient.post()
                     .uri(DECISION_PATH)
@@ -111,13 +113,14 @@ public class RestClientTaskAccessService implements TaskAccessService {
         }
     }
 
-    private static RestClient buildRestClient(TaskGoalIdentityProperties properties) {
+    private static RestClient buildRestClient(
+            RestClient.Builder restClientBuilder, TaskGoalIdentityProperties properties) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.getConnectTimeout())
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(properties.getReadTimeout());
-        return RestClient.builder()
+        return restClientBuilder
                 .baseUrl(properties.getBaseUrl())
                 .requestFactory(requestFactory)
                 .build();

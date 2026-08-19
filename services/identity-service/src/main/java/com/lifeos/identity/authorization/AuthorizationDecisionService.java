@@ -262,6 +262,7 @@ public class AuthorizationDecisionService {
                 }
                 yield deny(AuthorizationDenyReason.OWNER_MISMATCH, policyVersion, expiresAt, verifiedSubjectId);
             }
+            default -> deny(AuthorizationDenyReason.UNSUPPORTED_ACTION, policyVersion, expiresAt, verifiedSubjectId);
         };
     }
 

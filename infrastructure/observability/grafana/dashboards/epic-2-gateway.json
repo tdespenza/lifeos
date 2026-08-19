@@ -1,0 +1,79 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum(rate(http_server_requests_seconds_count{job=~\"lifeos-(gateway|identity|task-goal)\"}[$__rate_interval])) by (job)", "legendFormat": "{{job}}", "refId": "A"}],
+      "title": "Request rate by service",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=~\"lifeos-(gateway|identity|task-goal)\"}[$__rate_interval])) by (le, job))", "legendFormat": "{{job}}", "refId": "A"}],
+      "title": "HTTP p95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum(rate(gateway_upstream_failures_total{job=\"lifeos-gateway\"}[$__rate_interval])) by (route)", "legendFormat": "{{route}}", "refId": "A"}],
+      "title": "Gateway upstream failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "id": 4,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "gateway_inflight_requests{job=\"lifeos-gateway\"}", "legendFormat": "{{route}}", "refId": "A"}],
+      "title": "Gateway in-flight requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "id": 5,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum(rate(gateway_rate_limit_rejections_total{job=\"lifeos-gateway\"}[$__rate_interval])) by (route, stage)", "legendFormat": "{{route}} / {{stage}}", "refId": "A"}],
+      "title": "Gateway rate-limit rejections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "description": "Use Explore to search traces by service name. Loki's TraceID derived field opens an exact trace from ECS logs.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "id": 6,
+      "options": {"content": "<h3>Trace and log correlation</h3><p>Gateway, identity, and task-goal emit W3C traces through the collector. Their ECS logs retain trace metadata without indexing account, correlation, or trace IDs as Loki labels.</p>", "mode": "markdown"},
+      "title": "Trace and log correlation",
+      "type": "text"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["lifeos", "epic-2", "gateway"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "LifeOS Epic 2 Gateway",
+  "uid": "lifeos-epic-2-gateway",
+  "version": 1
+}

@@ -1,2 +1,11 @@
 CREATE DATABASE lifeos_identity;
 CREATE DATABASE lifeos_task_goal;
+CREATE DATABASE lifeos_profile;
+CREATE DATABASE lifeos_notification;
+CREATE DATABASE lifeos_calendar;
+CREATE DATABASE lifeos_finance;
+CREATE DATABASE lifeos_document_vault;
+CREATE DATABASE lifeos_media;
+CREATE DATABASE lifeos_ai_assistant;
+CREATE DATABASE lifeos_analytics;
+CREATE DATABASE lifeos_trust_ledger;

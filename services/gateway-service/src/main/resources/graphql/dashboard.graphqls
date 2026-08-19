@@ -1,0 +1,43 @@
+type Query {
+  """Returns one bounded, owner-scoped dashboard aggregate."""
+  dashboard(periodDays: Int = 30): Dashboard!
+}
+
+type Dashboard {
+  generatedAt: String!
+  periodDays: Int!
+  status: AggregateStatus!
+  tasks: TaskMetrics!
+  calendar: CalendarMetrics!
+  finance: FinanceMetrics!
+  sources: [SourceStatus!]!
+}
+
+enum AggregateStatus {
+  COMPLETE
+  PARTIAL
+  UNAVAILABLE
+}
+
+type SourceStatus {
+  source: String!
+  status: String!
+  latencyMillis: Int!
+}
+
+type TaskMetrics {
+  total: Int!
+  active: Int!
+  completed: Int!
+}
+
+type CalendarMetrics {
+  eventCount: Int!
+  status: String!
+}
+
+type FinanceMetrics {
+  budgetCount: Int!
+  transactionCount: Int!
+  status: String!
+}

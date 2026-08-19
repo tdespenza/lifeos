@@ -3,6 +3,7 @@ package com.lifeos.gateway.auth;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.lifeos.gateway.config.GatewayAuthenticationProperties;
 import com.lifeos.gateway.observability.RequestContext;
+import com.lifeos.gateway.observability.W3cTraceContextClientInterceptor;
 import java.net.http.HttpClient;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -36,11 +37,19 @@ public class GatewayAuthenticationClient {
     /**
      * Creates the bounded identity validation client.
      *
+     * <p>The injected builder carries Spring Boot's observation customizers. Building a client
+     * directly with {@code RestClient.builder()} would drop W3C trace-context propagation for the
+     * gateway-to-identity validation hop.
+     *
+     * @param builder observation-enabled Spring HTTP client builder
      * @param properties identity authority settings
      */
     @Autowired
-    public GatewayAuthenticationClient(GatewayAuthenticationProperties properties) {
-        this(buildRestClient(properties), properties);
+    public GatewayAuthenticationClient(
+            RestClient.Builder builder,
+            GatewayAuthenticationProperties properties,
+            W3cTraceContextClientInterceptor traceContextInterceptor) {
+        this(buildRestClient(builder, properties, traceContextInterceptor), properties);
     }
 
     /**
@@ -90,16 +99,20 @@ public class GatewayAuthenticationClient {
         }
     }
 
-    private static RestClient buildRestClient(GatewayAuthenticationProperties properties) {
+    private static RestClient buildRestClient(
+            RestClient.Builder builder,
+            GatewayAuthenticationProperties properties,
+            W3cTraceContextClientInterceptor traceContextInterceptor) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.getConnectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(properties.getReadTimeout());
-        return RestClient.builder()
+        return builder
                 .baseUrl(properties.getBaseUrl())
                 .requestFactory(requestFactory)
+                .requestInterceptor(traceContextInterceptor)
                 .build();
     }
 

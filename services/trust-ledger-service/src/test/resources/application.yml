@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:trust_ledger;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: test-only-trust-ledger-password
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    locations: classpath:db/migration-h2
+  kafka:
+    bootstrap-servers: localhost:19092
+
+trust-ledger:
+  kafka:
+    enabled: false
+    ai-audit-enabled: false
+  besu:
+    enabled: false
+  media-anchor:
+    workload-token: test-only-media-workload-token
+
+identity:
+  workload-token: test-only-trust-ledger-workload-token
+
+task-goal:
+  workload-token: test-only-trust-ledger-workload-token

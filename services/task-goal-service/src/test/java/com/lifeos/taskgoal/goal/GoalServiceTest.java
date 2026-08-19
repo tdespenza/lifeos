@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.lifeos.taskgoal.authorization.GoalAuthorizationActions;
@@ -16,6 +17,9 @@ import com.lifeos.taskgoal.authorization.TaskAuthorizationDenied;
 import com.lifeos.taskgoal.authorization.TaskSubject;
 import com.lifeos.taskgoal.goal.algorithm.DependencyEdge;
 import com.lifeos.taskgoal.goal.algorithm.TopologicalSortService;
+import com.lifeos.taskgoal.goal.idempotency.GoalCreationIdempotencyService;
+import com.lifeos.taskgoal.goal.idempotency.GoalMutationIdempotencyService;
+import com.lifeos.taskgoal.goal.idempotency.GoalMutationOperation;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,30 +45,67 @@ class GoalServiceTest {
     @Mock
     private TaskAccessService accessService;
 
+    @Mock
+    private GoalCreationIdempotencyService idempotencyService;
+
+    @Mock
+    private GoalMutationIdempotencyService mutationIdempotencyService;
+
     private GoalService service;
     private TaskSubject subject;
 
     @BeforeEach
     void setUp() {
-        service = new GoalService(repository, topologicalSortService, accessService);
+        service = new GoalService(
+                repository,
+                topologicalSortService,
+                accessService,
+                idempotencyService,
+                mutationIdempotencyService);
         subject = new TaskSubject(UUID.randomUUID(), UUID.randomUUID(), "password", ACCESS_TOKEN_PROOF);
     }
 
     @Test
-    void createDerivesOwnerAndTenantFromValidatedSubjectBeforePersistence() {
-        when(repository.save(any(Goal.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    void createAuthorizesAndDelegatesToScopeBoundIdempotencyBeforePersistence() {
+        Goal persistedGoal = new Goal(
+                UUID.randomUUID(), "Prepare architecture review", subject.accountId(), subject.tenantId());
+        when(idempotencyService.createOrReplay(
+                        eq(subject.accountId()),
+                        eq(subject.tenantId()),
+                        eq("goal-create-key"),
+                        eq("Prepare architecture review"),
+                        any(UUID.class)))
+                .thenReturn(persistedGoal);
 
-        Goal created = service.create(subject, "Prepare architecture review");
+        Goal created = service.create(subject, "Prepare architecture review", "goal-create-key");
 
         assertThat(created.getOwnerAccountId()).isEqualTo(subject.accountId());
         assertThat(created.getTenantId()).isEqualTo(subject.tenantId());
         ArgumentCaptor<GoalAuthorizationResource> resource = ArgumentCaptor.forClass(GoalAuthorizationResource.class);
+        ArgumentCaptor<UUID> proposedGoalId = ArgumentCaptor.forClass(UUID.class);
         verify(accessService).authorize(eq(subject), eq(GoalAuthorizationActions.CREATE), resource.capture());
-        assertThat(resource.getValue().resourceId()).isEqualTo(created.getId().toString());
+        verify(idempotencyService).createOrReplay(
+                eq(subject.accountId()),
+                eq(subject.tenantId()),
+                eq("goal-create-key"),
+                eq("Prepare architecture review"),
+                proposedGoalId.capture());
+        assertThat(resource.getValue().resourceId()).isEqualTo(proposedGoalId.getValue().toString());
         assertThat(resource.getValue().tenantId()).isEqualTo(subject.tenantId());
         assertThat(resource.getValue().attributes())
                 .containsExactlyEntriesOf(java.util.Map.of("ownerAccountId", subject.accountId().toString()));
-        verify(repository).save(created);
+    }
+
+    @Test
+    void createDoesNotReserveAnIdempotencyKeyWhenAuthorizationDeniesTheMutation() {
+        doThrow(new TaskAuthorizationDenied())
+                .when(accessService)
+                .authorize(eq(subject), eq(GoalAuthorizationActions.CREATE), any(GoalAuthorizationResource.class));
+
+        assertThatThrownBy(() -> service.create(subject, "Denied goal", "denied-goal-key"))
+                .isInstanceOf(TaskAuthorizationDenied.class);
+
+        verifyNoInteractions(idempotencyService);
     }
 
     @Test
@@ -143,6 +184,85 @@ class GoalServiceTest {
         assertThat(result).isSameAs(ownedGoal);
         verify(accessService).authorize(
                 subject, GoalAuthorizationActions.READ, GoalAuthorizationResource.fromGoal(ownedGoal));
+    }
+
+    @Test
+    void updateAuthorizesTrustedGoalThenDelegatesWithActorAndResourceTenantScope() {
+        UUID goalId = UUID.randomUUID();
+        Goal ownedGoal = new Goal(goalId, "Original", subject.accountId(), subject.tenantId());
+        when(repository.findById(goalId)).thenReturn(Optional.of(ownedGoal));
+        GoalLifecycleResult result = GoalLifecycleResult.from(ownedGoal);
+        when(mutationIdempotencyService.execute(
+                        subject.accountId(),
+                        subject.tenantId(),
+                        ownedGoal,
+                        GoalMutationOperation.UPDATE,
+                        0L,
+                        "goal-update-key",
+                        "Renamed"))
+                .thenReturn(result);
+
+        assertThat(service.update(subject, goalId, 0L, "Renamed", "goal-update-key")).isEqualTo(result);
+
+        verify(accessService).authorize(
+                subject, GoalAuthorizationActions.UPDATE, GoalAuthorizationResource.fromGoal(ownedGoal));
+        verify(mutationIdempotencyService).execute(
+                subject.accountId(),
+                subject.tenantId(),
+                ownedGoal,
+                GoalMutationOperation.UPDATE,
+                0L,
+                "goal-update-key",
+                "Renamed");
+    }
+
+    @Test
+    void completeAndArchiveUseDistinctObjectPolicyActions() {
+        UUID goalId = UUID.randomUUID();
+        Goal ownedGoal = new Goal(goalId, "Lifecycle", subject.accountId(), subject.tenantId());
+        when(repository.findById(goalId)).thenReturn(Optional.of(ownedGoal));
+        GoalLifecycleResult result = GoalLifecycleResult.from(ownedGoal);
+        when(mutationIdempotencyService.execute(
+                        subject.accountId(),
+                        subject.tenantId(),
+                        ownedGoal,
+                        GoalMutationOperation.COMPLETE,
+                        0L,
+                        "goal-complete-key",
+                        null))
+                .thenReturn(result);
+        when(mutationIdempotencyService.execute(
+                        subject.accountId(),
+                        subject.tenantId(),
+                        ownedGoal,
+                        GoalMutationOperation.ARCHIVE,
+                        0L,
+                        "goal-archive-key",
+                        null))
+                .thenReturn(result);
+
+        assertThat(service.complete(subject, goalId, 0L, "goal-complete-key")).isEqualTo(result);
+        assertThat(service.archive(subject, goalId, 0L, "goal-archive-key")).isEqualTo(result);
+
+        verify(accessService).authorize(
+                subject, GoalAuthorizationActions.COMPLETE, GoalAuthorizationResource.fromGoal(ownedGoal));
+        verify(accessService).authorize(
+                subject, GoalAuthorizationActions.ARCHIVE, GoalAuthorizationResource.fromGoal(ownedGoal));
+    }
+
+    @Test
+    void missingLifecycleTargetStillCallsIdentityThenReturnsGenericDenialWithoutReservingAKey() {
+        UUID missingGoalId = UUID.randomUUID();
+        when(repository.findById(missingGoalId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.complete(subject, missingGoalId, 0L, "missing-goal-key"))
+                .isInstanceOf(TaskAuthorizationDenied.class);
+
+        verify(accessService).authorize(
+                subject,
+                GoalAuthorizationActions.COMPLETE,
+                GoalAuthorizationResource.forMissingGoal(missingGoalId, subject.tenantId()));
+        verifyNoInteractions(mutationIdempotencyService);
     }
 
     @Test

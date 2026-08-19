@@ -47,6 +47,36 @@ public enum SecurityAuditEventType {
     /** A passkey session could not be created because account capacity was reached. */
     PASSKEY_SESSION_CAPACITY_REACHED,
 
+    /** An authenticated caller started a passkey registration ceremony. */
+    PASSKEY_REGISTRATION_STARTED,
+
+    /** An authenticated caller registered a new passkey credential. */
+    PASSKEY_REGISTRATION_SUCCEEDED,
+
+    /** A passkey registration was rejected without exposing protocol details. */
+    PASSKEY_REGISTRATION_REJECTED,
+
+    /** An authenticated caller disabled one of their passkey credentials. */
+    PASSKEY_CREDENTIAL_REVOKED,
+
+    /** A passkey credential-management request was rejected without exposing ownership details. */
+    PASSKEY_CREDENTIAL_REVOCATION_REJECTED,
+
+    /** An authenticated caller generated a replacement set of one-time passkey recovery codes. */
+    PASSKEY_RECOVERY_CODES_ISSUED,
+
+    /** A one-time passkey recovery code created a new session. */
+    PASSKEY_RECOVERY_SUCCEEDED,
+
+    /** A passkey recovery code or account lookup was rejected without exposing account state. */
+    PASSKEY_RECOVERY_REJECTED,
+
+    /** A dependency required for safe passkey recovery was unavailable. */
+    PASSKEY_RECOVERY_DEPENDENCY_UNAVAILABLE,
+
+    /** A client exceeded the bounded passkey-recovery attempt limit. */
+    PASSKEY_RECOVERY_RATE_LIMITED,
+
     /** A trusted workload received an authorization allow decision. */
     AUTHORIZATION_ALLOWED,
 
@@ -57,5 +87,20 @@ public enum SecurityAuditEventType {
     AUTHORIZATION_DEPENDENCY_UNAVAILABLE,
 
     /** A user requested a single-session or bulk session revocation outcome. */
-    SESSION_REVOKED
+    SESSION_REVOKED,
+
+    /** A public first-party registration atomically created an account and password credential. */
+    ACCOUNT_REGISTRATION_SUCCEEDED,
+
+    /** A matching retry returned an already completed public registration result. */
+    ACCOUNT_REGISTRATION_REPLAYED,
+
+    /** A public registration was rejected without persisting request secrets or personal data. */
+    ACCOUNT_REGISTRATION_REJECTED,
+
+    /** A dependency required to safely process public registration was unavailable. */
+    ACCOUNT_REGISTRATION_DEPENDENCY_UNAVAILABLE,
+
+    /** An authenticated caller attempted to read an account other than their own. */
+    ACCOUNT_READ_DENIED
 }

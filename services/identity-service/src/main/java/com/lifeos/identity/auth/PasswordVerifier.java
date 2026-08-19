@@ -7,12 +7,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /**
- * Performs bounded password-hash verification.
+ * Performs bounded password-hash operations.
  *
- * <p>Argon2id is intentionally memory-hard. A semaphore prevents a distributed or rotating
- * source of login attempts from allocating unbounded hashing memory inside one service instance.
- * Requests that cannot acquire a permit within the configured timeout fail closed with the same
- * temporary dependency error used for other unavailable authentication infrastructure.
+ * <p>Argon2id is intentionally memory-hard. A semaphore bounds both verification and enrollment
+ * hashing, so a burst of public registrations cannot allocate unbounded hashing memory inside one
+ * service instance. Requests that cannot acquire a permit within the configured timeout fail
+ * closed with the same temporary dependency error used for other unavailable authentication
+ * infrastructure.
  */
 @Component
 public class PasswordVerifier {
@@ -50,6 +51,22 @@ public class PasswordVerifier {
      * @throws AuthenticationDependencyUnavailableException when local hashing capacity is full
      */
     public boolean matches(String rawPassword, String encodedPassword) {
+        return withPermit(() -> passwordEncoder.matches(rawPassword, encodedPassword));
+    }
+
+    /**
+     * Encodes a validated password while holding the same bounded Argon2id capacity used for
+     * verification.
+     *
+     * @param rawPassword validated password supplied only for the current registration request
+     * @return Argon2id encoded password
+     * @throws AuthenticationDependencyUnavailableException when local hashing capacity is full
+     */
+    public String encode(String rawPassword) {
+        return withPermit(() -> passwordEncoder.encode(rawPassword));
+    }
+
+    private <T> T withPermit(PasswordOperation<T> operation) {
         boolean acquired;
         try {
             acquired = permits.tryAcquire(1, acquisitionTimeout.toNanos(), TimeUnit.NANOSECONDS);
@@ -62,12 +79,17 @@ public class PasswordVerifier {
         }
         try {
             try {
-                return passwordEncoder.matches(rawPassword, encodedPassword);
+                return operation.execute();
             } catch (RuntimeException exception) {
                 throw new AuthenticationDependencyUnavailableException(exception);
             }
         } finally {
             permits.release();
         }
+    }
+
+    @FunctionalInterface
+    private interface PasswordOperation<T> {
+        T execute();
     }
 }

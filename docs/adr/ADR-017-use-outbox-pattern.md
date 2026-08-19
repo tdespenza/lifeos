@@ -13,11 +13,13 @@ Several LifeOS services — Task/Goal, Finance, Document Vault, Notification —
 
 ## Decision Made
 
-Use the transactional outbox pattern: every service that must publish a domain event writes that event, in the same PostgreSQL transaction as its business state change, to an `outbox_events` table (event id, aggregate id, type, payload, created_at, published_at). A separate relay process polls unpublished rows in commit order, publishes them to Kafka/Pulsar, and marks them published, with the outbox row's event id used as the Kafka message key/idempotency key for exactly-once-effect consumption downstream.
+Use the transactional outbox pattern: every service that must publish a domain event writes that event, in the same PostgreSQL transaction as its business state change, to an `outbox_events` table (event id, aggregate id, aggregate version, type, topic, partition key, payload, headers, created_at, published_at). A separate relay process polls unpublished rows in commit order, publishes them to Kafka/Pulsar, and marks them published.
+
+The immutable outbox event id is the CloudEvents `id` and consumer idempotency key. The Kafka record key is the stable partition key—normally the aggregate id, or the recipient account id for recipient-ordered notifications. Those keys have different jobs: using a unique event id as the Kafka key would distribute successive events from one aggregate across partitions and contradict the required per-aggregate ordering guarantee.
 
 ## Why
 
-The outbox pattern converts an inherently distributed, non-atomic operation (write to Postgres + publish to Kafka) into a single atomic operation (write two rows to Postgres) plus a separately retriable, idempotent relay step. This gives us the correctness property that actually matters — an event exists if and only if the business transaction that produced it committed — without taking on 2PC's latency and blocking behavior or CDC's extra infrastructure on day one. It also composes cleanly with the idempotency-key and dead-letter-queue patterns already mandated for the Notification Service, since the outbox row's id is a natural, durable idempotency key.
+The outbox pattern converts an inherently distributed, non-atomic operation (write to Postgres + publish to Kafka) into a single atomic operation (write two rows to Postgres) plus a separately retriable, idempotent relay step. This gives us the correctness property that actually matters — an event exists if and only if the business transaction that produced it committed — without taking on 2PC's latency and blocking behavior or CDC's extra infrastructure on day one. It also composes cleanly with the idempotency-key and dead-letter-queue patterns already mandated for the Notification Service, since the outbox row's id is a natural, durable idempotency key while the aggregate-based partition key preserves ordering.
 
 ## Tradeoffs
 
@@ -25,12 +27,12 @@ The outbox pattern converts an inherently distributed, non-atomic operation (wri
 - The relay introduces publish lag: events are visible to consumers only after the next poll cycle, not the instant the transaction commits. This must be bounded and documented per service (target below), not left open-ended.
 - The outbox table needs its own lifecycle management — published rows must be pruned or archived on a schedule, or the table becomes an unbounded append-only log that degrades poll query performance over time.
 - A naive single-threaded poller becomes a throughput ceiling and a single point of publish delay; it must be designed for parallelism (partitioned polling by aggregate id, `SELECT ... FOR UPDATE SKIP LOCKED`) from the start, not bolted on later.
-- Ordering is only guaranteed per aggregate (via partition/poll key), not globally — consumers must not assume cross-aggregate event ordering.
+- Ordering is only guaranteed per aggregate (via the persisted aggregate partition key), not globally — consumers must not assume cross-aggregate event ordering. The relay must preserve aggregate-version order within that key; consumers still dedupe using the distinct immutable event id.
 
 ## Consequences
 
 - Every service that publishes domain events must add an `outbox_events` table, a relay component (poller or, later, Debezium connector), and a pruning job — this is now a required part of the service template, not optional.
-- Consumers (Notification, Analytics, Blockchain Trust Ledger) can rely on at-least-once delivery with a stable idempotency key, so they must implement idempotent handlers regardless of relay implementation details — this decouples consumer correctness from whichever relay mechanism a producer uses.
+- Consumers (Notification, Analytics, Blockchain Trust Ledger) can rely on at-least-once delivery with a stable CloudEvents/event id, so they must implement idempotent handlers regardless of relay implementation details — this decouples consumer correctness from whichever relay mechanism a producer uses. Producers use the aggregate or recipient partition key as the Kafka record key; consumers must not substitute that ordering key for idempotency.
 - We take on operational ownership of the relay (poll interval tuning, lag alerting, backlog handling during broker outages) rather than pushing that complexity onto the broker or a 2PC coordinator.
 - Because the outbox table and relay contract are stable, migrating any individual service from a polling relay to Debezium/CDC later is an internal implementation swap, not an API or schema change for consumers.
 

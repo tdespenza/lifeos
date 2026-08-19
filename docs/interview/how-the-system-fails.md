@@ -1,17 +1,32 @@
 # How Does the System Handle Failure?
 
-Right now, honestly, it mostly doesn't — and I want to be upfront about that before describing where it's headed. If PostgreSQL is unreachable when a request hits identity-service or task-goal-service, Spring Data JPA throws, it propagates up through the controller, and the client gets a 500. There's no retry, no circuit breaker, no fallback, no graceful degradation. That's the honest current state of a Phase 1 portfolio project with two services and no traffic to speak of, not a claim that this is production-hardened.
+The gateway path has real resilience now: explicit inbound/outbound timeouts, safe-read retries,
+per-route bulkheads/circuit breakers, and fail-closed Redis rate limiting. Calendar and Notification
+also have bounded outbox/lease/retry/dead-letter paths. That does not make the whole platform
+production-hardened. If a required PostgreSQL database is unreachable for a stateful service, that
+domain operation can still fail rather than silently fabricate a fallback. There is no production
+traffic or deployed SRE control plane behind these mechanisms.
 
-What does exist today, even if unglamorous, is failure *isolation* at the data layer: each service owns its own Postgres database (`lifeos_identity`, `lifeos_task_goal`), not a shared schema. That's a deliberate choice, not an accident — if task-goal-service's database gets slow, corrupted, or falls over, identity-service's data is untouched because there's no shared connection pool, no shared schema, no cross-service foreign key that could cascade damage. It doesn't buy me resilience in the request path yet, but it does mean the blast radius of a data-layer failure is contained to one service, which is the precondition for building real resilience on top later.
+What does exist today, even if unglamorous, is failure *isolation* at the data layer: stateful
+services own `lifeos_identity`, `lifeos_task_goal`, `lifeos_profile`, `lifeos_notification`,
+`lifeos_calendar`, or `lifeos_finance`, not a shared schema. If one database gets slow, corrupted,
+or falls over, another service's data is untouched because there is no shared connection pool,
+schema, or cross-service foreign key. It does not buy full request-path resilience, but it contains
+the data-layer blast radius.
 
-The plan for what comes next is where the interesting engineering is. Once there's an actual event bus (Kafka/Pulsar), every service that needs to publish a domain event — a goal completed, a document hash anchored — will write that event to an `outbox_events` row in the same Postgres transaction as the business write, instead of doing a direct dual-write to the broker. That closes the classic gap where the DB commits but the broker call fails (or vice versa) and you silently lose or duplicate an event. A separate relay polls unpublished rows and publishes them, so publishing failure becomes a retriable problem instead of a correctness bug baked into the request path — but "retriable" isn't "idempotent" for free. If the relay's retry publishes an event the broker already accepted (because the relay just didn't see the ack in time), that's a duplicate delivery, not a dropped one — outbox gives at-least-once delivery, not exactly-once. Consumers still need to be idempotent (or dedupe on an event ID) rather than assuming each event arrives exactly once.
+The eventing foundation already demonstrates this boundary for Calendar reminders and Notification
+delivery status: a local state change and outbox row commit together, a relay publishes at least
+once, and Notification dedupes by CloudEvents ID. If a relay does not observe a broker
+acknowledgement, it can republish; that is a duplicate, not an exactly-once result. Consumers must
+still be idempotent. Applying this pattern to future producers such as Task/Goal or anchor workflows
+is remaining work, not an implication of the current Calendar/Notification path.
 
-Layered on top of that: bounded retries with exponential backoff and jitter for transient failures, circuit breakers around outbound calls (starting once services actually call each other — right now they don't), and timeouts everywhere a request crosses a process boundary. None of that is code yet. I'd rather say clearly "this is the target design, here's why, and here's what's not built" than imply resilience patterns exist in two single-table CRUD services that have never seen a concurrent caller.
+The next resilience work is to apply equivalent dependency isolation to every future external boundary, especially asynchronous consumers and new domain-service calls. Gateway already has bounded safe-read retries, circuit breakers, bulkheads, and timeouts; task-goal and identity have bounded internal HTTP clients but do not yet have the gateway's full circuit/bulkhead policy. I'd rather say clearly which mechanisms are implemented and which remain target design than imply a uniform platform policy before it exists.
 
 If I were asked in an interview "what happens when Postgres goes down right now," the honest answer is "the request fails loudly with a 500, and that's a known gap I'd close next if this were headed toward real traffic" — not a made-up uptime number.
 
 ## Relevant ADRs
 
-- [ADR-017](../adr/ADR-017-use-outbox-pattern.md) — the outbox pattern, planned, for closing the dual-write gap once the event bus exists
+- [ADR-017](../adr/ADR-017-use-outbox-pattern.md) — the outbox pattern implemented for the narrow Calendar/Notification path and planned for future publishers
 - [ADR-008](../adr/ADR-008-use-postgresql-as-system-of-record.md) — per-service PostgreSQL and the failure-isolation reasoning behind it
 - [ADR-016](../adr/ADR-016-use-event-driven-architecture.md) — the event-driven architecture the outbox pattern sits inside

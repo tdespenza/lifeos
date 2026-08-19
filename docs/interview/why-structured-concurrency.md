@@ -1,6 +1,10 @@
 # Why Structured Concurrency for Grouped Concurrent Workflows
 
-I want to be upfront about where this stands today: no code in LifeOS uses structured concurrency yet. Both services that exist right now — identity-service (authentication, durable session validation, and authorization decisions) and task-goal-service (authenticated owner/tenant-scoped goal operations plus a Kahn's-algorithm topological sort for goal dependencies) — remain single-path request/response endpoints. Nothing fans out to multiple concurrent calls, so there's nothing for `StructuredTaskScope` to coordinate yet. What I do have is the decision made and documented, and virtual threads already turned on (`spring.threads.virtual.enabled=true`) in both services, so the runtime foundation is in place before I need it.
+I want to be upfront about where this stands today: no product path in LifeOS uses structured
+concurrency yet. The twelve Spring Boot services remain single-path request/response or bounded
+relay paths; Identity validation is a chained call, not a fan-out. What I do have is the decision
+documented and virtual threads turned on in the current modules, so the runtime foundation is in
+place before it is needed.
 
 The reason I made this call now instead of waiting is that the target architecture has several workflows that are obviously "one logical unit of work, many concurrent subtasks" — the clearest example is dashboard aggregation, where a single user-facing request would need to pull from tasks, calendar, finance, AI recommendations, notifications, and blockchain proof status simultaneously and return when the group is done, not when each call happens to finish independently.
 

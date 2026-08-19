@@ -4,18 +4,33 @@ The full concurrency strategy is defined in `REQUIREMENTS.md`'s "Java 25 Concurr
 
 ## Virtual threads — enabled, lightly exercised
 
-Both `identity-service` and `task-goal-service` set `spring.threads.virtual.enabled: true` in their `application.yml` ([identity](../../services/identity-service/src/main/resources/application.yml), [task-goal](../../services/task-goal-service/src/main/resources/application.yml)), so every request is handled on a virtual thread rather than a pooled platform thread.
+All current Spring services set `spring.threads.virtual.enabled: true` in their `application.yml`,
+so every request is handled on a virtual thread rather than a pooled platform thread.
 
-In practice, neither service does enough concurrent I/O per request yet for this to be meaningfully stress-tested: each request does at most one JDBC round-trip to its own PostgreSQL database. Virtual threads are correct and free here, but the real payoff — thousands of concurrently in-flight requests without exhausting a platform thread pool — hasn't been demonstrated under load. No load test has been run against either service (see [`docs/benchmarks/README.md`](../benchmarks/README.md)).
+In practice, none of the services does enough concurrent I/O per request for this to be meaningfully stress-tested: the domain services are largely single-database paths, while gateway is a bounded chain of Redis and HTTP calls. Virtual threads are correct and free here, but the real payoff — thousands of concurrently in-flight requests without exhausting a platform thread pool — hasn't been demonstrated under load. No load test has been run against the current services (see [`docs/benchmarks/README.md`](../benchmarks/README.md)).
 
-## Structured concurrency — not yet used
+## Structured concurrency — exercised in the gateway and lab
 
-No code in the repository uses structured concurrency (`StructuredTaskScope` or equivalent) yet. There is currently no endpoint that needs to fan out multiple concurrent calls and join them under one cancellation scope — both services are single-path (one request in, one JDBC call, one response out). The first real use case will likely be a future dashboard-aggregation endpoint (see the "Load dashboard" example in [ADR-003](../adr/ADR-003-use-structured-concurrency.md)) or the AI orchestrator's parallel provider calls, neither of which is built yet.
+The runnable `labs/concurrency-lab` uses Java 25 preview `StructuredTaskScope` with a bounded
+deadline, cancellation, and inherited `ScopedValue`, and compares it with platform/virtual
+threads, `ExecutorService`, and `CompletableFuture`. The opt-in gateway GraphQL gRPC dashboard
+client now forks the Task, Calendar, and Finance reads in one two-second scope; a timeout cancels
+the children and returns an explicit unavailable snapshot. Broader service fan-outs and production
+preview-runtime rollout remain unmeasured.
 
-## Scoped values — not yet used
+## Scoped values — used for correlation context
 
-No code uses scoped values yet. The first authenticated internal call now exists: task-goal-service explicitly passes verified subject and tenant facts to identity-service for a bounded authorization decision. It does not need implicit context propagation or concurrent fan-out yet. Scoped values become relevant once a request context must flow through nested work or multi-service fan-out (for example, a correlation ID threaded through a future gRPC call), per [ADR-004](../adr/ADR-004-use-scoped-values.md).
+All current services bind their validated `X-Correlation-ID` at HTTP ingress with `ScopedValue` and
+make it available to nested code while the request is active. The gateway and domain services
+explicitly carry that value on their internal calls; the gateway's observation-enabled HTTP client
+also propagates the W3C trace context. Authenticated user, tenant, and AI-session context remain
+explicit parameters at the existing authorization boundary; the dashboard scope carries the
+validated account subject into each gRPC request, while household selection remains unavailable.
 
 ## Why this is being tracked honestly rather than assumed
 
-It would be easy to write ADRs for virtual threads / structured concurrency / scoped values and let a reader assume all three are exercised in production-shaped code. Only one of the three actually is, today. This doc exists so "why virtual threads" (the decision, in [ADR-002](../adr/ADR-002-use-virtual-threads.md)) and "is it actually being used" (the fact, here) don't get conflated — a common and avoidable failure mode in portfolio projects.
+It would be easy to write ADRs for virtual threads / structured concurrency / scoped values and let
+a reader assume all three are exercised equally. Virtual threads and the narrow correlation-context
+use of scoped values are present across services; structured concurrency is now an executable
+gateway fan-out primitive as well as a lab comparison, but the production path has not yet been
+load-tested at the target scale. This document keeps those claims separate.

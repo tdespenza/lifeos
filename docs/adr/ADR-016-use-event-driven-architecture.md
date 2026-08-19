@@ -2,7 +2,7 @@
 
 ## Context
 
-LifeOS is decomposed into eleven Spring Boot microservices (identity, profile, task/goal, calendar, finance, document vault, media streaming, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics). Several workflows are inherently cross-service and asynchronous: `TaskCompletedEvent` fans out to analytics and notification; `DocumentUploadedEvent` triggers hashing and blockchain anchoring in the trust ledger; `VideoSessionEndedEvent` triggers analytics rollups and storage lifecycle actions; `BudgetThresholdExceededEvent` triggers notification; `BlockchainProofAnchoredEvent` triggers a vault-record update. None of these require a synchronous response, all can tolerate sub-second-to-seconds delay, and new consumers (e.g., a future fraud-detection service on document uploads) should be addable without redeploying producers. The project also exists to demonstrate distributed-systems judgment in a portfolio context, which favors patterns (log-based replay, consumer groups, outbox/CDC) that show up in senior/staff system-design interviews.
+LifeOS is decomposed into twelve independently packageable Spring Boot service modules (identity, profile, task/goal, calendar, finance, document vault, media streaming, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics). Several workflows are inherently cross-service and asynchronous: `TaskCompletedEvent` fans out to analytics and notification; `DocumentUploadedEvent` triggers hashing and blockchain anchoring in the trust ledger; `VideoSessionEndedEvent` triggers analytics rollups and storage lifecycle actions; `BudgetThresholdExceededEvent` triggers notification; `BlockchainProofAnchoredEvent` triggers a vault-record update. None of these require a synchronous response, all can tolerate sub-second-to-seconds delay, and new consumers (e.g., a future fraud-detection service on document uploads) should be addable without redeploying producers. The project also exists to demonstrate distributed-systems judgment in a portfolio context, which favors patterns (log-based replay, consumer groups, outbox/CDC) that show up in senior/staff system-design interviews.
 
 ## Options Considered
 
@@ -21,7 +21,7 @@ Kafka wins on ecosystem maturity for the specific patterns this project commits 
 
 ## Tradeoffs
 
-Kafka requires deliberate partition-key design (e.g., `documentId`/`userId` as key) to get per-entity ordering, and offers no built-in multi-tenant namespacing — topic naming and ACL discipline substitute for it across eleven producers. Compared to RabbitMQ, there are no priority queues or exchange-style routing topologies; fan-out is expressed through topic/partition conventions instead. Running Kafka correctly (KRaft mode, replication factor, min-insync-replicas) is nontrivial extra operational surface versus a single RabbitMQ node.
+Kafka requires deliberate partition-key design (e.g., `documentId`/`userId` as key) to get per-entity ordering, and offers no built-in multi-tenant namespacing — topic naming and ACL discipline substitute for it across the current producers. Compared to RabbitMQ, there are no priority queues or exchange-style routing topologies; fan-out is expressed through topic/partition conventions instead. Running Kafka correctly (KRaft mode, replication factor, min-insync-replicas) is nontrivial extra operational surface versus a single RabbitMQ node.
 
 ## Consequences
 

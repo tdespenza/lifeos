@@ -31,7 +31,8 @@ flowchart LR
     R -- no --> S[503 degraded response]
     R -- yes --> T[Forward fixed upstream with timeout]
     T --> U{Dependency outcome}
-    U -- failure --> V[Record failure; open route circuit after threshold]
+    U -- "Transient + safe read + total budget" --> T
+    U -- terminal failure --> V[Record failure; open route circuit after threshold]
     U -- success --> W[Record success; close half-open circuit]
     V --> X[Copy safe status/body/headers]
     W --> X
@@ -47,14 +48,23 @@ Current routes:
 /api/v1/goals    -> task-goal-service (protected)
 ```
 
-The route table is materialized once at startup and resolved by path-segment prefixes. Resolution is
-bounded by the request path length and does not perform I/O. Request and response bodies are buffered
-only under configured byte limits; connection and read deadlines turn transport failures into generic
-502/504 responses. Protected routes call identity-service's workload-authenticated validation
-adapter before request-body forwarding. The gateway forwards only bounded subject facts and strips
-caller-supplied subject/workload headers. Identity-owned account/auth prefixes remain explicitly
-public at the gateway where bootstrap operations require it; account lookup and session management
-are protected by more-specific gateway policies. Identity-service still enforces its operation-level
-rules. Story 2.3 adds Redis-backed route/client budgets plus per-route non-waiting upstream
-bulkheads and circuit breakers; the gateway's identity-validation bulkhead is implemented as part
-of Story 2.2.
+The route table is materialized once at startup and resolved by path-segment prefixes. Route
+configuration accepts only named `/api/v<positive-integer>/<resource>` public prefixes, rejecting
+root and version-level catch-alls. Every remote upstream must use HTTPS; HTTP is limited to
+loopback development hosts. Resolution is bounded by the request path length and does not perform
+I/O. Request and response bodies are buffered only under configured byte limits. Tomcat's
+request-line/header, keep-alive, and request-body upload read timeouts are explicitly bounded, and
+outbound connection/read deadlines turn downstream transport failures into generic 502/504
+responses. Protected routes call identity-service's workload-authenticated validation adapter before
+request-body forwarding. The gateway forwards only bounded subject facts and strips caller-supplied
+subject/workload headers. Identity-owned account/auth prefixes remain explicitly public at the gateway
+where bootstrap operations require it; account lookup and session management are protected by
+more-specific gateway policies. Identity-service still enforces its operation-level rules. Story 2.3
+adds Redis-backed route/client budgets plus per-route non-waiting upstream bulkheads and circuit
+breakers; the gateway's identity-validation bulkhead is implemented as part of Story 2.2.
+
+For the forward step, only `GET`, `HEAD`, and `OPTIONS` can make the bounded retry edge. Retry
+delays use capped exponential full jitter and reserve another connection-plus-read attempt from the
+logical total deadline before issuing it. The route bulkhead spans that loop and the circuit sees one
+final logical outcome; proxied writes (`POST`, `PUT`, `PATCH`, and `DELETE`) take the terminal edge
+on their first transient failure rather than being automatically replayed.

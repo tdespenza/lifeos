@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:media-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  flyway:
+    locations: classpath:db/migration-h2
+
+media:
+  session-expiry:
+    enabled: false
+  idempotency-secret: media-test-idempotency-secret-at-least-32-bytes
+  audit-client-fingerprint-secret: media-test-audit-fingerprint-secret-at-least-32-bytes
+  development-signaling-secret: media-test-signaling-secret-at-least-32-bytes
+  storage:
+    mode: LOCAL_DEVELOPMENT
+    local-root: ${java.io.tmpdir}/lifeos-media-test-objects
+  signaling:
+    mode: LOCAL_DEVELOPMENT
+
+identity:
+  workload-token: media-test-workload-token

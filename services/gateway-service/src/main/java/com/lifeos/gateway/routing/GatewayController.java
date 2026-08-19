@@ -78,8 +78,9 @@ public class GatewayController {
         if (!SUPPORTED_METHODS.contains(request.getMethod())) {
             throw new UnsupportedGatewayMethodException();
         }
-        String correlationId = correlationId(request);
         GatewayRoute resolvedRoute = route.get();
+        validateStreamingRequest(resolvedRoute, requestPath, request.getMethod());
+        String correlationId = correlationId(request);
         GatewayAuthenticatedSubject subject = null;
         if (resolvedRoute.requiresAuthentication(requestPath, request.getMethod())) {
             // Charge anonymous attempts before identity validation so invalid credentials cannot
@@ -200,13 +201,13 @@ public class GatewayController {
      * @return generic RFC 9457 problem detail
      */
     @ExceptionHandler(UnsupportedGatewayMethodException.class)
-    public ResponseEntity<ProblemDetail> handleUnsupportedMethod() {
+    public ResponseEntity<ProblemDetail> handleUnsupportedMethod(UnsupportedGatewayMethodException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.METHOD_NOT_ALLOWED, "The requested HTTP method is not supported.");
         problem.setTitle("Method not allowed");
         problem.setProperty("code", "METHOD_NOT_ALLOWED");
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .header(HttpHeaders.ALLOW, "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+                .header(HttpHeaders.ALLOW, exception.allowHeader())
                 .body(problem);
     }
 
@@ -279,6 +280,70 @@ public class GatewayController {
                 .body(problem);
     }
 
+    /**
+     * Returns a controlled response when the finite live-SSE connection admission is full.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayStreamingCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleStreamingCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Live notification stream capacity is temporarily unavailable.");
+        problem.setTitle("Streaming capacity unavailable");
+        problem.setProperty("code", "STREAMING_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
+                .body(problem);
+    }
+
+    /**
+     * Returns a controlled response when the finite document-upload relay admission is full.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayDocumentUploadCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleDocumentUploadCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Document upload capacity is temporarily unavailable.");
+        problem.setTitle("Document upload capacity unavailable");
+        problem.setProperty("code", "DOCUMENT_UPLOAD_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
+                .body(problem);
+    }
+
+    /**
+     * Returns a controlled response when the finite Media source-upload relay admission is full.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayMediaUploadCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleMediaUploadCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Media upload capacity is temporarily unavailable.");
+        problem.setTitle("Media upload capacity unavailable");
+        problem.setProperty("code", "MEDIA_UPLOAD_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
+                .body(problem);
+    }
+
+    /**
+     * Returns a controlled response when the finite Media HLS response-stream admission is full.
+     *
+     * @return generic temporary-capacity problem detail
+     */
+    @ExceptionHandler(GatewayMediaHlsCapacityException.class)
+    public ResponseEntity<ProblemDetail> handleMediaHlsCapacity() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Media stream capacity is temporarily unavailable.");
+        problem.setTitle("Media stream capacity unavailable");
+        problem.setProperty("code", "MEDIA_HLS_CAPACITY");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfterSeconds()))
+                .body(problem);
+    }
+
     private static String correlationId(HttpServletRequest request) {
         Object requestValue = request.getAttribute(CorrelationIdSupport.REQUEST_ATTRIBUTE);
         if (requestValue instanceof String value && CorrelationIdSupport.isValid(value)) {
@@ -288,6 +353,25 @@ public class GatewayController {
             return RequestContext.CORRELATION_ID.get();
         }
         return CorrelationIdSupport.resolve(request);
+    }
+
+    /**
+     * Keeps the special streaming route exact even though route-table resolution is prefix based.
+     *
+     * <p>Authentication, rate limiting, and correlation propagation continue through the normal
+     * controller path for the permitted GET. Invalid methods and path descendants are rejected
+     * before any bytes can be forwarded or buffered as an accidental stream.
+     */
+    private static void validateStreamingRequest(GatewayRoute route, String requestPath, String method) {
+        if (!route.streaming()) {
+            return;
+        }
+        if (!GatewayRoute.NOTIFICATION_STREAM_PATH.equals(requestPath)) {
+            throw new UnknownGatewayRouteException();
+        }
+        if (!route.isExactStreamingRequest(requestPath, method)) {
+            throw new UnsupportedGatewayMethodException("GET");
+        }
     }
 
     private static String pathWithoutContext(HttpServletRequest request) {
@@ -311,8 +395,19 @@ public class GatewayController {
 
     private static final class UnsupportedGatewayMethodException extends RuntimeException {
 
+        private final String allowHeader;
+
         private UnsupportedGatewayMethodException() {
+            this("GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+        }
+
+        private UnsupportedGatewayMethodException(String allowHeader) {
             super(null, null, false, false);
+            this.allowHeader = allowHeader;
+        }
+
+        private String allowHeader() {
+            return allowHeader;
         }
     }
 }

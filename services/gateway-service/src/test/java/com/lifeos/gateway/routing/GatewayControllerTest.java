@@ -81,6 +81,7 @@ class GatewayControllerTest {
         // covered below with an explicit authenticated route fixture.
         properties.setRoutes(List.of(
                 new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, false)));
+        properties.getUpstream().getRetry().setMaxAttempts(1);
         RestClient.Builder builder = RestClient.builder();
         upstream = MockRestServiceServer.bindTo(builder).build();
         meterRegistry = new SimpleMeterRegistry();

@@ -1,0 +1,133 @@
+spring:
+  application:
+    name: trust-ledger-service
+  threads:
+    virtual:
+      enabled: true
+  servlet:
+    multipart:
+      # The servlet boundary rejects requests before a document stream reaches proof code. The
+      # hasher independently enforces the same bound while streaming as a defense in depth.
+      max-file-size: ${TRUST_LEDGER_MAX_DOCUMENT_BYTES:100MB}
+      max-request-size: ${TRUST_LEDGER_MAX_DOCUMENT_BYTES:100MB}
+  datasource:
+    # Production deployments must provide a Trust Ledger database; there is no source-controlled
+    # credential fallback. Test profile supplies an isolated H2 database.
+    url: ${TRUST_LEDGER_DATASOURCE_URL}
+    username: ${TRUST_LEDGER_DATASOURCE_USERNAME}
+    password: ${TRUST_LEDGER_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    validate-migration-naming: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+server:
+  port: ${TRUST_LEDGER_SERVICE_PORT:8087}
+
+trust-ledger:
+  inbound-request-timeout: ${TRUST_LEDGER_INBOUND_REQUEST_TIMEOUT:10s}
+  max-document-bytes: ${TRUST_LEDGER_MAX_DOCUMENT_BYTES:104857600}
+  max-merkle-leaves: ${TRUST_LEDGER_MAX_MERKLE_LEAVES:10000}
+  kafka:
+    enabled: ${TRUST_LEDGER_KAFKA_ENABLED:false}
+    topic: ${TRUST_LEDGER_PROOF_TOPIC:lifeos.document.proof.requested.v1}
+    group: ${TRUST_LEDGER_KAFKA_GROUP:trust-ledger-document-proof-v1}
+    ai-audit-enabled: ${TRUST_LEDGER_AI_AUDIT_KAFKA_ENABLED:false}
+    ai-audit-topic: ${TRUST_LEDGER_AI_AUDIT_TOPIC:lifeos.ai.audit.hash.requested.v1}
+    ai-audit-group: ${TRUST_LEDGER_AI_AUDIT_KAFKA_GROUP:trust-ledger-ai-audit-v1}
+  besu:
+    # Disabled by default. Enabling requires an externally reviewed Besu contract, signing key,
+    # RPC policy, and deployment secret source; only the document digest is ABI-encoded.
+    enabled: ${TRUST_LEDGER_BESU_ENABLED:false}
+    rpc-url: ${TRUST_LEDGER_BESU_RPC_URL:http://localhost:8545}
+    private-key: ${TRUST_LEDGER_BESU_PRIVATE_KEY:}
+    contract-address: ${TRUST_LEDGER_BESU_CONTRACT_ADDRESS:}
+    function-name: ${TRUST_LEDGER_BESU_FUNCTION_NAME:anchorRoot}
+    chain-id: ${TRUST_LEDGER_BESU_CHAIN_ID:1337}
+    gas-limit: ${TRUST_LEDGER_BESU_GAS_LIMIT:120000}
+    gas-price-wei: ${TRUST_LEDGER_BESU_GAS_PRICE_WEI:1000000000}
+    request-timeout: ${TRUST_LEDGER_BESU_REQUEST_TIMEOUT:5s}
+    receipt-polling-interval: ${TRUST_LEDGER_BESU_RECEIPT_POLLING_INTERVAL:250ms}
+    receipt-polling-attempts: ${TRUST_LEDGER_BESU_RECEIPT_POLLING_ATTEMPTS:20}
+  media-anchor:
+    workload-identity: ${TRUST_LEDGER_MEDIA_ANCHOR_WORKLOAD_IDENTITY:media-service}
+    workload-token: ${IDENTITY_MEDIA_WORKLOAD_TOKEN}
+
+identity:
+  # Non-loopback identity endpoints require HTTPS. A blank workload token fails startup rather
+  # than allowing an untrusted caller to generate or verify a proof.
+  base-url: ${LIFEOS_IDENTITY_BASE_URL:http://localhost:8081}
+  workload-identity: ${LIFEOS_WORKLOAD_IDENTITY:trust-ledger-service}
+  workload-token: ${IDENTITY_TRUST_LEDGER_WORKLOAD_TOKEN}
+  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v2}
+  connect-timeout: ${TRUST_LEDGER_IDENTITY_CONNECT_TIMEOUT:2s}
+  read-timeout: ${TRUST_LEDGER_IDENTITY_READ_TIMEOUT:3s}
+  max-concurrent-requests: ${TRUST_LEDGER_IDENTITY_MAX_CONCURRENT_REQUESTS:32}
+
+task-goal:
+  base-url: ${LIFEOS_TASK_GOAL_BASE_URL:http://localhost:8082}
+  workload-identity: ${TRUST_LEDGER_TASK_GOAL_WORKLOAD_IDENTITY:trust-ledger-service}
+  workload-token: ${IDENTITY_TRUST_LEDGER_WORKLOAD_TOKEN}
+  connect-timeout: ${TRUST_LEDGER_TASK_GOAL_CONNECT_TIMEOUT:2s}
+  read-timeout: ${TRUST_LEDGER_TASK_GOAL_READ_TIMEOUT:3s}
+  max-concurrent-requests: ${TRUST_LEDGER_TASK_GOAL_MAX_CONCURRENT_REQUESTS:8}
+
+management:
+  server:
+    port: ${TRUST_LEDGER_MANAGEMENT_PORT:9087}
+    address: ${TRUST_LEDGER_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    access:
+      default: none
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    info:
+      access: unrestricted
+    prometheus:
+      access: unrestricted
+    health:
+      access: unrestricted
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs

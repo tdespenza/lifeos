@@ -1,0 +1,10 @@
+.git
+.github
+.gradle
+**/.DS_Store
+**/build/*
+# Each deployable service contributes exactly one prebuilt Boot jar. Keep this generic so a new
+# `services/<name>-service` module does not require a Docker-context policy edit.
+!services/*-service/build/
+!services/*-service/build/libs/
+!services/*-service/build/libs/*.jar

@@ -1,0 +1,105 @@
+spring:
+  application:
+    name: profile-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    # Production values intentionally have no source-controlled fallback. Blank or missing values
+    # fail binding before the service can create a driver-specific connection pool.
+    url: ${PROFILE_DATASOURCE_URL}
+    username: ${PROFILE_DATASOURCE_USERNAME}
+    password: ${PROFILE_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: ${PROFILE_FLYWAY_BASELINE_ON_MIGRATE:false}
+    baseline-version: ${PROFILE_FLYWAY_BASELINE_VERSION:1}
+    validate-migration-naming: true
+
+server:
+  port: ${PROFILE_SERVICE_PORT:8083}
+
+profile:
+  inbound-request-timeout: ${PROFILE_INBOUND_REQUEST_TIMEOUT:10s}
+  max-inbound-body-bytes: ${PROFILE_MAX_INBOUND_BODY_BYTES:65536}
+  max-concurrent-requests: ${PROFILE_MAX_CONCURRENT_REQUESTS:128}
+  # The HMAC secrets are deployment-only values. They protect idempotency-key/request digests and
+  # audit client fingerprints; raw keys, request content, and addresses are never persisted.
+  idempotency-secret: ${PROFILE_IDEMPOTENCY_SECRET}
+  audit-client-fingerprint-secret: ${PROFILE_AUDIT_CLIENT_FINGERPRINT_SECRET}
+  journal:
+    # Disabled by default. Enabling requires a base64 AES-256 key and an authenticated managed
+    # MongoDB deployment outside local development; the local Compose profile is intentionally
+    # loopback-only and unauthenticated.
+    enabled: ${PROFILE_JOURNAL_MONGODB_ENABLED:false}
+    uri: ${PROFILE_JOURNAL_MONGODB_URI:mongodb://localhost:27017}
+    database: ${PROFILE_JOURNAL_MONGODB_DATABASE:lifeos_profile}
+    collection: ${PROFILE_JOURNAL_MONGODB_COLLECTION:journal_entries}
+    encryption-key: ${PROFILE_JOURNAL_MONGODB_ENCRYPTION_KEY:}
+    max-entries-per-owner: ${PROFILE_JOURNAL_MAX_ENTRIES_PER_OWNER:10000}
+    max-content-bytes: ${PROFILE_JOURNAL_MAX_CONTENT_BYTES:65536}
+    max-page-size: ${PROFILE_JOURNAL_MAX_PAGE_SIZE:50}
+    timeout: ${PROFILE_JOURNAL_MONGODB_TIMEOUT:2s}
+  assistant-projection:
+    workload-identity: ${PROFILE_ASSISTANT_PROJECTION_WORKLOAD_IDENTITY:ai-assistant-service}
+    workload-token: ${PROFILE_AI_ASSISTANT_WORKLOAD_TOKEN:}
+
+identity:
+  # Remote authorities require HTTPS. HTTP is deliberately restricted to loopback development.
+  base-url: ${LIFEOS_IDENTITY_BASE_URL:http://localhost:8081}
+  workload-identity: ${LIFEOS_WORKLOAD_IDENTITY:profile-service}
+  workload-token: ${IDENTITY_PROFILE_WORKLOAD_TOKEN}
+  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}
+  connect-timeout: ${PROFILE_IDENTITY_CONNECT_TIMEOUT:2s}
+  read-timeout: ${PROFILE_IDENTITY_READ_TIMEOUT:3s}
+  max-concurrent-requests: ${PROFILE_IDENTITY_MAX_CONCURRENT_REQUESTS:32}
+
+management:
+  server:
+    port: ${PROFILE_MANAGEMENT_PORT:9083}
+    address: ${PROFILE_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    access:
+      default: none
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    info:
+      access: unrestricted
+    prometheus:
+      access: unrestricted
+    health:
+      access: unrestricted
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs

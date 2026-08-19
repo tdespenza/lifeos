@@ -1,0 +1,98 @@
+spring:
+  application:
+    name: analytics-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${ANALYTICS_DATASOURCE_URL}
+    username: ${ANALYTICS_DATASOURCE_USERNAME}
+    password: ${ANALYTICS_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    validate-migration-naming: true
+  kafka:
+    bootstrap-servers: ${LIFEOS_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      properties:
+        isolation.level: read_committed
+    listener:
+      ack-mode: record
+
+server:
+  port: ${ANALYTICS_SERVICE_PORT:8091}
+
+grpc:
+  server:
+    enabled: ${ANALYTICS_GRPC_ENABLED:false}
+    port: ${ANALYTICS_GRPC_PORT:10091}
+    tls-enabled: ${ANALYTICS_GRPC_TLS_ENABLED:false}
+    certificate-chain: ${ANALYTICS_GRPC_CERTIFICATE_CHAIN:}
+    private-key: ${ANALYTICS_GRPC_PRIVATE_KEY:}
+    trust-certificate-collection: ${ANALYTICS_GRPC_TRUST_CERTIFICATE_COLLECTION:}
+    workload-token: ${ANALYTICS_GRPC_WORKLOAD_TOKEN:}
+
+analytics:
+  gateway-proof-secret: ${ANALYTICS_GATEWAY_PROOF_SECRET}
+  workload-token: ${IDENTITY_ANALYTICS_WORKLOAD_TOKEN}
+  assistant-workload-identity: ${ANALYTICS_ASSISTANT_WORKLOAD_IDENTITY:ai-assistant-service}
+  assistant-workload-token: ${ANALYTICS_AI_ASSISTANT_WORKLOAD_TOKEN:}
+  inbound-request-timeout: ${ANALYTICS_INBOUND_REQUEST_TIMEOUT:10s}
+  max-snapshots: ${ANALYTICS_MAX_SNAPSHOTS:10000}
+  default-period-days: ${ANALYTICS_DEFAULT_PERIOD_DAYS:30}
+  kafka-enabled: ${ANALYTICS_KAFKA_ENABLED:false}
+  kafka-topic: ${ANALYTICS_KAFKA_TOPIC:lifeos.notification.requested.v2}
+  kafka-group: ${ANALYTICS_KAFKA_GROUP:analytics-service-v2}
+  projection-timeout: ${ANALYTICS_PROJECTION_TIMEOUT:5s}
+
+management:
+  server:
+    port: ${ANALYTICS_MANAGEMENT_PORT:9091}
+    address: ${ANALYTICS_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    access:
+      default: none
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    info:
+      access: unrestricted
+    prometheus:
+      access: unrestricted
+    health:
+      access: unrestricted
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs

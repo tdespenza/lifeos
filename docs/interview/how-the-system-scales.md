@@ -1,16 +1,35 @@
 # How Does This System Scale?
 
-Let me be upfront about what "scale" means here today: nothing has been load-tested, there's no production traffic, and I have exactly two services running — identity-service (authentication, durable session validation, and authorization decisions) and task-goal-service (authenticated owner/tenant-scoped goal operations plus a topological-sort endpoint). So what I can actually talk about is design intent and the reasoning behind it, not measured throughput. If an interviewer pushes on numbers, the honest answer is "I haven't run that benchmark yet," not a made-up p99.
+Let me be upfront about what "scale" means here today: nothing has been load-tested and there is
+no production traffic. The repository has Gateway, Identity, Task/Goal, Profile, Notification,
+Calendar, Finance, and Trust Ledger modules, but that is not evidence of fleet-wide capacity. What
+I can talk about is bounded design and module verification, not measured throughput. If an
+interviewer pushes on numbers, the honest answer is "I haven't run that benchmark yet," not a
+made-up p99.
 
 The design has a few scaling levers baked in from day one, even though most aren't under any real load yet.
 
-First, each service owns its own PostgreSQL database — lifeos_identity and lifeos_task_goal are already physically separate, no shared schema, no cross-service joins. That's not just clean boundaries, it's a scaling decision: each service's write ceiling is that service's problem, not a shared bottleneck for the whole platform. It also means I can scale, tune, or even swap the storage for one service without touching another. The real tradeoff — no cross-service SQL joins, so composite reads have to be built via API composition later — is spelled out in ADR-008, along with the concrete threshold (roughly 5,000-10,000 TPS on a well-tuned primary) where I'd revisit Postgres for a given service.
+First, each stateful service owns its PostgreSQL database — `lifeos_identity`,
+`lifeos_task_goal`, `lifeos_profile`, `lifeos_notification`, `lifeos_calendar`, and
+`lifeos_finance` are separate, with no shared schema or cross-service joins. That's not just clean
+boundaries: each service's write ceiling is its own problem, not a shared bottleneck for the whole
+platform. The tradeoff is composite reads require API composition or a read model; no benchmark has
+established a TPS threshold for changing that design.
 
-Second, virtual threads are on (`spring.threads.virtual.enabled=true`) in both services today, which matters for I/O-bound concurrency — request-handling threads unmount while blocked on a DB call instead of parking an OS thread. That said, I want to be precise: neither service does any real concurrent fan-out yet, so I haven't actually exercised virtual threads under contention — there's no benchmark proving they help right now, just the JDK's own reasoning and ADR-002's rationale for why this shape of workload (blocking I/O, not CPU-bound) benefits from the model once fan-out shows up, like a future dashboard aggregating tasks, calendar, and finance concurrently.
+Second, virtual threads are on (`spring.threads.virtual.enabled=true`) in the current Spring Boot
+modules, which matters for I/O-bound concurrency. That said, no product fan-out or large-load
+scenario has been exercised, so there is no benchmark proving a throughput win. A future dashboard
+aggregating tasks, calendar, and finance is a candidate for measured structured-concurrency fan-out.
 
-Third, the planned direction for decoupling services under load is event-driven, not synchronous chains — Kafka as the backbone (ADR-016), so a spike in, say, notification volume doesn't propagate backpressure into the task service that produced the event. That's not built yet either.
+Third, the eventing foundation is now real but narrow: Calendar writes privacy-safe
+`NotificationRequestedV2` records through a transactional outbox, and Notification durably
+consumes/fans out outcomes through its own outbox. The local Compose eventing profile supplies a
+single development Kafka broker. That does not yet establish production Kafka capacity, ACL/TLS,
+retention operations, or eventing for every domain.
 
-Caching (Redis, running in docker-compose but wired into zero service code) is the next lever once there's an actual read-heavy path worth protecting.
+Redis already enforces gateway and identity rate limits and stores short-lived OIDC/WebAuthn state;
+it is not yet used as a general read cache. A domain read-cache policy is the next lever once there
+is an actual read-heavy path worth protecting.
 
 The honest scaling story right now is: sound per-service boundaries, a concurrency model chosen for the right reasons, and nothing yet forcing me to prove it under load.
 

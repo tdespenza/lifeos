@@ -1,6 +1,9 @@
 # Why WebRTC for live video + HLS for recorded playback?
 
-I want to be upfront: none of this exists yet. There's no media-streaming-service, no SFU, no transcoding pipeline — nothing. This is entirely a future phase of the roadmap. What I do have is the decision made and documented in ADR-012, because I wanted to think through the transport-layer tradeoff before writing any code, not after I'd already bolted together something that half-works for both live and recorded video.
+The repository now has a secure media control-plane foundation: owner-scoped asset/session metadata,
+bounded multipart source upload, and private HLS manifest/segment read contracts. There is still no
+SFU, transcoding worker, recording pipeline, or deployed object store; those external adapters fail
+closed. ADR-012 remains the rationale for the future live/playback transport split.
 
 The reasoning starts from a simple observation: video journaling and coaching in LifeOS actually need two completely different things. A live coaching call or a live video-journal session needs sub-second latency — it's a real conversation, and anything that feels laggy breaks the interaction. But watching a recording of that session afterward has completely different requirements: I want it to scrub, seek, adapt its bitrate to whatever device I'm on, and ideally get served off a CDN or object storage instead of tying up a real-time media server. Those are opposite optimization targets, and no single protocol is good at both.
 

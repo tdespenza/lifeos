@@ -2,7 +2,7 @@
 
 ## Context
 
-LifeOS exposes eleven backend microservices (identity, profile, task/goal, calendar, finance, document vault, media, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics). Several client surfaces — the Angular web app, the JavaFX/GraalVM desktop app, and the Flutter mobile app — need composite, read-heavy views that span multiple services in a single render: the personal dashboard (tasks + calendar + finance snapshot + AI recommendations + notifications + blockchain proof status), the goal overview, the AI recommendation panel, and the cross-service profile summary.
+LifeOS exposes twelve backend service modules (identity, profile, task/goal, calendar, finance, document vault, media, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics). Several client surfaces — the Angular web app, the JavaFX/GraalVM desktop app, and the Flutter mobile app — need composite, read-heavy views that span multiple services in a single render: the personal dashboard (tasks + calendar + finance snapshot + AI recommendations + notifications + blockchain proof status), the goal overview, the AI recommendation panel, and the cross-service profile summary.
 
 These views do not map to a single service's resource model. A naive REST approach forces clients to either call five to six endpoints per screen and stitch the results themselves, or forces backend teams to hand-roll a growing set of screen-specific REST endpoints that duplicate composition logic and drift from the underlying domain models. Mobile clients on cellular connections are also sensitive to over-fetching (full resource payloads when only a few fields render on screen) and to round-trip count (each additional call adds latency and battery cost). The system already commits to REST for simple resource CRUD (create task, upload document, update profile, create budget category) and gRPC for internal service-to-service calls; this decision concerns only the aggregation/read layer that composite UI views depend on.
 
@@ -15,7 +15,7 @@ These views do not map to a single service's resource model. A naive REST approa
 
 ## Decision Made
 
-Use a GraphQL gateway as the aggregation layer for dashboard and client-specific composite views, sitting alongside (not replacing) REST for simple resource CRUD and gRPC for internal service-to-service calls. The GraphQL layer resolves fields by fanning out to backend services — internally over gRPC — and composing a single typed response per client query.
+Use a GraphQL gateway as the aggregation layer for dashboard and client-specific composite views, sitting alongside (not replacing) REST for simple resource CRUD and gRPC for internal service-to-service calls. The GraphQL layer resolves fields by fanning out to backend services — internally over gRPC — and composing a single typed response per client query. The gateway retains a bounded REST compatibility adapter while the opt-in mTLS/workload-authenticated gRPC metrics hosts are provisioned; enabling `LIFEOS_GATEWAY_DASHBOARD_GRPC_ENABLED` switches the resolver to the versioned Task, Calendar, and Finance protobuf contracts.
 
 ## Why
 

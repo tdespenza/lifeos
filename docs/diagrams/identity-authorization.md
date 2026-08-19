@@ -100,6 +100,35 @@ There is intentionally no unbounded role scan or free-form policy expression: se
 and the small resource attribute map evaluate in `O(r + a)` time, where `r` is selected roles and
 `a` is policy-relevant attributes. Membership lookup is indexed by account and tenant.
 
+## V2 descriptor registry and rolling compatibility
+
+`v2` keeps the request and response DTOs unchanged, but replaces the action-specific
+Goal/Profile/Household evaluator branches with a source-defined descriptor registry. Each closed action has one
+exact workload, resource type, resource-fact shape, tenant boundary, and owner rule. There are no
+wildcard action, resource-family, or workload descriptors. Registry construction fails if an enum
+action is missing or duplicated, and a new enum constant has no policy grant until it is explicitly
+added to `v2`.
+
+| Workload | V2 resource families | Boundary |
+| --- | --- | --- |
+| `task-goal-service` | `task` and `task-dependency-graph` | Personal/self-only. Task objects use `{ownerAccountId, resourceExists}`; dependency manage/order use an empty graph collection and Task/Goal owner-checks all referenced nodes. |
+| `calendar-service` | `calendar-event`, `calendar-time-block`, `calendar` | Personal/self-only. Event/block objects use `{ownerAccountId, resourceExists}`; list/conflict/optimization use an empty calendar collection. No tenant-admin bypass. |
+| `finance-service` | `finance-budget`, `finance-transaction`, `finance-goal`, `finance` | Personal/self-only. Immutable transaction posting and categorization remain Finance-local domain behavior; Identity only checks trusted object or collection facts. No tenant-admin bypass. |
+| `trust-ledger-service` | `trust-ledger` | Personal/self-only empty collection for proof, verification, and anchoring capabilities. Trust Ledger validates its own proof/anchor references. |
+
+Legacy Goal/Profile/Household descriptors preserve the exact V1 semantics: Goal object actions may
+use an explicit scoped `TENANT_ADMIN`, while Profile and Household remain personal/self-only. The
+active policy defaults to `v2`. Identity serves an immutable `v1` compatibility snapshot only for
+reviewed legacy actions and returns
+`policyVersion: v1`; this preserves the existing adapter's exact-version check. A V2 action never
+falls back to V1. A verified workload requesting an action from another workload's family is denied
+with the bounded `WORKLOAD_NOT_AUTHORIZED` code and audit outcome; it cannot borrow a credential
+from another service.
+
+The descriptor evaluator remains `O(r + a)`: one indexed membership lookup, a bounded role set,
+and at most sixteen bounded attributes. It performs no cross-service resource lookup and has no
+policy cache, so credential rotation, membership changes, and session revocation remain fail-closed.
+
 ## Request sequence
 
 ```mermaid
@@ -141,6 +170,7 @@ classDiagram
     direction LR
     class AuthorizationDecisionService {
         +decide(AuthorizationRequest) AuthorizationDecision
+        +decide(AuthorizationRequest, workloadIdentity) AuthorizationDecision
     }
     class AuthorizationRequest {
         UUID subjectId
@@ -170,6 +200,10 @@ classDiagram
     }
     class AuthorizationPolicyRepository {
         +loadCurrentPolicy() AuthorizationPolicy
+        +findCompatiblePolicy(version, action) Optional~AuthorizationPolicy~
+    }
+    class AuthorizationActionDescriptorRegistry {
+        +find(action) Optional~AuthorizationActionDescriptor~
     }
     class InternalWorkloadIdentityVerifier {
         +verify(HttpServletRequest)
@@ -180,6 +214,7 @@ classDiagram
     AuthorizationDecisionService --> AuthorizationRequest
     AuthorizationDecisionService --> AuthorizationMembership
     AuthorizationDecisionService --> AuthorizationPolicyRepository
+    AuthorizationDecisionService --> AuthorizationActionDescriptorRegistry
     AuthorizationDecisionService --> AuthorizationDecision
     InternalWorkloadIdentityVerifier --> AuthorizationDecisionService : protects adapter
     AuthorizationDecisionService --> SecurityAuditService : controller records result

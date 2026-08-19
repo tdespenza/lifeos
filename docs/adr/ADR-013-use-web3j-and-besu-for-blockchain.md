@@ -43,6 +43,11 @@ If LifeOS ever needed cross-organization document verification — e.g., a legal
 
 ## How We Will Validate It
 
+The repository now provides a loopback-only single-node Besu `blockchain` Compose profile, a
+digest-only `AnchorRegistry` Solidity source, and a bounded readiness helper in
+`scripts/start-local-blockchain.sh`. These are explicitly development foundations; they do not
+substitute for the multi-node, key-managed, TLS-protected deployment required by this decision.
+
 - **Throughput/latency benchmark:** measure end-to-end anchoring latency (hash generation → Merkle proof → transaction inclusion) under a synthetic load of 100 concurrent document uploads; target p95 anchor-confirmation time under 5 seconds on the private network (IBFT block time tuned accordingly), verified via an OpenTelemetry trace spanning the async anchoring pipeline.
 - **Verification correctness test:** an automated integration test that uploads N documents, tampers with one off-chain copy, and asserts the Merkle-proof verification against the on-chain root fails exactly for the tampered document and passes for all others (zero false positives/negatives across a 10,000-document synthetic corpus).
 - **Node resilience drill:** kill a validator node mid-anchoring-batch and confirm the queue-backed anchoring pipeline retries and eventually succeeds with no lost or duplicated anchors, measuring recovery time to healthy quorum.

@@ -1,8 +1,21 @@
-# Topological Sort — Goal Dependency Ordering
+# Topological Sort — Task/Goal Dependency Ordering
 
 ## Real Product Use Case
 
-`task-goal-service` exposes `POST /api/v1/goals/dependency-order` (see [`GoalController`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/GoalController.java)). Given a set of goal names and a set of directed dependency edges (`{before, after}`, meaning `before` must complete before `after`), it returns a valid execution order — or a 409 Conflict if the dependencies contain a cycle. This backs the "goal dependency mapping" use case in `REQUIREMENTS.md`: e.g. ordering "Learn DSA" → "System Design Practice" → "Apply to FAANG".
+`task-goal-service` now exposes `GET /api/v1/dependencies/execution-order` for the authenticated
+user's persisted Task/Goal graph. It loads only that owner's real nodes and directed edges, then
+returns every node in a valid execution order — or a bounded error without a partial order if data
+is cyclic or oversized. This backs the planning use case in `REQUIREMENTS.md`, for example
+planning a Goal before its implementation Tasks.
+
+`POST /api/v1/goals/dependency-order` remains a compatibility endpoint for a submitted graph of
+goal-name labels and `{before, after}` edges. It is deliberately not persistence: new clients use
+the persisted API above.
+
+The compatibility endpoint accepts at most 10,000 distinct nodes, 50,000 submitted edges, and
+128 characters per node label. It preserves the first-seen node order as its deterministic
+tie-breaker and ignores repeated identical edges. These bounds make its memory use explicit while
+the service retains the compatibility endpoint during migration to persisted task/goal identifiers.
 
 ## Why This Algorithm Was Chosen
 
@@ -23,28 +36,50 @@ O(V + E): the adjacency list holds all edges, and the in-degree map and result l
 
 ## Java 25 Implementation Notes
 
-See [`TopologicalSortService`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortService.java). Implementation notes:
+The shared implementation is
+[`BoundedTopologicalOrder`](../../contracts/algorithm-engine/src/main/java/com/lifeos/algorithms/graph/BoundedTopologicalOrder.java).
+`task-goal-service`'s
+[`TopologicalSortService`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortService.java)
+is only a compatibility adapter for its stricter free-text validation and unresolved-label error
+diagnostic. `PersistedDependencyGraphTransactions` delegates directly to the shared primitive.
+Implementation notes:
 
-- Uses `ArrayDeque<String>` as the ready-queue rather than `LinkedList`, avoiding the extra per-node allocation overhead of a linked-list-backed deque.
-- Uses `LinkedHashSet` to collect all node names (goals passed explicitly, plus any additional nodes only referenced via an edge) so iteration order is deterministic for a given input, which keeps the algorithm's output reproducible for the same input and makes tests deterministic.
-- `DependencyEdge` is a plain `record(String before, String after)` — no behavior, just a named tuple, which reads more clearly at call sites than a raw `Map.Entry` or two parallel lists would.
-- On a cycle, throws [`CyclicDependencyException`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/CyclicDependencyException.java) carrying the specific unresolved node names (not just "a cycle exists"), which `GoalController` maps to an HTTP 409 with that detail in the body — actionable for a caller trying to fix their input, not just a generic error.
+- Uses `ArrayDeque` plus `LinkedHashMap`/`LinkedHashSet` internally, avoiding recursive depth risk
+  and preserving first-seen ready-node ties without a priority queue.
+- The persisted projection has a deterministic resource-family and indexed creation/ID order before
+  the linear traversal; the graph traversal itself remains O(V + E).
+- `DirectedEdge<T>` is a typed immutable record, so the same reviewed primitive can order both
+  free-text labels and `(nodeType, UUID)` persisted identities.
+- The compatibility adapter retains [`CyclicDependencyException`](../../services/task-goal-service/src/main/java/com/lifeos/taskgoal/goal/algorithm/CyclicDependencyException.java)
+  with unresolved labels. The shared primitive intentionally exposes no client node values when it
+  rejects a cycle, which avoids leaking unauthorized persisted identifiers.
 
 ## Failure Cases
 
 - **Direct cycle** (`A → B`, `B → A`): detected — neither node ever reaches in-degree zero.
 - **Indirect cycle** (`A → B → C → A`): detected — all three nodes remain unresolved.
-- **Cycle isolated from unrelated nodes**: a cycle among `{A, B}` does not prevent an unrelated `Standalone` node (no edges) from being correctly ordered — but since the overall result size won't match the total node count, the whole request still fails with 409, listing only the actually-cyclic nodes in the exception (unaffected nodes work fine standalone since Kahn's algorithm still resolves and outputs them; they're just not returned because the request as a whole is rejected).
+- **Cycle isolated from unrelated nodes**: a cycle among `{A, B}` does not prevent an unrelated `Standalone` node (no edges) from being correctly processed — but since the overall result size won't match the total node count, the whole request still fails with 409. The unresolved list excludes successfully processed standalone nodes, while it can include nodes downstream of the cycle.
 - **Empty edge list**: every goal has in-degree zero and is returned immediately, in insertion order.
+- **Malformed, duplicate-explicit, or oversized input**: rejected before sorting; repeated identical edges are deliberately normalized rather than multiplying in-degree or work.
 
 ## Test Cases
 
-See [`TopologicalSortServiceTest`](../../services/task-goal-service/src/test/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortServiceTest.java): orders a simple chain, allows independent branches to interleave in either valid relative order, includes nodes with no dependencies, detects a direct 2-node cycle, detects an indirect 3-node cycle, and confirms a cycle's unresolved-node list excludes unrelated standalone nodes. See also [`GoalControllerTest`](../../services/task-goal-service/src/test/java/com/lifeos/taskgoal/goal/GoalControllerTest.java) for the HTTP-layer contract (200 with ordered `order[]`, 409 on cycle).
+See [`BoundedTopologicalOrderTest`](../../contracts/algorithm-engine/src/test/java/com/lifeos/algorithms/graph/BoundedTopologicalOrderTest.java)
+for the shared bounded algorithm, [`TopologicalSortServiceTest`](../../services/task-goal-service/src/test/java/com/lifeos/taskgoal/goal/algorithm/TopologicalSortServiceTest.java)
+for compatibility semantics, and
+[`PersistedDependencyIntegrationTest`](../../services/task-goal-service/src/test/java/com/lifeos/taskgoal/dependency/PersistedDependencyIntegrationTest.java)
+for real Task/Goal edge persistence, scope, cycle, deletion, and order coverage. The PostgreSQL
+test additionally verifies two concurrent opposite-edge requests cannot both commit.
 
 ## Benchmark Results
 
-None yet — the current goal graphs in this project are small (a handful of goals per user), so no throughput/latency benchmark has been run against this endpoint. Given the O(V + E) complexity, this is not expected to be a bottleneck at any realistic personal-goal-graph size; if goal graphs ever grow large enough to matter (e.g. a shared/collaborative goal graph across many users), a JMH benchmark should be added under `labs/performance-lab/` per `REQUIREMENTS.md`'s "Performance and Benchmarking" section before assuming this remains a non-issue.
+The shared primitive has a correctness-checked smoke benchmark, including JVM and machine metadata;
+see [the recorded methodology and measured baseline](../benchmarks/2026-08-18-algorithm-engine-smoke.md).
+It is not a production endpoint latency SLO or a JMH result. The current personal graph workload is
+small, so a service-specific throughput claim still requires an end-to-end benchmark before it is
+made. If shared/collaborative graphs become a product feature, add JMH and representative database
+projection measurements under `labs/performance-lab/`.
 
 ## Interview Explanation
 
-"I needed to order a user's goals so that every goal appears after everything it depends on — a classic topological sort. I used Kahn's algorithm specifically because cycle detection falls out of the same linear pass: if I can't process every node, the remaining nodes identify the cycle and any goals blocked downstream of it, and I can tell the caller precisely which goals are stuck instead of just saying 'invalid input.' It's O(V + E), so it stays fast even as a user's goal graph grows, and the whole thing is unit-tested for both the happy path and the cycle-detection path."
+"I needed to order a user's persisted tasks and goals so that every node appears after everything it depends on. I use one shared bounded Kahn implementation: cycle detection falls out of the same linear pass, and no partial plan is returned. The service projects only the caller's graph, serializes concurrent edge mutations per personal graph, and tests the lock behavior on real PostgreSQL. The old label endpoint is explicitly a compatibility adapter, not a second planning data model."

@@ -1,6 +1,10 @@
 # Why JavaFX + GraalVM Native Image for the Desktop Client?
 
-Short answer up front: there is no desktop client yet. This is a planned decision from the roadmap, not something running today — LifeOS right now is two backend services (identity-service and task-goal-service), no UI clients of any kind. But since the question comes up in interviews, here's how I'd explain the reasoning.
+Short answer up front: there is no full desktop client yet; the repository contains only a bounded
+JavaFX shell. This is a planned decision from the roadmap,
+not something running today — LifeOS has twelve bounded backend service modules and a JavaFX shell,
+but no full authenticated desktop workflow or native package yet. Since the question comes up in
+interviews, here's how I'd explain the reasoning.
 
 The desktop client is supposed to run on Windows, macOS, and Linux, support offline-capable local workflows, and touch OS-level features like the file system and secure credential storage. The obvious "fast path" answer is Electron — reuse the Angular codebase, ship it in Chromium, done in a weekend. I rejected that, and the reasoning isn't purely technical, it's also about what this project is for. LifeOS is a Java-centric portfolio: every backend service is Java 25 on virtual threads with structured concurrency. If the desktop client is just Chromium plus Node, it contributes nothing to that story — it's a step backward from the engineering narrative I'm trying to build, not a shortcut.
 

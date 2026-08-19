@@ -2,7 +2,7 @@
 
 ## Context
 
-LifeOS is a polyglot-adjacent but JVM-centric system: eleven Spring Boot microservices, an algorithm engine, an AI orchestrator, and a blockchain integration layer, all exposed over REST/GraphQL/gRPC and communicating through Kafka/Pulsar. The project has two goals that must both be satisfied by the language choice: (1) run a real, concurrent, I/O-heavy distributed system efficiently, and (2) serve as a FAANG-caliber portfolio piece that demonstrates depth in algorithms, concurrency, and JVM internals — not just framework usage. The team is small (effectively solo-to-small), so language ecosystem maturity, tooling, and hiring signal matter as much as raw runtime capability.
+LifeOS is a polyglot-adjacent but JVM-centric system: twelve independently packageable Spring Boot service modules, an algorithm engine, an AI orchestrator, and a blockchain integration layer, all exposed over REST/GraphQL/gRPC and communicating through Kafka/Pulsar. The project has two goals that must both be satisfied by the language choice: (1) run a real, concurrent, I/O-heavy distributed system efficiently, and (2) serve as a FAANG-caliber portfolio piece that demonstrates depth in algorithms, concurrency, and JVM internals — not just framework usage. The team is small (effectively solo-to-small), so language ecosystem maturity, tooling, and hiring signal matter as much as raw runtime capability.
 
 ## Options Considered
 

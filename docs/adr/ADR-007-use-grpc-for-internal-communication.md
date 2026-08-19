@@ -2,7 +2,7 @@
 
 ## Context
 
-LifeOS is decomposed into ~11 Spring Boot microservices (identity, profile, task/goal, calendar, finance, document vault, media, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics) that must talk to each other synchronously for request/response flows: the AI orchestrator calls the algorithm engine to run scoring/optimization routines, the task service calls the calendar service to resolve scheduling conflicts, and the blockchain service is called to verify a document integrity proof before returning a vault read to a user. External clients (Angular, JavaFX/GraalVM desktop, Flutter mobile) already consume REST for resource CRUD and GraphQL for cross-service aggregation. The open question this ADR resolves is narrower: what protocol should services use to call each other, internally, on the synchronous path — not what the public API surface looks like, and not how async events flow (that's Kafka/Pulsar's job).
+LifeOS is decomposed into twelve Spring Boot service modules (identity, profile, task/goal, calendar, finance, document vault, media, AI orchestrator, algorithm engine, blockchain trust ledger, notification, analytics) that must talk to each other synchronously for request/response flows: the AI orchestrator calls the algorithm engine to run scoring/optimization routines, the task service calls the calendar service to resolve scheduling conflicts, and the blockchain service is called to verify a document integrity proof before returning a vault read to a user. External clients (Angular, JavaFX/GraalVM desktop, Flutter mobile) already consume REST for resource CRUD and GraphQL for cross-service aggregation. The open question this ADR resolves is narrower: what protocol should services use to call each other, internally, on the synchronous path — not what the public API surface looks like, and not how async events flow (that's Kafka/Pulsar's job).
 
 ## Options Considered
 
@@ -16,8 +16,11 @@ Use gRPC (Protocol Buffers + HTTP/2) for all synchronous internal service-to-ser
 
 ### Transitional exception
 
-The `grpc-contracts` module and production service-mesh mTLS rollout do not yet exist in this
-repository. Story 1.6 therefore uses one narrow internal REST/JSON bridge between
+The repository now contains opt-in mTLS gRPC metrics hosts for Task/Goal, Calendar, and Finance,
+plus a gateway client for their personal dashboard contracts. Those hosts are deployment-owned and
+disabled by default until certificates and workload tokens are provisioned; Document/Analytics
+transport and a complete service-mesh rollout remain future work. Story 1.6 therefore still uses
+one narrow internal REST/JSON bridge between
 `task-goal-service` and `identity-service` for durable JWT validation and authorization
 decisions. It is explicitly a migration seam, not a new default for internal calls: it uses
 versioned request/decision DTOs, authenticated workload identity, bounded client timeouts,

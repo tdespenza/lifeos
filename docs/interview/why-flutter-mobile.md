@@ -1,6 +1,10 @@
 # Why Flutter for the Mobile Client?
 
-Upfront: there's no mobile client in the repo at all yet. What exists today is two backend services — identity-service (authentication, durable session validation, and authorization decisions) and task-goal-service (authenticated owner/tenant-scoped goal operations plus the Kahn's-algorithm dependency-order endpoint) — both plain REST, with no clients built against them yet. This is the plan for when mobile work starts, not something I can demo.
+Upfront: the repository contains a bounded Flutter shell, not a releasable mobile client. It also
+contains twelve independently packageable backend service modules. Their public surface is
+currently REST (with generated gRPC contracts but no complete live gRPC mesh), and the shell is not
+yet built into a full authenticated product workflow. This is the plan for when mobile work starts,
+not something I can demo as a finished app.
 
 The real constraint here isn't "what's the best mobile tech" in the abstract — it's that I'm one engineer (effectively) trying to ship three clients (Angular web, JavaFX/GraalVM desktop, mobile) on top of a backend that's the actual point of this project. LifeOS's differentiation budget is backend Java engineering — virtual threads, structured concurrency, microservices, event streaming, blockchain-integrity proofs — not mobile platform depth. So the mobile decision has to optimize for "real iOS and Android apps, sustainably maintained by a small team," not "maximum platform fidelity."
 

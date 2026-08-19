@@ -477,6 +477,14 @@ public class GatewayProperties {
          */
         private boolean authenticationRequired = true;
 
+        private boolean streaming;
+
+        private boolean documentUploadStreaming;
+
+        private boolean mediaUploadStreaming;
+
+        private boolean mediaHlsStreaming;
+
         /**
          * Optional HTTP methods to protect for a mixed public/protected route. An empty set means
          * every supported method is protected when {@link #authenticationRequired} is enabled.
@@ -567,6 +575,38 @@ public class GatewayProperties {
          */
         public void setAuthenticationRequired(boolean authenticationRequired) {
             this.authenticationRequired = authenticationRequired;
+        }
+
+        public boolean isStreaming() {
+            return streaming;
+        }
+
+        public void setStreaming(boolean streaming) {
+            this.streaming = streaming;
+        }
+
+        public boolean isDocumentUploadStreaming() {
+            return documentUploadStreaming;
+        }
+
+        public void setDocumentUploadStreaming(boolean documentUploadStreaming) {
+            this.documentUploadStreaming = documentUploadStreaming;
+        }
+
+        public boolean isMediaUploadStreaming() {
+            return mediaUploadStreaming;
+        }
+
+        public void setMediaUploadStreaming(boolean mediaUploadStreaming) {
+            this.mediaUploadStreaming = mediaUploadStreaming;
+        }
+
+        public boolean isMediaHlsStreaming() {
+            return mediaHlsStreaming;
+        }
+
+        public void setMediaHlsStreaming(boolean mediaHlsStreaming) {
+            this.mediaHlsStreaming = mediaHlsStreaming;
         }
 
         /**

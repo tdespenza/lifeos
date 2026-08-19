@@ -14,8 +14,22 @@ No local Gradle install is required — use the wrapper (`./gradlew`), which pin
 ## Getting started
 
 ```bash
+# Configure local-only database coordinates and credentials. This file is gitignored; do not
+# reuse development passwords or commit a populated version. The stock init script creates the
+# bounded-context databases but not separate service roles, so the template makes each service reuse the
+# LIFEOS_POSTGRES_USER and LIFEOS_POSTGRES_PASSWORD bootstrap login.
+cp infrastructure/docker-compose/.env.example infrastructure/docker-compose/.env
+# Edit infrastructure/docker-compose/.env and fill LIFEOS_POSTGRES_USER and
+# LIFEOS_POSTGRES_PASSWORD. Only replace the derived service credentials after you have explicitly
+# provisioned those database roles and grants.
+
 # start local Postgres + Redis
 docker compose -f infrastructure/docker-compose/docker-compose.yml up -d
+
+# Make the same bootstrap-derived datasource values available to bootRun in this shell.
+set -a
+source infrastructure/docker-compose/.env
+set +a
 
 # build and run all tests
 ./gradlew build
@@ -25,7 +39,21 @@ docker compose -f infrastructure/docker-compose/docker-compose.yml up -d
 ./gradlew :services:task-goal-service:bootRun
 ```
 
-See [README.md](README.md) for the project overview. The full product vision, architecture, and roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local planning document, not a build input), so a fresh clone won't have it and doesn't need it to build, run, or test the code. Its substance is mirrored across tracked documentation you *do* have: `docs/adr/` (19 architecture decision records), `docs/interview/`, `docs/architecture/current-state.md`, `docs/epics.md`, and README.md's own feature/status summary. If you need the source document itself rather than its tracked summaries, that requires the project owner.
+The Spring Boot services intentionally have no production datasource defaults. Their datasource
+URL, user name, and password must be non-blank at startup. The stock local bootstrap creates every
+bounded-context database under `LIFEOS_POSTGRES_USER` / `LIFEOS_POSTGRES_PASSWORD`, so the template
+derives each service datasource credential from that login; simply choosing separate service user
+names will not create database roles. Production deployments may use separate least-privilege
+roles, but must provision each role and grant it access before supplying the corresponding
+secret-manager values. Test profiles supply isolated H2 settings and do not use these values.
+
+See [README.md](README.md) for the project overview. The full product vision, architecture, and
+roadmap live in `REQUIREMENTS.md` at the repo root — it's intentionally gitignored (a project-local
+planning document, not a build input), so a fresh clone won't have it and doesn't need it to build,
+run, or test the code. Its substance is mirrored across tracked documentation you *do* have:
+`docs/adr/`, `docs/interview/`, `docs/architecture/current-state.md`, `docs/epics.md`, and
+README.md's own feature/status summary. If you need the source document itself rather than its
+tracked summaries, that requires the project owner.
 
 ## Documentation conventions
 

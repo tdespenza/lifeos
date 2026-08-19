@@ -51,6 +51,14 @@ class IdentityFlywayMigrationTest {
         try (Connection connection = DriverManager.getConnection(databaseUrl, "sa", "")) {
             assertThat(columnExists(connection, "SECURITY_AUDIT_EVENT", "OUTCOME_CODE")).isTrue();
             assertThat(tableExists(connection, "AUTHORIZATION_MEMBERSHIP")).isTrue();
+            assertThat(tableExists(connection, "ACCOUNT_REGISTRATION_IDEMPOTENCY")).isTrue();
+            assertThat(tableExists(connection, "IDENTITY_NOTIFICATION_OUTBOX_EVENT")).isTrue();
+            assertThat(tableExists(connection, "IDENTITY_NOTIFICATION_OUTBOX_DEAD_LETTER")).isTrue();
+            assertThat(columnExists(
+                            connection,
+                            "ACCOUNT_REGISTRATION_IDEMPOTENCY",
+                            "IDEMPOTENCY_KEY_HASH"))
+                    .isTrue();
             assertThat(uniqueConstraintExists(
                             connection,
                             "AUTHORIZATION_MEMBERSHIP",
@@ -76,6 +84,17 @@ class IdentityFlywayMigrationTest {
             assertThat(tableExists(connection, "AUTHORIZATION_MEMBERSHIP")).isTrue();
             assertThat(columnExists(connection, "AUTH_SESSION", "LAST_USED_AT")).isTrue();
             assertThat(indexExists(connection, "AUTH_SESSION", "IX_AUTH_SESSION_ACCOUNT_CURSOR"))
+                    .isTrue();
+            assertThat(tableExists(connection, "ACCOUNT_REGISTRATION_IDEMPOTENCY")).isTrue();
+            assertThat(indexExists(
+                            connection,
+                            "ACCOUNT_REGISTRATION_IDEMPOTENCY",
+                            "UK_ACCOUNT_REGISTRATION_IDEMPOTENCY_KEY"))
+                    .isTrue();
+            assertThat(indexExists(
+                            connection,
+                            "IDENTITY_NOTIFICATION_OUTBOX_EVENT",
+                            "IDX_IDENTITY_NOTIFICATION_OUTBOX_CLAIM"))
                     .isTrue();
         }
     }

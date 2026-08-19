@@ -33,6 +33,9 @@ class IdentityAuthPropertiesTest {
         assertThatThrownBy(() -> properties.getPassword().setVerificationAcquireTimeout(Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("verificationAcquireTimeout must be positive");
+        assertThatThrownBy(() -> properties.getRegistration().setIdempotencySecret("too-short"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("idempotencySecret must contain at least 32 bytes");
         assertThatThrownBy(() -> properties.getJwt().setIssuer(" "))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("issuer must not be blank");
@@ -60,10 +63,12 @@ class IdentityAuthPropertiesTest {
     void acceptsOnlyPolicyVersionsImplementedByTheAuthorizationAuthority() {
         IdentityAuthProperties.Authorization authorization = new IdentityAuthProperties.Authorization();
 
+        assertThat(authorization.getPolicyVersion()).isEqualTo("v2");
         authorization.setPolicyVersion("v1");
-
         assertThat(authorization.getPolicyVersion()).isEqualTo("v1");
-        assertThatThrownBy(() -> authorization.setPolicyVersion("v2"))
+        authorization.setPolicyVersion("v2");
+        assertThat(authorization.getPolicyVersion()).isEqualTo("v2");
+        assertThatThrownBy(() -> authorization.setPolicyVersion("v3"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("policyVersion is not implemented by this authorization authority");
     }

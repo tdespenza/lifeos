@@ -74,7 +74,7 @@ class AuthorizationDecisionControllerTest {
         UUID subjectId = UUID.randomUUID();
         authenticatedWorkload();
         auditableRequest();
-        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+        when(decisionService.decideForAudit(any(), anyString())).thenReturn(evaluation(
                 AuthorizationDecision.allow("v1", Instant.parse("2026-08-13T12:05:00Z")), subjectId));
 
         mockMvc.perform(post("/api/v1/internal/authorization/decisions")
@@ -90,6 +90,7 @@ class AuthorizationDecisionControllerTest {
                 .andExpect(jsonPath("$.verifiedSubjectId").doesNotExist());
 
         verify(metrics).record(any());
+        verify(decisionService).decideForAudit(any(), org.mockito.ArgumentMatchers.eq("task-goal-service"));
         verify(auditService).recordAuthorizationOutcome(
                 SecurityAuditEventType.AUTHORIZATION_ALLOWED,
                 subjectId,
@@ -103,7 +104,7 @@ class AuthorizationDecisionControllerTest {
         UUID goalId = UUID.randomUUID();
         authenticatedWorkload();
         auditableRequest();
-        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+        when(decisionService.decideForAudit(any(), anyString())).thenReturn(evaluation(
                 AuthorizationDecision.deny(
                         AuthorizationDenyReason.OWNER_MISMATCH,
                         "v1",
@@ -144,7 +145,7 @@ class AuthorizationDecisionControllerTest {
     void failsClosedWhenAuditPersistenceCannotRecordAnAllow() throws Exception {
         authenticatedWorkload();
         auditableRequest();
-        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+        when(decisionService.decideForAudit(any(), anyString())).thenReturn(evaluation(
                 AuthorizationDecision.allow("v1", Instant.parse("2026-08-13T12:05:00Z")), UUID.randomUUID()));
         doThrow(new AuthorizationDependencyUnavailableException()).when(auditService)
                 .recordAuthorizationOutcome(any(), any(), anyString(), anyString());
@@ -161,7 +162,7 @@ class AuthorizationDecisionControllerTest {
     void failsClosedWithAGenericResponseWhenAuditPersistenceCannotRecordADenial() throws Exception {
         authenticatedWorkload();
         auditableRequest();
-        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+        when(decisionService.decideForAudit(any(), anyString())).thenReturn(evaluation(
                 AuthorizationDecision.deny(
                         AuthorizationDenyReason.OWNER_MISMATCH,
                         "v1",
@@ -182,7 +183,7 @@ class AuthorizationDecisionControllerTest {
     void staleSubjectDenialIsAuditedWithoutCallerSuppliedSubjectAttribution() throws Exception {
         authenticatedWorkload();
         auditableRequest();
-        when(decisionService.decideForAudit(any())).thenReturn(evaluation(
+        when(decisionService.decideForAudit(any(), anyString())).thenReturn(evaluation(
                 AuthorizationDecision.deny(
                         AuthorizationDenyReason.STALE_SUBJECT,
                         "unknown",

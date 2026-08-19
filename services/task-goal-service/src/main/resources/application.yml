@@ -5,9 +5,12 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:postgresql://localhost:5432/lifeos_task_goal
-    username: lifeos
-    password: lifeos
+    # Database coordinates and credentials are deployment secrets. There are intentionally no
+    # production defaults: a missing or blank value must prevent startup instead of silently
+    # connecting with source-controlled credentials.
+    url: ${TASK_GOAL_DATASOURCE_URL}
+    username: ${TASK_GOAL_DATASOURCE_USERNAME}
+    password: ${TASK_GOAL_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -27,11 +30,86 @@ spring:
 server:
   port: 8082
 
+grpc:
+  server:
+    # The internal metrics host is opt-in. Enabling it requires mutual TLS and a workload token;
+    # the default REST boundary remains unchanged for local development.
+    enabled: ${TASK_GOAL_GRPC_ENABLED:false}
+    port: ${TASK_GOAL_GRPC_PORT:10082}
+    tls-enabled: ${TASK_GOAL_GRPC_TLS_ENABLED:false}
+    certificate-chain: ${TASK_GOAL_GRPC_CERTIFICATE_CHAIN:}
+    private-key: ${TASK_GOAL_GRPC_PRIVATE_KEY:}
+    trust-certificate-collection: ${TASK_GOAL_GRPC_TRUST_CERTIFICATE_COLLECTION:}
+    workload-token: ${TASK_GOAL_GRPC_WORKLOAD_TOKEN:}
+
+task-goal:
+  # Applies to Tomcat request-line/header reads, idle keep-alive sockets, and request-body uploads.
+  # It prevents a stalled client from retaining an inbound servlet request indefinitely.
+  inbound-request-timeout: ${TASK_GOAL_INBOUND_REQUEST_TIMEOUT:10s}
+  projection:
+    # Calendar is the only currently trusted caller. An empty token keeps this endpoint fail-closed
+    # until the deployment provisions the Calendar workload credential.
+    workload-identity: ${TASK_GOAL_PROJECTION_WORKLOAD_IDENTITY:calendar-service}
+    workload-token: ${IDENTITY_CALENDAR_WORKLOAD_TOKEN:}
+  certificate-projection:
+    # Trust Ledger receives only immutable completion facts after re-authorizing the subject.
+    workload-identity: ${TASK_GOAL_CERTIFICATE_PROJECTION_WORKLOAD_IDENTITY:trust-ledger-service}
+    workload-token: ${IDENTITY_TRUST_LEDGER_WORKLOAD_TOKEN:}
+  assistant-tool:
+    # The AI task mutation boundary is opt-in and fails closed until a separate inbound workload
+    # credential is provisioned in TaskGoal and the assistant service.
+    workload-identity: ${TASK_GOAL_ASSISTANT_TOOL_WORKLOAD_IDENTITY:ai-assistant-service}
+    workload-token: ${TASK_GOAL_AI_ASSISTANT_WORKLOAD_TOKEN:}
+  media-tool:
+    # Explicit action-item confirmation is fail-closed until Media's workload token is provisioned.
+    workload-identity: ${TASK_GOAL_MEDIA_TOOL_WORKLOAD_IDENTITY:media-service}
+    workload-token: ${TASK_GOAL_MEDIA_TOOL_WORKLOAD_TOKEN:}
+
 management:
+  server:
+    port: ${TASK_GOAL_MANAGEMENT_PORT:9082}
+    address: ${TASK_GOAL_MANAGEMENT_ADDRESS:127.0.0.1}
   endpoints:
+    access:
+      default: none
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  endpoint:
+    info:
+      access: unrestricted
+    prometheus:
+      access: unrestricted
+    health:
+      access: unrestricted
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs
 
 identity:
   # Non-loopback identity endpoints must use HTTPS. HTTP is only valid for local loopback development.
@@ -42,4 +120,5 @@ identity:
   workload-token: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN}
   connect-timeout: 2s
   read-timeout: 3s
-  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}
+  # Task lifecycle and persisted dependency actions use the reviewed v2 identity contract.
+  expected-policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v2}

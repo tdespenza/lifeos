@@ -216,9 +216,36 @@ request body is capped at 16 KiB; unauthenticated workload failures return a gen
 without synchronously creating a durable audit row, so they cannot be used to exhaust audit storage.
 
 The service must send an exact `expectedPolicyVersion` and only trusted owner, tenant, and
-`resourceExists` attributes. It must not forward client-supplied resource facts. `v1` currently
-supports the four goal actions `goal:create`, `goal:list`, `goal:read`, and
-`goal:dependency-order`.
+`resourceExists` attributes. It must not forward client-supplied resource facts. The JSON request
+and response are unchanged between policy versions. The deployment default is `v2`; Identity serves
+an immutable `v1` compatibility policy only for existing Task/Goal and Profile/Household actions and returns
+`policyVersion: "v1"`; existing adapters therefore continue their exact-version check. A `v2`
+action never falls back to `v1`, and no unknown version, action, workload, resource type, or
+fact-shape has a permissive fallback.
+
+Each action has one source-defined descriptor: exact workload identity, resource type, fact shape,
+tenant scope, and owner rule. `TENANT_ADMIN` bypass exists only for the legacy scoped Goal object
+actions; all Task, Profile, Calendar, Finance, and Trust Ledger V2 descriptors are self-only in the
+subject's personal tenant. Workload credentials authenticate before request binding, then Identity
+denies a verified-but-wrong workload with the bounded `WORKLOAD_NOT_AUTHORIZED` reason. The action
+families below are enabled only when the active policy version is `v2` and their deployment-managed
+workload credential is configured.
+
+| Workload | Action family | Exact resource contract |
+| --- | --- | --- |
+| `task-goal-service` | Legacy Goal: `goal:create`, `goal:list`, `goal:read`, `goal:update`, `goal:complete`, `goal:archive`, `goal:dependency-order` | `goal:create` is an owned create; goal lifecycle actions are scoped owned objects with `ownerAccountId` and `resourceExists`; list/order are scoped `goal` collections. Legacy scoped Goal object actions retain their reviewed tenant-admin rule. |
+| `profile-service` | Legacy Profile and Household actions | Profile creation/object actions use `profile` owned facts in the personal tenant. Household capability actions use a `household` UUID and exactly `requesterAccountId`; Profile service still enforces household relation and local permissions. |
+| `task-goal-service` | `task:create`, `task:list`, `task:read`, `task:update`, `task:complete`, `task:cancel` | `task` owned-create/object facts, or an empty `task` collection for list; all personal/self-only. |
+| `task-goal-service` | `task:dependency-manage`, `task:dependency-order` | Empty personal `task-dependency-graph` collection only. Task/Goal loads and owner-checks every graph node locally before it requests the Identity capability. |
+| `calendar-service` | `calendar:event-create/list/read/update/cancel`, `calendar:time-block-create/list/read/update/cancel`, `calendar:conflict-read`, `calendar:optimize` | `calendar-event` and `calendar-time-block` owned create/object facts; empty personal `calendar` collection for list/conflict/optimization. No tenant-admin bypass. |
+| `finance-service` | `finance:budget-create/list/read/update`, `finance:transaction-create/list/read/categorize`, `finance:insights-read`, `finance:forecast-read`, `finance:goal-create/list/read/update/contribute` | `finance-budget`, `finance-transaction`, and `finance-goal` owned create/object facts or their empty personal collections; insights and forecasts use the empty personal `finance` collection. No tenant-admin bypass. |
+| `trust-ledger-service` | `trust:document-proof-create`, `trust:merkle-proof-create`, `trust:proof-verify`, `trust:anchor-create`, `trust:credential-verify`, `trust:ai-audit-anchor-create`, `trust:goal-certificate-create` | Empty personal `trust-ledger` collection only. The trust service owns proof/anchor persistence and validates its own domain references. |
+
+For any owned object, the protected service supplies a UUID resource ID and exactly
+`ownerAccountId` plus `resourceExists`. `resourceExists=false` receives the same bounded
+`OWNER_MISMATCH` as another user's object, avoiding resource enumeration. Owned creates supply a
+UUID resource ID and exactly `ownerAccountId`; collection actions require no resource ID and no
+attributes. These are closed descriptor shapes, not caller-selectable policy expressions.
 
 ### Request body
 
@@ -330,14 +357,102 @@ conditional counter write; a stale or concurrent counter update cannot create a 
 
 The identity service never accepts or stores a private key. The authenticator retains the private
 key; PostgreSQL stores only the credential id, account/user handle, COSE public key, enabled state,
-and signature counter. This story assumes credentials are provisioned by a trusted registration
-flow; the registration ceremony and credential-management endpoints are separate scope and must
-enforce an authenticated step-up/recovery policy before inserting `webauthn_credential` rows.
+and signature counter. Authenticated enrollment is available through
+`POST /api/v1/auth/passkey/registration/options` and
+`POST /api/v1/auth/passkey/registration`; the browser bearer is validated before the ceremony,
+the registration challenge is single-use Redis state, and only the verified public credential is
+persisted. Recovery/replacement after losing every credential is provided by the one-time recovery
+code endpoints below; the web shell now provides bounded passkey registration/login and recovery-code
+display, while cross-client recovery communications remain client/deployment work.
+
+Users can inspect and disable their own registered credentials through
+`GET /api/v1/auth/passkey/credentials` and
+`DELETE /api/v1/auth/passkey/credentials/{credentialId}`. The list exposes only the internal
+credential row id and registration/last-use timestamps; authenticator ids, public keys, and
+user handles are not returned. Removal is owner-scoped, audited, and refused with `409 Conflict`
+when it would leave the account without an active password or another enabled passkey.
+
+The list returns `200 OK` with a bounded array and `Cache-Control: no-store`; removal returns
+`204 No Content`, `401 Unauthorized` for an invalid bearer, `404 Not Found` for a missing or
+not-owned credential, `409 Conflict` when no alternate sign-in method would remain, and `503
+Service Unavailable` for a persistence or audit dependency failure.
+
+## `POST /api/v1/auth/passkey/registration/options`
+
+Starts an authenticated registration ceremony for the bearer subject. The service returns an
+opaque challenge handle and browser-facing `publicKey` creation options. The challenge binds the
+account UUID and is consumed exactly once.
+
+## `POST /api/v1/auth/passkey/registration`
+
+Consumes the authenticated registration challenge, validates the browser attestation with the
+configured relying party, and persists the resulting public credential. The request is accepted
+only for the same account that started the ceremony; private keys and attestation blobs are never
+stored.
+
+| Status | Condition |
+| --- | --- |
+| `204 No Content` | Credential verified and persisted |
+| `400 Bad Request` | Malformed registration envelope |
+| `401 Unauthorized` | Missing/invalid bearer, stale challenge, account mismatch, or invalid attestation |
+| `503 Service Unavailable` | Redis, persistence, audit, or WebAuthn dependency unavailable |
 
 Configure `IDENTITY_WEBAUTHN_RP_ID`, `IDENTITY_WEBAUTHN_RP_NAME`,
 `IDENTITY_WEBAUTHN_ALLOWED_ORIGINS`, `IDENTITY_WEBAUTHN_USER_VERIFICATION`, and
 `IDENTITY_WEBAUTHN_CHALLENGE_TTL` per deployment. Production browser origins must use exact HTTPS
 origins; HTTP is accepted only for local `localhost`/`127.0.0.1` development.
+
+## `POST /api/v1/auth/passkey/recovery-codes`
+
+Generates a replacement set of one-time recovery codes for the authenticated bearer subject. The
+service invalidates unused prior codes, stores only HMAC-SHA-256 digests under
+`IDENTITY_PASSKEY_RECOVERY_SECRET`, and returns the raw codes once with a bounded expiry (15
+minutes by default). The caller must display or store them securely; the service never logs or
+re-sends them. The same transaction enqueues a generic security notification
+(`security.passkey.recovery-codes-issued`) to Identity's durable notification outbox; the event
+contains no raw code or account contact data. Notification provider delivery remains deployment-owned.
+
+```text
+Authorization: Bearer <access-token>
+```
+
+```json
+{
+  "codes": ["ABCD-EFGH-JKLM", "MNPR-STUV-WXYZ"],
+  "expiresAt": "2026-08-19T12:00:00Z"
+}
+```
+
+| Status | Condition |
+| --- | --- |
+| `200 OK` | Replacement codes generated and persisted |
+| `401 Unauthorized` | Missing, invalid, or stale bearer |
+| `503 Service Unavailable` | Account, audit, or persistence dependency unavailable |
+
+## `POST /api/v1/auth/passkey/recover`
+
+Consumes one recovery code and creates one `PASSKEY` session through the normal JWT/session
+authority. Email lookup, invalid codes, expired codes, and replayed codes share one generic `401`
+response. The existing login limiter applies before account lookup, and the code is consumed under
+a row lock before session creation, so a concurrent race cannot create two sessions from one code.
+After a successful session commit, Identity enqueues the generic
+`security.passkey.recovery-succeeded` notification through the same durable outbox boundary.
+
+```json
+{
+  "email": "ada@example.com",
+  "code": "ABCD-EFGH-JKLM"
+}
+```
+
+| Status | Condition |
+| --- | --- |
+| `200 OK` | Valid unused code and active account; shared `LoginResponse` returned |
+| `400 Bad Request` | Malformed email or code shape |
+| `401 Unauthorized` | Unknown account, invalid/expired/replayed code |
+| `429 Too Many Requests` | Recovery attempt limit exceeded |
+| `409 Conflict` | The account reached its bounded active-session capacity |
+| `503 Service Unavailable` | Rate limiter, audit, session-authority, or persistence dependency unavailable |
 
 ## `POST /api/v1/auth/oidc/{provider}/authorize`
 
@@ -397,26 +512,47 @@ tokens are never returned to downstream LifeOS services or persisted.
 
 ## `POST /api/v1/accounts`
 
-Register a new account.
+Register a new **first-party password account**. This is distinct from the internal OIDC account
+linking path: a verified OIDC callback may create an account identity but deliberately does not
+create a local password credential. An OIDC-only account cannot use `POST /api/v1/auth/login`
+until a future authenticated credential-enrollment flow explicitly creates one.
+
+The request requires exactly one `Idempotency-Key` header. It is an opaque 1–128 character value
+matching `[A-Za-z0-9][A-Za-z0-9._~-]{0,127}`. LifeOS stores only a dedicated HMAC digest of the
+key and an HMAC request fingerprint; neither the key, password, email, nor display name is stored
+in the retry record. Reuse a key only when retrying the exact same command.
+
+```text
+POST /api/v1/accounts
+Idempotency-Key: register-ada-001
+Content-Type: application/json
+```
 
 ### Request Body
 
 ```json
 {
   "email": "ada@example.com",
-  "displayName": "Ada Lovelace"
+  "displayName": "Ada Lovelace",
+  "password": "correct horse battery staple"
 }
 ```
 
-`email` must be non-blank and a valid email address; `displayName` must be non-blank (enforced via Jakarta Bean Validation on [`RegisterAccountRequest`](../../services/identity-service/src/main/java/com/lifeos/identity/account/dto/RegisterAccountRequest.java)).
+`email` must be non-blank and valid, and `displayName` must be non-blank. The password must be
+12–128 characters, contain at least one non-whitespace character, and contain no ISO control
+characters. Password whitespace is otherwise preserved. The request creates the `user_account`,
+one bounded Argon2id `password_credential`, its completed idempotency record, and a redacted
+success audit outcome in one transaction. The plaintext password is never persisted or returned.
 
 ### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |
-| `201 Created` | Account created | `AccountResponse` (see below), `Location` header set to `/api/v1/accounts/{id}` |
-| `400 Bad Request` | Validation failure (blank/invalid email or displayName) | Generic RFC 9457 problem detail; field values are not echoed |
-| `409 Conflict` | An account already exists for that email, including a concurrent uniqueness conflict | Generic plain-text message; does not echo the email or database details |
+| `201 Created` | First completion of a valid command | `AccountResponse`, `Location: /api/v1/accounts/{id}`, and `Cache-Control: no-store` |
+| `200 OK` | Exact replay of a completed command with the same idempotency key and payload | The original `AccountResponse`, `Location`, and `Cache-Control: no-store`; no second credential is created |
+| `400 Bad Request` | Missing, duplicated, or malformed retry key; malformed fields; or password-policy failure | Generic RFC 9457 problem detail; field values, keys, and passwords are not echoed |
+| `409 Conflict` | Existing email or an idempotency key reused with different payload | One generic RFC 9457 problem detail; it does not indicate which condition occurred |
+| `503 Service Unavailable` | Password-hash capacity, idempotency persistence/lock, or audit persistence is unavailable | Generic problem detail plus `Retry-After: 1`; retry with the original key and unchanged payload |
 
 ### Example Response (201)
 
@@ -431,14 +567,27 @@ Register a new account.
 
 ## `GET /api/v1/accounts/{id}`
 
-Fetch an account by id.
+Fetch the caller's own account by id. Supply an access token created by a current, non-revoked
+LifeOS session:
+
+```text
+Authorization: Bearer <access-token>
+```
+
+The service validates the JWT and durable session state before comparing the bearer subject to
+`{id}`. A request for another account is audited with the caller's account id and a redacted client
+fingerprint only; the target id is not retained in the audit event. Requests for another account
+and nonexistent accounts intentionally have the same `404` response, preventing account-resource
+enumeration.
 
 ### Responses
 
 | Status | Condition | Body |
 | --- | --- | --- |
-| `200 OK` | Found | `AccountResponse` |
-| `404 Not Found` | No account with that id | Plain-text message |
+| `200 OK` | Valid bearer subject owns `{id}` | `AccountResponse` and `Cache-Control: no-store` |
+| `401 Unauthorized` | Missing, malformed, invalid, expired, or revoked bearer token | Generic authentication problem detail |
+| `404 Not Found` | `{id}` is not owned by the caller, or it does not exist | The same generic problem detail for both conditions |
+| `503 Service Unavailable` | Required authorization/audit dependency is unavailable | Generic problem detail plus `Retry-After: 1` |
 
 ## Operational endpoints
 
@@ -453,6 +602,15 @@ Spring Boot Actuator endpoints exposed by the service:
 
 Actuator runs on a separate management listener bound to loopback by default. Set `IDENTITY_MANAGEMENT_PORT` and `IDENTITY_MANAGEMENT_ADDRESS` for a private deployment interface, and keep that listener behind the deployment network boundary. Only the endpoints above plus `info` are exposed (see [`application.yml`](../../services/identity-service/src/main/resources/application.yml)) — no `/actuator/env`, `/actuator/beans`, etc. are exposed, to avoid leaking configuration details. HTTP observations are traced through the configured Micrometer/OpenTelemetry bridge and exported to the OTLP endpoint configured by `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
 
+The public Tomcat listener applies `IDENTITY_INBOUND_REQUEST_TIMEOUT` (10 seconds by default;
+validated from 1 ms through 60 seconds) to initial request reads, idle keep-alive sockets, and
+request-body uploads. This explicitly enables Tomcat's upload timeout so a stalled client cannot
+hold an inbound servlet request indefinitely. OIDC token exchange and JWK retrieval use the
+observation-enabled Spring Boot `RestClient.Builder` and `RestTemplateBuilder`, respectively, so
+their outbound calls retain the configured W3C trace propagation as well as the explicit
+`IDENTITY_OIDC_PROVIDER_CONNECT_TIMEOUT` (2 seconds) and
+`IDENTITY_OIDC_PROVIDER_READ_TIMEOUT` (5 seconds) limits.
+
 ## Data store
 
 PostgreSQL, database `lifeos_identity`, with these identity-owned tables:
@@ -461,6 +619,7 @@ PostgreSQL, database `lifeos_identity`, with these identity-owned tables:
 | --- | --- |
 | `user_account` | Canonical account identity, status, and registration metadata; email remains protected by `uk_user_account_email`. |
 | `password_credential` | One Argon2id encoded first-party credential per account; no raw password. |
+| `account_registration_idempotency` | HMAC-protected public-registration retry reservation and completion state; no raw retry key or payload fields. |
 | `auth_session` | Durable session metadata and SHA-256 access-token digest for revocation authority. |
 | `external_identity` | Verified provider/subject to LifeOS-account mappings; no provider tokens. |
 | `security_audit_event` | Redacted authentication outcomes and correlation metadata. |
@@ -468,4 +627,13 @@ PostgreSQL, database `lifeos_identity`, with these identity-owned tables:
 
 See [`UserAccount`](../../services/identity-service/src/main/java/com/lifeos/identity/account/UserAccount.java), [`PasswordCredential`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/PasswordCredential.java), and [`AuthSession`](../../services/identity-service/src/main/java/com/lifeos/identity/auth/AuthSession.java). Flyway owns schema evolution and Hibernate runs with `ddl-auto: validate`, so an unexpected production schema fails startup instead of being changed implicitly. Follow the [database migration runbook](../operations/database-migrations.md) for fresh deployments, existing Hibernate-managed databases, and rollback discipline.
 
-For deployed environments, set `IDENTITY_DATASOURCE_URL`, `IDENTITY_DATASOURCE_USERNAME`, and `IDENTITY_DATASOURCE_PASSWORD` rather than relying on the local-development defaults in `application.yml`.
+`IDENTITY_DATASOURCE_URL`, `IDENTITY_DATASOURCE_USERNAME`, and
+`IDENTITY_DATASOURCE_PASSWORD` are required and non-blank in every non-test environment; there are
+no source-controlled fallback credentials. The stock local Compose initializer creates the
+`lifeos_identity` database but no separate identity-service role, so its template derives the
+identity datasource user name and password from `LIFEOS_POSTGRES_USER` and
+`LIFEOS_POSTGRES_PASSWORD`. Use a different identity login only after creating that role and
+granting it database access. Local development can start with the gitignored
+[`infrastructure/docker-compose/.env`](../../infrastructure/docker-compose/.env) derived from its
+[template](../../infrastructure/docker-compose/.env.example), while deployed environments must
+obtain the equivalent values from their secret manager.

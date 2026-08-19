@@ -1,0 +1,38 @@
+package com.lifeos.finance.migration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+/** Ensures the independent H2 test migrations create every Finance-owned durable representation. */
+@SpringBootTest(properties = {
+    "spring.datasource.url=jdbc:h2:mem:finance-migration;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+    "spring.datasource.driver-class-name=org.h2.Driver",
+    "spring.datasource.username=sa",
+    "spring.datasource.password=finance-migration-password",
+    "spring.jpa.hibernate.ddl-auto=validate",
+    "spring.flyway.enabled=true",
+    "spring.flyway.locations=classpath:db/migration-h2",
+    "finance.idempotency-secret=migration-idempotency-secret",
+    "finance.audit-client-fingerprint-secret=migration-audit-secret",
+    "identity.workload-token=migration-workload-token"
+})
+class FinanceFlywayMigrationTest {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void migratesFinancePostingsGoalsHistoryAndIdempotencyTables() {
+        Integer tables = jdbcTemplate.queryForObject(
+                "select count(*) from information_schema.tables where table_name in "
+                        + "('FINANCE_BUDGET', 'FINANCIAL_TRANSACTION', 'TRANSACTION_CATEGORY_CORRECTION', "
+                        + "'FINANCIAL_GOAL', 'FINANCIAL_GOAL_CONTRIBUTION', 'FINANCE_MUTATION_IDEMPOTENCY')",
+                Integer.class);
+
+        assertThat(tables).isEqualTo(6);
+    }
+}

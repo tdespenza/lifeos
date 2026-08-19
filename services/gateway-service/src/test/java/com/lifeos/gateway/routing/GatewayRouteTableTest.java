@@ -51,6 +51,37 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void identifiesAssistantRoutesAndRejectsAuthenticationExceptions() {
+        GatewayProperties.Route assistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test");
+        GatewayProperties.Route publicAssistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test", false);
+        GatewayProperties.Route methodScopedAssistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test");
+        methodScopedAssistant.setAuthenticationRequiredMethods(Set.of("POST"));
+
+        GatewayRoute resolvedAssistant = new GatewayRouteTable(properties(assistant))
+                .resolve(GatewayRoute.AI_ASSISTANT_PATH_PREFIX + "/conversations")
+                .orElseThrow();
+        GatewayRoute other = new GatewayRouteTable(properties(
+                        new GatewayProperties.Route("goals", "/api/v1/goals", "https://goals.test")))
+                .resolve("/api/v1/goals")
+                .orElseThrow();
+
+        assertThat(resolvedAssistant.isAiAssistantRoute()).isTrue();
+        assertThat(resolvedAssistant.requiresAuthentication("GET")).isTrue();
+        assertThat(other.isAiAssistantRoute()).isFalse();
+        assertThat(publicAssistant.isAiAssistantRouteConfigurationValid()).isFalse();
+        assertThat(methodScopedAssistant.isAiAssistantRouteConfigurationValid()).isFalse();
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(publicAssistant)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AI assistant route");
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(methodScopedAssistant)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AI assistant route");
+    }
+
+    @Test
     void rejectsLongUnknownPathsWithoutProgressiveSubstringAllocation() {
         GatewayRouteTable table = new GatewayRouteTable(properties(
                 new GatewayProperties.Route("goals", "/api/v1/goals", "https://task-goal.test")));
@@ -81,6 +112,20 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rejectsRealRouteIdsThatCollideWithMediaVirtualResilienceIds() {
+        GatewayProperties.Route media = new GatewayProperties.Route(
+                "media-assets", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
+        media.setMediaUploadStreaming(true);
+        media.setMediaHlsStreaming(true);
+        GatewayProperties.Route collision = new GatewayProperties.Route(
+                "media-assets-media-upload", "/api/v1/media-control", "https://other.test");
+
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(media, collision)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("collides with a reserved virtual route id");
+    }
+
+    @Test
     void rejectsNonHttpOriginsAndWildcardPaths() {
         GatewayProperties.Route unsafeOrigin = new GatewayProperties.Route(
                 "unsafe", "/api/v1/unsafe", "file:///etc/passwd");
@@ -91,6 +136,26 @@ class GatewayRouteTableTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new GatewayRouteTable(properties(wildcard)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void requiresHttpsForRemoteUpstreamsAndAllowsOnlyLoopbackHttpForLocalDevelopment() {
+        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example:8443")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://localhost:8082")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://127.0.0.1:8082")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://[::1]:8082")).isTrue();
+
+        assertThat(GatewayRoute.isValidUpstream("http://task-goal.production.example:8082")).isFalse();
+        assertThat(GatewayRoute.isValidUpstream("http://192.0.2.10:8082")).isFalse();
+        assertThat(GatewayRoute.isValidUpstream("http://127.0.0.01:8082")).isFalse();
+        assertThat(GatewayRoute.isValidUpstream("https://user:pass@task-goal.production.example")).isFalse();
+        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example/base-path")).isFalse();
+
+        GatewayProperties.Route remoteHttp = new GatewayProperties.Route(
+                "remote-http", "/api/v1/unsafe", "http://task-goal.production.example:8082");
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(remoteHttp)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("HTTPS");
     }
 
     @Test

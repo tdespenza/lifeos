@@ -697,6 +697,35 @@ class GatewayControllerTest {
     }
 
     @Test
+    void rejectsNotificationStreamDescendantsBeforeAuthenticationOrForwarding() throws Exception {
+        useNotificationStreamingRoute();
+
+        mockMvc.perform(get(GatewayRoute.NOTIFICATION_STREAM_PATH + "/child"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ROUTE_NOT_FOUND"));
+
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
+    void restrictsNotificationStreamMethodsAndReportsItsExactAllowHeader() throws Exception {
+        useNotificationStreamingRoute();
+
+        mockMvc.perform(post(GatewayRoute.NOTIFICATION_STREAM_PATH))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, "GET"))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+        mockMvc.perform(request("CONNECT", URI.create(GatewayRoute.NOTIFICATION_STREAM_PATH)))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, "GET"))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
     void stripsHopByHopAndCallerSuppliedRoutingHeadersAndSetsTrustedForwardingValues() throws Exception {
         upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
                 .andExpect(method(HttpMethod.GET))
@@ -944,6 +973,18 @@ class GatewayControllerTest {
     private void useProtectedRoute(Set<String> authenticationRequiredMethods) {
         GatewayProperties.Route route = new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true);
         route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
+        useRoute(route);
+    }
+
+    private void useNotificationStreamingRoute() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "notifications", GatewayRoute.NOTIFICATION_STREAM_PATH, "https://notification.test");
+        route.setStreaming(true);
+        route.setAuthenticationRequiredMethods(Set.of("GET"));
+        useRoute(route);
+    }
+
+    private void useRoute(GatewayProperties.Route route) {
         properties.setRoutes(List.of(
                 route));
         GatewayAuthenticationProperties authenticationProperties = configuredAuthenticationProperties();

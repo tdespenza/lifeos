@@ -108,6 +108,14 @@ public class JwtValidationService {
         } catch (JwtException | IllegalArgumentException exception) {
             // The cause is deliberately dropped. Decode details must not reach the caller.
             throw new AuthenticationFailureException();
+        } catch (DataAccessException exception) {
+            // Durable session state is an authorization input. If it cannot be read, fail closed
+            // with a retryable dependency result instead of accidentally treating a JWT as enough.
+            log.atError()
+                    .addKeyValue("event", "session_validation_dependency_unavailable")
+                    .addKeyValue("dependencyException", exception.getClass().getName())
+                    .log("Durable session validation dependency failed");
+            throw new AuthenticationDependencyUnavailableException(exception);
         }
     }
 

@@ -34,6 +34,8 @@ public class IdentityAuthProperties {
     @Valid
     private final Password password = new Password();
     @Valid
+    private final Registration registration = new Registration();
+    @Valid
     private final Jwt jwt = new Jwt();
     @Valid
     private final Fingerprint fingerprint = new Fingerprint();
@@ -95,6 +97,15 @@ public class IdentityAuthProperties {
      */
     public Password getPassword() {
         return password;
+    }
+
+    /**
+     * Returns public-registration idempotency settings.
+     *
+     * @return registration settings
+     */
+    public Registration getRegistration() {
+        return registration;
     }
 
     /**
@@ -383,13 +394,13 @@ public class IdentityAuthProperties {
     public static class Authorization {
 
         @NotBlank(message = "policyVersion must be configured")
-        private String policyVersion = "v1";
+        private String policyVersion = "v2";
         @Valid
         private final WorkloadRateLimit workloadRateLimit = new WorkloadRateLimit();
         private Map<String, String> workloadIdentities = new LinkedHashMap<>();
 
         /**
-         * Creates settings with the initial policy version and no trusted workloads.
+         * Creates settings with the current policy version and no trusted workloads.
          */
         public Authorization() {
         }
@@ -1090,6 +1101,43 @@ public class IdentityAuthProperties {
             return verificationAcquireTimeout != null
                     && !verificationAcquireTimeout.isZero()
                     && !verificationAcquireTimeout.isNegative();
+        }
+    }
+
+    /**
+     * Secret-backed settings for public account-registration retry handling.
+     */
+    public static class Registration {
+
+        private static final int MINIMUM_SECRET_BYTES = 32;
+
+        @NotBlank(message = "idempotencySecret must be configured")
+        private String idempotencySecret;
+
+        /** Creates empty settings so deployments must supply a separate registration secret. */
+        public Registration() {
+        }
+
+        /**
+         * Returns the secret used only to HMAC registration idempotency material.
+         *
+         * @return registration idempotency secret
+         */
+        public String getIdempotencySecret() {
+            return idempotencySecret;
+        }
+
+        /**
+         * Sets the registration idempotency secret from deployment configuration.
+         *
+         * @param idempotencySecret secret with at least 32 UTF-8 bytes
+         */
+        public void setIdempotencySecret(String idempotencySecret) {
+            if (idempotencySecret == null || idempotencySecret.isBlank()
+                    || idempotencySecret.getBytes(StandardCharsets.UTF_8).length < MINIMUM_SECRET_BYTES) {
+                throw new IllegalArgumentException("idempotencySecret must contain at least 32 bytes");
+            }
+            this.idempotencySecret = idempotencySecret;
         }
     }
 

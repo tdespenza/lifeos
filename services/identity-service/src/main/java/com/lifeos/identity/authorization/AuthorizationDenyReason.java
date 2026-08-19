@@ -18,6 +18,9 @@ public enum AuthorizationDenyReason {
     /** The exact action is not supported by the current policy. */
     UNSUPPORTED_ACTION,
 
+    /** The authenticated workload is not bound to the requested action and resource family. */
+    WORKLOAD_NOT_AUTHORIZED,
+
     /** No scoped role grants the requested action. */
     MISSING_ROLE,
 

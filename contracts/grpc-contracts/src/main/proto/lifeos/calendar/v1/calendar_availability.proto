@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package lifeos.calendar.v1;
+
+import "google/protobuf/timestamp.proto";
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "CalendarAvailabilityProto";
+option java_package = "com.lifeos.grpc.calendar.v1";
+
+service CalendarAvailabilityService {
+  rpc FindBusyIntervals(FindBusyIntervalsRequest) returns (FindBusyIntervalsResponse);
+}
+
+message FindBusyIntervalsRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string owner_account_id = 2;
+  google.protobuf.Timestamp starts_at = 3;
+  google.protobuf.Timestamp ends_at = 4;
+}
+
+message FindBusyIntervalsResponse {
+  repeated BusyInterval intervals = 1;
+}
+
+message BusyInterval {
+  google.protobuf.Timestamp starts_at = 1;
+  google.protobuf.Timestamp ends_at = 2;
+  string source = 3;
+}

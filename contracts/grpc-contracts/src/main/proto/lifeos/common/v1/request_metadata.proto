@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package lifeos.common.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "RequestMetadataProto";
+option java_package = "com.lifeos.grpc.common.v1";
+
+// Only correlation metadata travels in protobuf messages. Service identity and end-user authority
+// stay in authenticated gRPC transport metadata, never in a reusable payload field.
+message RequestMetadata {
+  string correlation_id = 1;
+}

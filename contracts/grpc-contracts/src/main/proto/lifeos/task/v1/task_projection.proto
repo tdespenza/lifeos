@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package lifeos.task.v1;
+
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "TaskProjectionProto";
+option java_package = "com.lifeos.grpc.task.v1";
+
+service TaskProjectionService {
+  rpc GetPlanningSnapshot(GetPlanningSnapshotRequest) returns (GetPlanningSnapshotResponse);
+}
+
+message GetPlanningSnapshotRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string owner_account_id = 2;
+}
+
+message GetPlanningSnapshotResponse {
+  repeated PlannedTask tasks = 1;
+}
+
+message PlannedTask {
+  string task_id = 1;
+  string status = 2;
+  int32 dependency_rank = 3;
+}

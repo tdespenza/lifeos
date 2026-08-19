@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package lifeos.analytics.v1;
+
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "DashboardProto";
+option java_package = "com.lifeos.grpc.analytics.v1";
+
+service DashboardAggregationService {
+  rpc GetDashboardSnapshot(GetDashboardSnapshotRequest) returns (GetDashboardSnapshotResponse);
+}
+
+message GetDashboardSnapshotRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string owner_account_id = 2;
+}
+
+message GetDashboardSnapshotResponse {
+  string snapshot_version = 1;
+  repeated Metric metrics = 2;
+}
+
+message Metric {
+  string name = 1;
+  string value = 2;
+  string freshness = 3;
+}

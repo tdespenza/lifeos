@@ -1,0 +1,18 @@
+spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  datasource:
+    url: jdbc:h2:mem:document-vault-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  flyway:
+    locations: classpath:db/migration-h2
+
+document-vault:
+  idempotency-secret: document-vault-test-idempotency-secret-with-32-bytes
+  audit-client-fingerprint-secret: document-vault-test-audit-fingerprint-secret
+  proof-outbox:
+    relay-enabled: false
+
+identity:
+  workload-token: document-vault-test-workload-token

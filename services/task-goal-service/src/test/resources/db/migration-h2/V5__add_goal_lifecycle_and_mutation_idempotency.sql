@@ -6,8 +6,6 @@ ALTER TABLE goal ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE goal ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE goal ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE goal ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 3;
-ALTER TABLE goal_mutation_idempotency ADD COLUMN IF NOT EXISTS result_priority INTEGER;
-ALTER TABLE goal_mutation_idempotency ADD COLUMN IF NOT EXISTS result_due_at TIMESTAMP WITH TIME ZONE;
 
 ALTER TABLE goal ADD CONSTRAINT ck_goal_lifecycle_state
     CHECK (
@@ -79,3 +77,6 @@ CREATE TABLE goal_mutation_idempotency (
 
 CREATE INDEX idx_goal_mutation_idempotency_goal
     ON goal_mutation_idempotency (goal_id);
+
+ALTER TABLE goal_mutation_idempotency ADD COLUMN IF NOT EXISTS result_priority INTEGER;
+ALTER TABLE goal_mutation_idempotency ADD COLUMN IF NOT EXISTS result_due_at TIMESTAMP WITH TIME ZONE;

@@ -22,6 +22,35 @@ inputDocuments:
   - docs/adr/ADR-018-use-opentelemetry-for-observability.md
   - docs/adr/ADR-019-automate-releases-with-github-actions.md
   - docs/adr/ADR-020-use-identity-service-for-multi-mode-authentication-and-session-management.md
+  - docs/adr/ADR-023-notification-event-contract-and-durable-delivery.md
+  - docs/adr/ADR-024-task-lifecycle-and-persisted-dependency-graph.md
+  - docs/adr/ADR-025-bounded-document-proof-core.md
+  - docs/adr/ADR-026-calendar-recurrence-conflict-and-reminder-outbox.md
+  - docs/adr/ADR-027-personal-finance-immutable-postings-and-bounded-forecast.md
+  - docs/adr/ADR-028-secure-document-vault-storage-and-metadata-foundation.md
+  - docs/adr/ADR-029-fail-closed-ai-assistant-foundation.md
+  - docs/adr/ADR-030-media-owner-scoped-control-plane.md
+  - docs/adr/ADR-031-analytics-projection.md
+  - docs/adr/ADR-032-trust-ledger-proof-request-projection.md
+  - docs/adr/ADR-033-bounded-qdrant-document-grounding.md
+  - docs/adr/ADR-034-encrypted-mongodb-conversation-history.md
+  - docs/adr/ADR-035-encrypted-mongodb-profile-journals.md
+  - docs/adr/ADR-036-shared-rest-client-trace-propagation.md
+  - docs/adr/ADR-037-confirmed-ai-task-tool-execution.md
+  - docs/adr/ADR-038-deterministic-goal-planning-recommendations.md
+  - docs/adr/ADR-039-deterministic-financial-insights.md
+  - docs/adr/ADR-040-deterministic-journal-summaries.md
+  - docs/adr/ADR-041-deterministic-analytics-recommendations.md
+  - docs/adr/ADR-042-confirmed-ai-goal-tool-execution.md
+  - docs/adr/ADR-043-analytics-grpc-dashboard-projection.md
+  - docs/adr/ADR-044-deterministic-ai-audit-commitments.md
+  - docs/adr/ADR-045-ai-audit-trust-ledger-projection.md
+  - docs/adr/ADR-046-bounded-local-media-processing.md
+  - docs/adr/ADR-047-passkey-recovery-codes.md
+  - docs/adr/ADR-048-bounded-java-cli-proof-helper.md
+  - docs/adr/ADR-049-media-follow-up-task-confirmation.md
+  - docs/adr/ADR-050-media-session-summary-anchor.md
+  - docs/adr/ADR-051-identity-recovery-notification-outbox.md
   - docs/architecture/current-state.md
   - docs/api/identity-service.md
   - docs/api/task-goal-service.md
@@ -34,9 +63,16 @@ inputDocuments:
 
 ## Overview
 
-This document provides the epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored), the current architecture, API contracts, and ADR-001 through ADR-020 into 18 epics with full FR coverage. Story-level detail is now included below: each story is sized for one implementation session, names its user value, and carries testable acceptance criteria. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
+This document provides the epic and story breakdown for LifeOS Engineering Platform, decomposing the requirements from `REQUIREMENTS.md` (acting as the PRD-equivalent — see CONTRIBUTING.md for why it's gitignored), the current architecture, API contracts, and ADR-001 through ADR-051 into 18 epics with full FR coverage. Story-level detail is now included below: each story is sized for one implementation session, names its user value, and carries testable acceptance criteria. Requirements Inventory: 91 FRs, 42 NFRs, 19 Additional Requirements (amended after the implementation-readiness review in `docs/implementation-readiness-report-2026-07-31.md` added Engineering Labs and Interview Documentation scope, and expanded the CI/CD NFR into its 14 individually named stages).
 
-**Status note:** Phase 1 of the roadmap is already partially built — `identity-service` (account registration, supported login flows, durable session validation, and the initial RBAC/ABAC decision boundary) and `task-goal-service` (authenticated, owner/tenant-scoped goal create/list/read plus a stateless topological-sort dependency-order computation — no `Task` entity, no goal update/delete, no persisted dependency relationships) exist and are running against real PostgreSQL. Only the specific capabilities that are actually implemented are marked **[DONE]** below (with **[PARTIAL]** for capabilities that are only partly built) rather than marking a whole FR done because a related one is.
+**Status note:** The repository now contains tested, independently packageable Gateway, Identity,
+Task/Goal, Profile, Notification, Calendar, Finance, Trust Ledger, Document Vault, Media, AI
+Assistant, and Analytics modules, plus shared Algorithm, CloudEvents/Kafka, Observability, Trust, and generated
+gRPC contract modules. Web, JavaFX, and Flutter client foundations are present and statically
+verified; their full UX workflows remain partial. Status below describes
+implemented and verified code paths, not a claim of production deployment or live third-party
+provider/ledger operation. Only the specific capabilities that are actually implemented are marked
+**[DONE]**; a capability with an outstanding external or cross-service dependency is **[PARTIAL]**.
 
 ## Requirements Inventory
 
@@ -44,140 +80,142 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 
 #### API Gateway
 
-- FR1: Route external requests to the appropriate backend service (REST proxying)
-- FR2: Enforce authentication on gated routes at the gateway boundary
-- FR3: Apply rate limiting per user/client at the gateway
-- FR4: Attach a request correlation ID to every inbound request
-- FR5: Serve as the GraphQL entry point for aggregated client queries
+- FR1: Route external requests to the appropriate backend service (REST proxying) [DONE — finite, versioned route table with protected domain routes and narrow streaming exceptions]
+- FR2: Enforce authentication on gated routes at the gateway boundary [DONE — workload-authenticated Identity validation occurs before protected forwarding and fails closed]
+- FR3: Apply rate limiting per user/client at the gateway [DONE — atomic Redis Lua windows with pre-auth and validated-subject charges]
+- FR4: Attach a request correlation ID to every inbound request [DONE — validated UUID correlation context is propagated to downstream calls, logs, traces, and responses]
+- FR5: Serve as the GraphQL entry point for aggregated client queries [DONE — authenticated bounded dashboard query with explicit partial-source status]
 
 #### Identity Service
 
-- FR6: Allow a user to register an account [DONE]
+- FR6: Allow a user to register an account [DONE — validated, password-credential provisioning, durable idempotency, and duplicate-safe replay]
 - FR7: Allow a user to log in [DONE — first-party email/password flow]
-- FR8: Support OAuth2/OIDC login
-- FR9: Support passkey/WebAuthn login
-- FR10: Issue JWTs for authenticated sessions
+- FR8: Support OAuth2/OIDC login [PARTIAL — configured authorization-code/OIDC boundary is implemented; a provider and deployment credentials remain required]
+- FR9: Support passkey/WebAuthn login [PARTIAL — authenticated enrollment, assertion verification, owner-scoped credential removal, one-time recovery-code login, web passkey registration/login/recovery UX, and a privacy-safe transactional recovery-notification outbox are implemented; external provider delivery and recovery-device policy remain]
+- FR10: Issue JWTs for authenticated sessions [DONE — signed access JWTs, rotating refresh tokens, JWKS, and revocation-aware validation]
 - FR11: Enforce RBAC/ABAC authorization decisions [DONE — initial identity/Task Goal decision boundary]
-- FR12: Allow a user to view and revoke their active devices/sessions
+- FR12: Allow a user to view and revoke their active devices/sessions [DONE — owner-scoped cursor listing, single-session revoke, and revoke-others]
 
 #### Profile Service
 
-- FR13: Allow a user to maintain a personal profile
-- FR14: Allow a user to set preferences
-- FR15: Allow a user to manage household/family members
-- FR16: Allow a user to configure privacy settings
-- FR17: Allow a user to configure AI personalization settings
+- FR13: Allow a user to maintain a personal profile [DONE — self-only versioned profile API]
+- FR14: Allow a user to set preferences [DONE — bounded self-only preferences API]
+- FR15: Allow a user to manage household/family members [DONE — explicitly authorized membership lifecycle]
+- FR16: Allow a user to configure privacy settings [DONE — self-only privacy/consent settings]
+- FR17: Allow a user to configure AI personalization settings [DONE — self-only AI consent/preferences boundary]
 
 #### Task and Goal Service
 
-- FR18: Allow a user to create, update, and complete tasks [NOT DONE — no `Task` entity, controller, or service exists anywhere in the codebase; only `Goal` does]
-- FR19: Allow a user to define goals [PARTIAL — `POST /api/v1/goals` (create) and `GET /api/v1/goals` (list) exist; no update or delete]
-- FR20: Allow a user to track habits
-- FR21: Allow a user to define routines
-- FR22: Allow a user to express dependencies between tasks/goals [PARTIAL — `POST /api/v1/goals/dependency-order` computes a topological order from free-text labels and edges submitted in the request body, but nothing is persisted: there's no foreign key to a stored `Goal` and no migration/table for dependencies, so a user cannot save a dependency against their real goals, only submit a one-off calculation]
-- FR23: Allow a user to define milestones
-- FR24: Support recurring activities
-- FR25: Compute a valid dependency-respecting execution order for goals [DONE — `TopologicalSortService` correctly implements Kahn's algorithm on whatever goals/edges it's given; this FR is about the algorithm's correctness, not persistence, so it's accurately DONE independent of the FR22 gap above]
+- FR18: Allow a user to create, update, and complete tasks [DONE — authenticated owner/tenant-scoped create/list/read/versioned update/complete/cancel, durable exact idempotency replay/recovery, and no-disclosure cross-user handling]
+- FR19: Allow a user to define goals [DONE — authenticated, owner/tenant-scoped create, list, read, versioned update, complete, and terminal archive are implemented; archive intentionally retains history rather than hard-deleting it]
+- FR20: Allow a user to track habits [DONE — owner-scoped daily/weekly habits, occurrence recording, bounded deterministic trend/streak reads, and durable idempotency]
+- FR21: Allow a user to define routines [DONE — owner-scoped versioned cadence definitions, ordered activities, and bounded idempotent materialization]
+- FR22: Allow a user to express dependencies between tasks/goals [DONE — owner/tenant-scoped persisted `TASK`/`GOAL` edges, duplicate-idempotent create/remove, self/missing/cross-user/cycle rejection, and real PostgreSQL concurrent-cycle coverage]
+- FR23: Allow a user to define milestones [DONE — goal-attached ordered milestones with versioned completion and owner/tenant authorization]
+- FR24: Support recurring activities [DONE — daily/weekly/monthly routine materialization with bounded windows and deterministic cadence handling]
+- FR25: Compute a valid dependency-respecting execution order for goals [DONE — persisted Task/Goal execution order delegates to the shared bounded Kahn implementation with deterministic projection ties; the old free-text endpoint remains explicit compatibility]
 
 #### Calendar Service
 
-- FR26: Allow a user to create and manage calendar events
-- FR27: Support time blocking
-- FR28: Send reminders for upcoming events
-- FR29: Detect schedule conflicts
-- FR30: Suggest calendar optimizations
+- FR26: Allow a user to create and manage calendar events [DONE — owner-scoped create/list/read/versioned update/cancel and bounded recurrence]
+- FR27: Support time blocking [PARTIAL — owner-scoped focus and Task/Goal-linked blocks plus bounded priority/deadline planning facts are implemented through reauthorized TaskGoal projections; deployment credentials remain]
+- FR28: Send reminders for upcoming events [PARTIAL — durable due-reminder scheduling and Calendar V2 outbox-to-Notification consumption are implemented; Kafka/provider deployment and end-to-end delivery evidence remain]
+- FR29: Detect schedule conflicts [DONE — bounded, deterministic half-open event/focus-block conflict detection]
+- FR30: Suggest calendar optimizations [PARTIAL — deterministic free-focus fallback and explicit-candidate priority/deadline ranking are implemented; broker/provider deployment remains]
 
 #### Finance Service
 
-- FR31: Allow a user to create and manage budgets
-- FR32: Allow a user to record transactions
-- FR33: Allow a user to categorize transactions
-- FR34: Surface spending insights
-- FR35: Forecast future spending/income
-- FR36: Track progress toward financial goals
+- FR31: Allow a user to create and manage budgets [DONE — versioned, idempotent, overlap-safe personal budgets]
+- FR32: Allow a user to record transactions [DONE — immutable idempotent postings in integer minor units]
+- FR33: Allow a user to categorize transactions [DONE — versioned category correction with immutable history]
+- FR34: Surface spending insights [DONE — deterministic, bounded, currency-scoped aggregates]
+- FR35: Forecast future spending/income [DONE — deterministic completed-week forecast that reports insufficient data and never performs FX conversion]
+- FR36: Track progress toward financial goals [DONE — versioned goals and immutable contributions with exact same-currency progress]
 
 #### Document Vault Service
 
-- FR37: Allow a user to upload files
-- FR38: Store document metadata
-- FR39: Store files via a secure storage reference rather than embedding them in the database
-- FR40: Allow a user to search documents
-- FR41: Generate an AI summary of a document
-- FR42: Request a blockchain proof-of-existence for a document
+- FR37: Allow a user to upload files [DONE — owner-scoped multipart staging with signature/type/size/deadline bounds and durable exact retry]
+- FR38: Store document metadata [DONE — versioned title/tags/timestamp/source/classification with strong ETags]
+- FR39: Store files via a secure storage reference rather than embedding them in the database [DONE — opaque reference/checksum/size metadata only; no byte column]
+- FR40: Allow a user to search documents [PARTIAL — bounded owner metadata plus privacy-safe UTF-8 text/CSV/Markdown/HTML, well-formed PDF, DOCX, PPTX, XLSX, and PNG/JPEG dimension-token search; an opt-in local Tesseract OCR boundary is implemented with strict process/output limits, while deployment-approved OCR binaries, other binary extraction, and exhaustive full-text indexing remain pending]
+- FR41: Generate an AI summary of a document [PARTIAL — owner-filtered Qdrant retrieval, explicit DOCUMENTS consent, latest-version source attribution, deterministic local summary, and audit boundary exist; reviewed production provider, embedding quality, and deployment remain]
+- FR42: Request a blockchain proof-of-existence for a document [PARTIAL — Document Vault durably reserves an owner-scoped request and publishes a versioned CloudEvent through a leased, retrying Kafka outbox relay with a durable dead-letter path; Trust Ledger now has an opt-in durable consumer/projection that records `PENDING_EXTERNAL_ANCHOR`; Besu/Web3j anchoring and verification status remain pending]
 
 #### Media Streaming Service
 
-- FR43: Allow a user to schedule a video coaching/journaling session
-- FR44: Allow a user to join a live WebRTC room for a session
-- FR45: Display a session timer with an end-of-session warning
-- FR46: Automatically end a session when required
-- FR47: Record sessions
-- FR48: Convert recordings to HLS for on-demand playback
-- FR49: Transcribe session audio
-- FR50: Generate an AI summary of a session
-- FR51: Extract action items from a session and create follow-up tasks
-- FR52: Optionally anchor a session summary hash to the blockchain
+- FR43: Allow a user to schedule a video coaching/journaling session [PARTIAL — owner-scoped session control-plane metadata is implemented; participant invitations/reminders and a live provider remain]
+- FR44: Allow a user to join a live WebRTC room for a session [PARTIAL — owner-only local-development permits exist; no WebRTC/SFU integration]
+- FR45: Display a session timer with an end-of-session warning [DONE — bounded responses expose remaining seconds and a one-minute warning]
+- FR46: Automatically end a session when required [DONE — bounded row-locked scheduler durably transitions due scheduled sessions to ENDED; reads retain the same deadline-derived safety behavior]
+- FR47: Record sessions [PARTIAL — media control-plane metadata exists; recording storage/worker integration is pending]
+- FR48: Convert recordings to HLS for on-demand playback [PARTIAL — bounded private HLS reads plus an opt-in local ffmpeg adapter with strict timeout/output/path validation exist; recording ingestion, completion events, production worker/object storage, and deployment evidence remain]
+- FR49: Transcribe session audio [PARTIAL — a bounded transcript-ingestion boundary and durable `LOCAL_DETERMINISTIC_TEXT` artifact exist; speech-to-text provider/worker and timing metadata remain pending]
+- FR50: Generate an AI summary of a session [PARTIAL — deterministic local summary from an explicitly supplied transcript is durable; provider-backed generation and media-to-AI workflow remain pending]
+- FR51: Extract action items from a session and create follow-up tasks [PARTIAL — bounded deterministic extraction, durable artifact, and explicit workload-authenticated confirmation-to-TaskGoal command are implemented; production transcription/provider workflows and broader client affordances remain]
+- FR52: Optionally anchor a session summary hash to the blockchain [PARTIAL — Media exposes an owner-scoped, strongly versioned, idempotent digest-only command through Trust Ledger; receipt-confirmed Besu/Web3j deployment, consent UX, and production key/network controls remain]
 
 #### AI Orchestrator Service
 
-- FR53: Provide an AI life-assistant interaction surface
-- FR54: Answer questions grounded in the user's own documents (RAG)
-- FR55: Generate goal-planning recommendations
-- FR56: Generate financial insights
-- FR57: Summarize sessions/journals
-- FR58: Support AI tool-calling to take actions on the user's behalf
-- FR59: Log every AI decision for auditability (prompt template id, retrieved context ids, model provider/name, output summary, confidence score, safety flags)
+- FR53: Provide an AI life-assistant interaction surface [PARTIAL — owner-scoped bounded interaction, dependency-free deterministic local provider, and optional OpenAI-compatible provider adapter are implemented; model-provider deployment remains]
+- FR54: Answer questions grounded in the user's own documents (RAG) [PARTIAL — explicit DOCUMENTS consent, owner-filtered Qdrant retrieval, bounded snippets, source IDs, and insufficient-evidence refusal exist; production embedding/provider deployment and broad ingestion remain]
+- FR55: Generate goal-planning recommendations [PARTIAL — deterministic owner-scoped task/goal ranking is implemented; provider-backed recommendations and broader context remain]
+- FR56: Generate financial insights [PARTIAL — AI exposes a bounded owner-scoped Finance aggregate projection with deterministic categories and limitations; provider-backed explanations and forecasts remain unavailable]
+- FR57: Summarize sessions/journals [PARTIAL — consent-gated, bounded Profile journal projection and deterministic digest are implemented; Media now exposes a bounded deterministic post-session artifact and explicit TaskGoal confirmation path, while provider deployment remains]
+- FR58: Support AI tool-calling to take actions on the user's behalf [PARTIAL — confirmed, idempotent DRAFT_TASK and DRAFT_GOAL execution plus a privacy-minimized confirmation ledger are implemented through Task/Goal; DRAFT_FINANCIAL_NOTE is a confirmed non-mutating proposal pending a Finance destination contract]
+- FR59: Log every AI decision for auditability (prompt template id, retrieved context ids, model provider/name, output summary, confidence score, safety flags) [PARTIAL — immutable redacted audit facts now include deterministic anchor-ready SHA-256 commitments; no live provider decision exists]
 
 #### Algorithm Engine Service
 
-- FR60: Provide reusable planning/optimization/ranking algorithm implementations as a shared internal capability
-- FR61: Support benchmarking of algorithm implementations
-- FR62: Provide interview-practice-style examples backed by real product algorithms
+- FR60: Provide reusable planning/optimization/ranking algorithm implementations as a shared internal capability [DONE — bounded topological ordering, interval conflict detection, and priority ranking]
+- FR61: Support benchmarking of algorithm implementations [DONE — repeatable correctness-checked smoke benchmark reports; not a production performance claim]
+- FR62: Provide interview-practice-style examples backed by real product algorithms [DONE — tested Task/Goal, Calendar-conflict, and focus-ranking examples with complexity documentation]
 
 #### Blockchain Trust Ledger Service
 
-- FR63: Generate a hash-based proof of existence for a document
-- FR64: Generate Merkle proofs across a batch of document hashes
-- FR65: Anchor a Merkle root on the blockchain
-- FR66: Verify a credential against a previously anchored proof
-- FR67: Anchor AI audit hashes on the blockchain
-- FR68: Issue goal-achievement certificate proofs
+- FR63: Generate a hash-based proof of existence for a document [DONE — bounded, stateless SHA-256 proof generation without storing document bytes]
+- FR64: Generate Merkle proofs across a batch of document hashes [DONE — bounded deterministic Merkle paths and local verification]
+- FR65: Anchor a Merkle root on the blockchain [PARTIAL — durable owner-scoped digest-only Besu/Web3j anchor workflow with receipt-confirmed state is implemented behind explicit configuration; a loopback-only single-node Besu profile and digest-only AnchorRegistry source are reproducible locally, while contract deployment, signing-key management, multi-node consensus, and production evidence remain]
+- FR66: Verify a credential against a previously anchored proof [PARTIAL — owner-scoped anchor receipt status and local path verification exist; credential issuance, chain-proof binding, and production ledger verification remain]
+- FR67: Anchor AI audit hashes on the blockchain [PARTIAL — every new redacted AI audit row has a durable deterministic SHA-256 commitment and transactional hash-only outbox; an opt-in leased Kafka relay and Trust Ledger deduplicating `PENDING_EXTERNAL_ANCHOR` projection are implemented; Kafka ACL/retention and Besu/Web3j anchor workflow remain pending]
+- FR68: Issue goal-achievement certificate proofs [PARTIAL — owner-scoped completion projection,
+  deterministic digest, durable idempotency, and optional receipt state exist; deployed-chain
+  anchoring/key management and external verification remain]
 
 #### Notification Service
 
-- FR69: Send email notifications
-- FR70: Send push notifications
-- FR71: Deliver real-time notifications via WebSocket/SSE
-- FR72: Fan out reminders to the appropriate channel(s)
-- FR73: Retry failed notification deliveries
-- FR74: Route permanently-failed notifications to a dead-letter path
+- FR69: Send email notifications [PARTIAL — encrypted endpoint, bounded provider adapter, retry, and outbox implementation need deployment-specific email provider configuration]
+- FR70: Send push notifications [PARTIAL — encrypted endpoint, privacy-safe renderer, retry, and invalid-destination handling need deployment-specific push provider configuration]
+- FR71: Deliver real-time notifications via WebSocket/SSE [DONE — authenticated, bounded recipient-scoped SSE with replay/resynchronization]
+- FR72: Fan out reminders to the appropriate channel(s) [PARTIAL — Calendar V2 producer and Notification V1/V2 durable fanout are implemented; live Kafka/provider operation remains deployment work]
+- FR73: Retry failed notification deliveries [DONE — bounded full-jitter retry with leases and idempotent provider keys]
+- FR74: Route permanently-failed notifications to a dead-letter path [DONE — durable provider dead-letter records and separate Kafka ingress DLT policy]
 
 #### Analytics Service
 
-- FR75: Display dashboard metrics
-- FR76: Surface habit trends
-- FR77: Surface finance trends
-- FR78: Surface productivity insights
-- FR79: Generate AI-based recommendations from analytics data
-- FR80: Process events into analytics in near-real-time
+- FR75: Display dashboard metrics [PARTIAL — authenticated GraphQL dashboard exposes bounded Task, Calendar, and Finance source metrics, and Analytics now provides an account-scoped bounded snapshot dashboard; client visualization and broader metric coverage remain]
+- FR76: Surface habit trends [PARTIAL — Analytics now persists owner-scoped bounded daily metric history and exposes a trend read; the Angular shell renders available trend series, while habit event projection and broader client visualization remain]
+- FR77: Surface finance trends [PARTIAL — bounded Finance aggregates plus Analytics daily trend history/read are available; the Angular shell can render available series, while finance event projection and dedicated client visualization remain]
+- FR78: Surface productivity insights [PARTIAL — Analytics now exposes deterministic owner-scoped insights derived from bounded task/focus metrics; broader event coverage and client visualization remain]
+- FR79: Generate AI-based recommendations from analytics data [PARTIAL — Profile consent, personalization enablement, and the ANALYTICS context category are enforced before the workload-authenticated deterministic Analytics path; provider-backed narratives remain unavailable]
+- FR80: Process events into analytics in near-real-time [PARTIAL — Analytics has an optional V2 notification CloudEvent consumer with atomic inbox-plus-snapshot projection, durable dedupe, bounded retry/DLT handling, and processed/duplicate/error/lag metrics; broader event coverage, broker operations, and lag SLO evidence remain]
 
 #### Clients
 
-- FR81: Provide a web dashboard (Angular)
-- FR82: Provide a desktop client (JavaFX)
-- FR83: Provide iOS and Android clients (Flutter)
+- FR81: Provide a web dashboard (Angular) [PARTIAL — standalone Angular shell now has memory-only registration/login, shared Home/Plan/Calendar/Money/Vault/Assistant/Sessions/Settings navigation, bounded Analytics metrics/trends, explicit source states, and an explicit versioned session-action confirmation affordance; full domain workflows remain]
+- FR82: Provide a desktop client (JavaFX) [PARTIAL — JavaFX shell exposes the shared destination rail, memory-only password registration/login, accessible degraded states, and a bounded session-action confirmation affordance; authenticated domain workflows, secure storage, and native packaging remain]
+- FR83: Provide iOS and Android clients (Flutter) [PARTIAL — Flutter shell exposes shared Home/Plan/Calendar/Money/Vault/Assistant/Sessions/Settings navigation, platform-secure password auth, bounded bearer-authenticated dashboard reads, retry states, and a bounded session-action confirmation affordance; authenticated domain workflows and release packaging remain]
 
 #### Engineering Labs
 
 *Added during implementation-readiness review — missing from the first extraction pass.*
 
-- FR84: Provide an Algorithms Lab covering arrays, strings, hash maps, linked lists, trees, graphs, heaps, tries, dynamic programming, backtracking, greedy algorithms, Union-Find, segment trees, Fenwick trees, and Bloom filters, each connected to a real product use case with documented complexity
-- FR85: Provide a Concurrency Lab comparing platform threads, virtual threads, `ExecutorService`, `CompletableFuture`, structured concurrency, and scoped values, with cancellation/timeout/thread-dump/JFR examples and load-test comparisons
-- FR86: Provide a Distributed Systems Lab demonstrating service discovery, distributed tracing, circuit breakers, retries, backpressure, idempotency, saga pattern, outbox pattern, CQRS, event sourcing, distributed locks, leader election, sharding, and consistent hashing
-- FR87: Provide a Performance Lab with k6 load tests, JVM tuning, GC comparisons, JFR profiling, query plan analysis, cache hit ratio tests, REST vs. gRPC benchmarks, GraphQL aggregation benchmarks, and virtual-threads benchmarks
-- FR88: Provide a Blockchain Lab demonstrating Merkle tree implementation, document hash proofs, smart contract integration, a Besu local network, the Web3j client, transaction indexing, Bloom filter transaction lookup, credential proof verification, and a consensus simulator
-- FR89: Provide an AI Lab demonstrating prompt templates, a RAG pipeline, embedding generation, vector search, AI tool calling, AI output evaluation, AI audit logging, and local + cloud model provider abstraction
-- FR90: Provide a System Design Lab implementing 10 named mini-systems — URL shortener, notification system, search engine, distributed scheduler, recommendation engine, rate limiter, chat/messaging system, video session system, document storage system, event analytics pipeline — each documented with requirements, APIs, data model, scaling strategy, bottlenecks, tradeoffs, failure handling, and monitoring
+- FR84: Provide an Algorithms Lab covering arrays, strings, hash maps, linked lists, trees, graphs, heaps, tries, dynamic programming, backtracking, greedy algorithms, Union-Find, segment trees, Fenwick trees, and Bloom filters, each connected to a real product use case with documented complexity [DONE — runnable algorithm-engine contract and tests]
+- FR85: Provide a Concurrency Lab comparing platform threads, virtual threads, `ExecutorService`, `CompletableFuture`, structured concurrency, and scoped values, with cancellation/timeout/thread-dump/JFR examples and load-test comparisons [PARTIAL — runnable bounded comparative harness now covers all five strategies, cancellation, deadlines, scoped-value inheritance, bounded thread-dump summaries, in-memory JFR samples, and a dated reproducible smoke artifact; service-level load results remain]
+- FR86: Provide a Distributed Systems Lab demonstrating service discovery, distributed tracing, circuit breakers, retries, backpressure, idempotency, saga pattern, outbox pattern, CQRS, event sourcing, distributed locks, leader election, sharding, and consistent hashing [PARTIAL — runnable bounded fixtures now cover discovery, W3C trace-context propagation, retry/circuit/backpressure/idempotency/outbox, saga compensation, CQRS/event sourcing, lease/election, and consistent-hash sharding; production tracing infrastructure remains]
+- FR87: Provide a Performance Lab with k6 load tests, JVM tuning, GC comparisons, JFR profiling, query plan analysis, cache hit ratio tests, REST vs. gRPC benchmarks, GraphQL aggregation benchmarks, and virtual-threads benchmarks [PARTIAL — deterministic percentile/cache harness, bounded k6 smoke contract, and an opt-in read-only PostgreSQL email query-plan probe now run; production load results, JVM/JFR and cross-protocol comparisons remain unmeasured]
+- FR88: Provide a Blockchain Lab demonstrating Merkle tree implementation, document hash proofs, smart contract integration, a Besu local network, the Web3j client, transaction indexing, Bloom filter transaction lookup, credential proof verification, and a consensus simulator [PARTIAL — runnable proof/Merkle/Bloom/quorum primitives plus bounded local chain-client receipts, transaction indexing, and credential verification now exist; live Besu/Web3j and wallet deployment remain]
+- FR89: Provide an AI Lab demonstrating prompt templates, a RAG pipeline, embedding generation, vector search, AI tool calling, AI output evaluation, AI audit logging, and local + cloud model provider abstraction [PARTIAL — runnable deterministic embedding/vector retrieval, prompt/tool policy, local/cloud-compatible provider fixtures, bounded output-evaluation corpus, and privacy-safe audit harness now exist; production Qdrant/cloud providers remain]
+- FR90: Provide a System Design Lab implementing 10 named mini-systems — URL shortener, notification system, search engine, distributed scheduler, recommendation engine, rate limiter, chat/messaging system, video session system, document storage system, event analytics pipeline — each documented with requirements, APIs, data model, scaling strategy, bottlenecks, tradeoffs, failure handling, and monitoring [DONE — ten bounded, verified design exercises]
 
 #### Interview Documentation
 
@@ -189,109 +227,109 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 
 #### Reliability
 
-- NFR1: Services must implement circuit breakers for calls to failure-prone dependencies
-- NFR2: Services must retry transient failures with exponential backoff
-- NFR3: All outbound/inbound calls must have explicit timeouts
-- NFR4: Services must implement bulkhead isolation to contain failure blast radius
-- NFR5: Write operations that can be retried must be idempotent (idempotency keys)
-- NFR6: Failed asynchronous work must go to a dead-letter path rather than being silently dropped
-- NFR7: Domain events must be published via the transactional outbox pattern, never a dual write
-- NFR8: Multi-service workflows requiring compensation must use saga orchestration
-- NFR9: Public-facing endpoints must be rate limited
-- NFR10: Services must degrade gracefully rather than fail outright when a non-critical dependency is unavailable
-- NFR11: High-throughput consumers must implement backpressure
-- NFR12: Every service must expose health, readiness, and liveness checks
+- NFR1: Services must implement circuit breakers for calls to failure-prone dependencies [PARTIAL — gateway and current provider/event adapters have bounded circuits; future integrations remain]
+- NFR2: Services must retry transient failures with exponential backoff [PARTIAL — safe-read/provider/event retries are bounded; non-idempotent generic proxy mutations are intentionally never replayed]
+- NFR3: All outbound/inbound calls must have explicit timeouts [DONE — current service and gateway boundaries validate bounded connect/read/request/transaction deadlines]
+- NFR4: Services must implement bulkhead isolation to contain failure blast radius [PARTIAL — gateway, notification, AI, and media paths have bounded admission; future consumers remain]
+- NFR5: Write operations that can be retried must be idempotent (idempotency keys) [DONE for implemented mutations — durable scoped reservations/snapshots cover current service write APIs]
+- NFR6: Failed asynchronous work must go to a dead-letter path rather than being silently dropped [PARTIAL — Notification and optional Analytics Kafka/provider paths have durable DLTs; all future consumers are not yet implemented]
+- NFR7: Domain events must be published via the transactional outbox pattern, never a dual write [PARTIAL — Identity recovery, Calendar, Document Vault, AI audit, and Notification paths use outboxes; future producers remain]
+- NFR8: Multi-service workflows requiring compensation must use saga orchestration [PARTIAL — the bounded Distributed Systems Lab demonstrates reverse-order compensation; Document proof remains an outbox/DLT workflow and confirmed Media action items use a bounded idempotent command with fail-closed retry rather than a compensating cross-service delete; provider-backed workflows remain]
+- NFR9: Public-facing endpoints must be rate limited [DONE for current public ingress — gateway applies bounded Redis limits before forwarding]
+- NFR10: Services must degrade gracefully rather than fail outright when a non-critical dependency is unavailable [PARTIAL — current bounded adapters return explicit partial/unavailable states; future providers remain]
+- NFR11: High-throughput consumers must implement backpressure [PARTIAL — Notification, gateway streaming, and AI/media admission are bounded; future consumers remain]
+- NFR12: Every service must expose health, readiness, and liveness checks [DONE — all current Spring Boot services expose bounded probes]
 
 #### Observability
 
-- NFR13: Every service must emit distributed traces via OpenTelemetry
-- NFR14: Every service must emit metrics scraped by Prometheus
-- NFR15: Every service must ship structured logs to Loki
-- NFR16: Request latency, error rate, dependency latency, DB query latency, cache hit ratio, event-processing lag, AI request latency, video processing time, blockchain confirmation time, JVM memory/GC, and virtual-thread metrics must be tracked per relevant service
+- NFR13: Every service must emit distributed traces via OpenTelemetry [DONE for current modules — OTLP configuration and correlation propagation are present]
+- NFR14: Every service must emit metrics scraped by Prometheus [DONE for current modules — management Prometheus endpoints and bounded metrics are present]
+- NFR15: Every service must ship structured logs to Loki [PARTIAL — ECS logs and an opt-in local Loki/Promtail path exist; production retention/routing is not deployed]
+- NFR16: Request latency, error rate, dependency latency, DB query latency, cache hit ratio, event-processing lag, AI request latency, video processing time, blockchain confirmation time, JVM memory/GC, and virtual-thread metrics must be tracked per relevant service [PARTIAL — current services expose applicable bounded signals, including Trust Ledger anchor latency/outcome metrics; future provider/blockchain/client signals and production retention await those systems]
 
 #### Security
 
-- NFR17: Authentication must support OAuth2/OIDC
-- NFR18: Authentication must support passkeys/WebAuthn
-- NFR19: Authorization must support both RBAC and ABAC models
-- NFR20: Service-to-service calls must be authenticated, with mTLS where appropriate
-- NFR21: Secrets must be managed via a secrets manager, never hardcoded
-- NFR22: Data must be encrypted at rest
-- NFR23: Data must be encrypted in transit
-- NFR24: File uploads must be validated for safety before storage
-- NFR25: Security-relevant actions must be audit logged
-- NFR26: All user input must be validated against OWASP guidance
+- NFR17: Authentication must support OAuth2/OIDC [PARTIAL — Identity flow is implemented/configurable; provider credentials remain deployment-owned]
+- NFR18: Authentication must support passkeys/WebAuthn [PARTIAL — enrollment, assertion login, owner-scoped credential removal, one-time recovery-code login, and web passkey registration/login/recovery UX are implemented; recovery communications and recovery-device policy remain]
+- NFR19: Authorization must support both RBAC and ABAC models [DONE for current service boundaries — Identity V1/V2 policy descriptors enforce role/attribute/owner rules]
+- NFR20: Service-to-service calls must be authenticated, with mTLS where appropriate [PARTIAL — workload-authenticated REST is implemented; mTLS rollout is pending]
+- NFR21: Secrets must be managed via a secrets manager, never hardcoded [PARTIAL — source defaults are removed and startup validation is fail-closed; a concrete manager integration is deployment work]
+- NFR22: Data must be encrypted at rest [PARTIAL — application-level sensitive fields are protected where required; storage/KMS encryption is deployment-owned]
+- NFR23: Data must be encrypted in transit [PARTIAL — remote upstreams require HTTPS and local loopback HTTP is explicitly development-only; production mTLS/TLS rollout remains]
+- NFR24: File uploads must be validated for safety before storage [DONE for implemented document/media routes — bounded size, signatures/types, paths, and deadlines are enforced]
+- NFR25: Security-relevant actions must be audit logged [DONE for current services — redacted durable audit facts cover authentication, authorization, endpoint, and mutation outcomes]
+- NFR26: All user input must be validated against OWASP guidance [DONE for current API surfaces — strict DTO/property/path/header/body bounds and generic errors are enforced]
 
 #### Testing & Delivery
 
-- NFR27: Test coverage must include unit, integration, contract, end-to-end, performance, mutation, security, architecture, and chaos tests
-- NFR28: Performance-sensitive changes must be benchmarked with a documented methodology (no invented numbers — see `docs/benchmarks/`)
+- NFR27: Test coverage must include unit, integration, contract, end-to-end, performance, mutation, security, architecture, and chaos tests [PARTIAL — unit/integration/contract/security/architecture/mutation gates and fail-closed external E2E/performance/chaos runners exist; protected staging execution remains unavailable]
+- NFR28: Performance-sensitive changes must be benchmarked with a documented methodology (no invented numbers — see `docs/benchmarks/`) [PARTIAL — dated bounded algorithm/cache/performance smoke results and an opt-in PostgreSQL query-plan probe are documented; production load/JVM/JFR results are not claimed]
 
 #### CI/CD Pipeline
 
 *Expanded during implementation-readiness review — REQUIREMENTS.md names 14 individual stages, originally collapsed into one NFR.*
 
 - NFR29: CI must compile the project on every change [DONE — `ci.yml`]
-- NFR30: CI must run a format check on every change
-- NFR31: CI must run unit tests on every change [DONE — `ci.yml`, part of `./gradlew build`]
-- NFR32: CI must run integration tests on every change [DONE — `ci.yml`, part of `./gradlew build`]
-- NFR33: CI must run contract tests on every change
-- NFR34: CI must run static analysis on every change
-- NFR35: CI must run a security scan on every change
-- NFR36: CI must run mutation testing on every change
-- NFR37: CI must build a Docker image on every change
-- NFR38: CI must generate an SBOM (software bill of materials) on every change
-- NFR39: CI must run a container scan on every change
-- NFR40: CI must deploy to staging on every change
-- NFR41: CI must run smoke tests against staging on every change
-- NFR42: CI must publish test reports on every change
+- NFR30: CI must run a format check on every change [DONE — `ci.yml` runs `formatCheck`]
+- NFR31: CI must run unit tests on every change [DONE — `ci.yml` runs `test`]
+- NFR32: CI must run integration tests on every change [DONE — `ci.yml` runs `integrationTest`]
+- NFR33: CI must run contract tests on every change [DONE — `ci.yml` runs `contractTest`]
+- NFR34: CI must run static analysis on every change [DONE — `ci.yml` runs `staticAnalysis`]
+- NFR35: CI must run a security scan on every change [DONE — source/dependency and container scans]
+- NFR36: CI must run mutation testing on every change [DONE — `ci.yml` runs `mutationTest`]
+- NFR37: CI must build a Docker image on every change [DONE — `ci.yml` packages and builds all discovered service images]
+- NFR38: CI must generate an SBOM (software bill of materials) on every change [DONE — CycloneDX stage]
+- NFR39: CI must run a container scan on every change [DONE — Trivy image stage]
+- NFR40: CI must deploy to staging on every change [PARTIAL — protected, fail-closed deployment job is present but requires an operator-provisioned staging environment and deployment webhook]
+- NFR41: CI must run smoke tests against staging on every change [PARTIAL — protected smoke job is present but requires staging URLs and credentials]
+- NFR42: CI must publish test reports on every change [DONE — test, static-analysis, mutation, SBOM, and live-run reports are uploaded as workflow artifacts]
 
 ### Additional Requirements
 
-- Use Java 25 as the default language across backend services, the algorithm engine, AI orchestration, blockchain integration, CLI tooling, and the JavaFX desktop client (ADR-001)
-- Default every service's request-handling threads to virtual threads (`spring.threads.virtual.enabled=true`) (ADR-002) [DONE — both existing services]
-- Use `StructuredTaskScope` for grouped concurrent fan-out/fan-in workflows, paired with virtual threads (ADR-003)
-- Use `ScopedValue` for request-scoped context propagation (user, tenant, correlation ID, AI session), bound at the ingress boundary (ADR-004)
-- Build each service as an independently deployable Spring Boot microservice, each owning its own responsibility and datastore where warranted (ADR-005) [DONE — pattern established by the two existing services]
-- Provide a GraphQL gateway for dashboard/aggregated client views, resolving internally over gRPC (ADR-006)
-- Use gRPC with versioned `.proto` contracts in a shared `grpc-contracts` module for all internal service-to-service calls (ADR-007)
-- Use PostgreSQL as the system of record for identity, task/goal, calendar, finance, and audit/permission domains, one schema/database per owning service (ADR-008) [DONE — both existing services]
-- Use MongoDB for journals, notes, and AI conversation history, owned only by the profile/journal and AI orchestrator services (ADR-009)
+- Use Java 25 as the default language across backend services, the algorithm engine, AI orchestration, blockchain integration, CLI tooling, and the JavaFX desktop client (ADR-001) [PARTIAL — backend/contracts/labs, the JavaFX shell, and the bounded read-only `cli:lifeos-cli` use Java 25; external integration modules remain]
+- Default every service's request-handling threads to virtual threads (`spring.threads.virtual.enabled=true`) (ADR-002) [DONE — all current Spring Boot service modules]
+- Use `StructuredTaskScope` for grouped concurrent fan-out/fan-in workflows, paired with virtual threads (ADR-003) [PARTIAL — the gateway GraphQL gRPC dashboard now uses a bounded Java 25 preview scope for concurrent Task/Calendar/Finance reads; broader service fan-outs and production preview-runtime rollout remain]
+- Use `ScopedValue` for request-scoped context propagation (user, tenant, correlation ID, AI session), bound at the ingress boundary (ADR-004) [DONE for current Spring services — ingress correlation contexts bind ScopedValue]
+- Build each service as an independently deployable Spring Boot microservice, each owning its own responsibility and datastore where warranted (ADR-005) [DONE — independently packageable service boundaries now cover the implemented domains]
+- Provide a GraphQL gateway for dashboard/aggregated client views, resolving internally over gRPC (ADR-006) [PARTIAL — bounded authenticated GraphQL aggregation now has an opt-in Task/Goal, Calendar, and Finance gRPC/mTLS fan-out with REST compatibility fallback; Analytics now exposes its own bounded gRPC projection; household tenant selection, production certificate rollout, and broader service migration remain]
+- Use gRPC with versioned `.proto` contracts in a shared `grpc-contracts` module for all internal service-to-service calls (ADR-007) [PARTIAL — generated v1 Calendar, Finance, Task, Document, and Analytics contracts plus four opt-in mTLS metrics hosts exist; complete service mesh migration remains]
+- Use PostgreSQL as the system of record for identity, task/goal, calendar, finance, and audit/permission domains, one schema/database per owning service (ADR-008) [DONE — current stateful services own isolated PostgreSQL databases/schemas]
+- Use MongoDB for journals, notes, and AI conversation history, owned only by the profile/journal and AI orchestrator services (ADR-009) [PARTIAL — Profile and AI Assistant now expose explicit encrypted, bounded, opt-in MongoDB boundaries with owner-scoped APIs; managed authentication/TLS, consent UX, key rotation, and production retention evidence remain]
 - Use Redis as the shared cache/session/rate-limit/lock/pub-sub layer across all services (ADR-010) [PARTIAL — identity authentication rate limiting and short-lived OIDC/WebAuthn state]
-- Use Qdrant as the dedicated vector database for embeddings/RAG/semantic search (ADR-011)
-- Use WebRTC (SFU architecture) for live sessions and transcode recordings to HLS via ffmpeg for playback (ADR-012)
-- Run a private Hyperledger Besu network with Web3j as the Java client; anchor only Merkle roots and minimal metadata on-chain, never private data (ADR-013)
-- Build the desktop client with JavaFX on Java 25, AOT-compiled via GraalVM Native Image (ADR-014)
-- Build iOS and Android clients with Flutter, sharing REST/GraphQL contracts with other clients (ADR-015)
-- Use Kafka as the default event backbone, with Pulsar as an acceptable substitute (ADR-016)
-- Implement the transactional outbox pattern for every service publishing domain events, with a relay process and idempotency-keyed delivery (ADR-017)
-- Instrument every service with OpenTelemetry (traces/metrics/log correlation), backed by Prometheus/Grafana/Loki/Tempo (ADR-018)
+- Use Qdrant as the dedicated vector database for embeddings/RAG/semantic search (ADR-011) [PARTIAL — opt-in owner-filtered Qdrant projection/retrieval and bounded grounding endpoints exist; production embedding quality, hosted provisioning, and broad ingestion remain]
+- Use WebRTC (SFU architecture) for live sessions and transcode recordings to HLS via ffmpeg for playback (ADR-012) [PARTIAL — bounded media control-plane/HLS contracts and an opt-in local-development ffmpeg source-to-HLS adapter exist; production SFU, recording capture, object storage, worker deployment, and staging evidence remain]
+- Run a private Hyperledger Besu network with Web3j as the Java client; anchor only Merkle roots and minimal metadata on-chain, never private data (ADR-013) [PARTIAL — loopback-only single-node Besu development profile, digest-only AnchorRegistry source, bounded readiness helper, and Web3j adapter exist; production multi-node consensus, deployment/key controls, and staging evidence remain]
+- Build the desktop client with JavaFX on Java 25, AOT-compiled via GraalVM Native Image (ADR-014) [PARTIAL — JavaFX Java 25 shell exists; authenticated product workflows and GraalVM packaging remain]
+- Build iOS and Android clients with Flutter, sharing REST/GraphQL contracts with other clients (ADR-015) [PARTIAL — bounded Flutter shell exists; full shared-client workflows and release packaging remain]
+- Use Kafka as the default event backbone, with Pulsar as an acceptable substitute (ADR-016) [PARTIAL — versioned event contracts, Calendar/Notification Kafka adapters, and a local Compose eventing profile exist; production broker controls and broader producers remain]
+- Implement the transactional outbox pattern for every service publishing domain events, with a relay process and idempotency-keyed delivery (ADR-017) [PARTIAL — implemented for Calendar reminder and Notification delivery-status paths, not every future producer]
+- Instrument every service with OpenTelemetry (traces/metrics/log correlation), backed by Prometheus/Grafana/Loki/Tempo (ADR-018) [PARTIAL — current modules and local reference stack are instrumented; production retention/routing remains]
 - No third-party starter template is used — the Gradle multi-module monorepo (`settings.gradle.kts` + root `build.gradle.kts`, Java 25 toolchain via the foojay-resolver-convention plugin) is itself the starter scaffold, already built [DONE]
 
 ### UX Design Requirements
 
 The baseline UX contract is in [`docs/ux-designs/DESIGN.md`](ux-designs/DESIGN.md) and [`docs/ux-designs/EXPERIENCE.md`](ux-designs/EXPERIENCE.md). Both are currently `draft`: visual and interaction assumptions must be confirmed before client implementation is unblocked. The BMAD working run remains under the ignored `_bmad-output/planning-artifacts/ux-designs/` directory.
 
-- UX-DR1: Use one shared information architecture and terminology across Angular web, JavaFX desktop, and Flutter mobile while preserving native navigation and secure-storage conventions.
-- UX-DR2: Define accessible authentication flows for password, OAuth2/OIDC, and passkeys with generic errors, safe recovery, and no client-side secret leakage.
-- UX-DR3: Define Home/Plan/Calendar/Money/Vault/Assistant/Sessions/Settings surfaces with clear ownership, freshness, partial-data, stale-data, and unauthorized states.
-- UX-DR4: Make privacy, consent, AI uncertainty, confirmation, and destructive/revocation behavior visible and recoverable.
-- UX-DR5: Meet WCAG 2.2 AA and equivalent platform guidance through keyboard/switch access, screen-reader announcements, visible focus, dynamic type, captions, and non-color state encoding.
-- UX-DR6: Define responsive behavior for web breakpoints, resizable desktop panes, and mobile touch/back/permission/notification behavior.
-- UX-DR7: Use calm, precise microcopy that explains impact and recovery without gamification, artificial urgency, or private data in notification previews.
+- UX-DR1: Use one shared information architecture and terminology across Angular web, JavaFX desktop, and Flutter mobile while preserving native navigation and secure-storage conventions. [PARTIAL — all three shells expose the shared destinations and native navigation; Flutter uses platform-secure token storage, while web/desktop authenticated workflows and secure storage remain]
+- UX-DR2: Define accessible authentication flows for password, OAuth2/OIDC, and passkeys with generic errors, safe recovery, and no client-side secret leakage. [PARTIAL — web and desktop expose bounded memory-only password registration/login, web exposes passkey registration/login plus the generic one-time recovery-code flow, and mobile uses the platform secure keystore; OAuth2/OIDC and recovery communications remain]
+- UX-DR3: Define Home/Plan/Calendar/Money/Vault/Assistant/Sessions/Settings surfaces with clear ownership, freshness, partial-data, stale-data, and unauthorized states. [PARTIAL — all three shells expose the shared destinations; web has explicit source states and mobile has bounded auth/dashboard states; full data workflows remain]
+- UX-DR4: Make privacy, consent, AI uncertainty, confirmation, and destructive/revocation behavior visible and recoverable. [PARTIAL — backend consent/audit/error contracts and client neutral/unavailable states exist; authenticated side-effect UX remains]
+- UX-DR5: Meet WCAG 2.2 AA and equivalent platform guidance through keyboard/switch access, screen-reader announcements, visible focus, dynamic type, captions, and non-color state encoding. [PARTIAL — web focus/live-region/contrast/reduced-motion behavior and native accessible labels exist; full workflow audit and captions remain]
+- UX-DR6: Define responsive behavior for web breakpoints, resizable desktop panes, and mobile touch/back/permission/notification behavior. [PARTIAL — web responsive rail, JavaFX resizable shell, and Flutter bottom navigation exist; platform permissions/back/offline workflows remain]
+- UX-DR7: Use calm, precise microcopy that explains impact and recovery without gamification, artificial urgency, or private data in notification previews. [PARTIAL — backend error/notification contracts are privacy-minimized; client copy is pending]
 
 ### FR Coverage Map
 
-- FR1: Epic 2 - API Gateway routing
-- FR2: Epic 2 - API Gateway auth enforcement
-- FR3: Epic 2 - API Gateway rate limiting
-- FR4: Epic 2 - API Gateway correlation IDs
+- FR1: Epic 2 - API Gateway routing [DONE]
+- FR2: Epic 2 - API Gateway auth enforcement [DONE]
+- FR3: Epic 2 - API Gateway rate limiting [DONE]
+- FR4: Epic 2 - API Gateway correlation IDs [DONE]
 - FR5: Epic 13 - GraphQL dashboard aggregation entry point
 - FR6: Epic 1 - Account registration [DONE]
 - FR7: Epic 1 - Login [DONE — first-party email/password]
 - FR8: Epic 1 - OAuth2/OIDC login
-- FR9: Epic 1 - Passkey/WebAuthn login
-- FR10: Epic 1 - JWT issuance [PARTIAL — first-party access tokens; refresh/JWKS remain]
+- FR9: Epic 1 - Passkey/WebAuthn login [PARTIAL — enrollment, assertion verification, owner-scoped removal, one-time recovery-code login, and web passkey registration/login/recovery UX; recovery communications remain]
+- FR10: Epic 1 - JWT issuance [DONE — access JWTs, rotating refresh tokens, and JWKS]
 - FR11: Epic 1 - RBAC/ABAC authorization [DONE — initial identity/Task Goal decision boundary]
 - FR12: Epic 1 - Device/session management
 - FR13: Epic 4 - Personal profile
@@ -299,63 +337,63 @@ The baseline UX contract is in [`docs/ux-designs/DESIGN.md`](ux-designs/DESIGN.m
 - FR15: Epic 4 - Household/family members
 - FR16: Epic 4 - Privacy settings
 - FR17: Epic 4 - AI personalization settings
-- FR18: Epic 5 - Task CRUD [NOT DONE]
-- FR19: Epic 5 - Goal definition [PARTIAL — create + list only]
-- FR20: Epic 5 - Habit tracking
-- FR21: Epic 5 - Routines
-- FR22: Epic 5 - Task/goal dependencies [PARTIAL — computed, not persisted]
-- FR23: Epic 5 - Milestones
-- FR24: Epic 5 - Recurring activities
-- FR25: Epic 5 - Dependency-ordered execution (topological sort) [DONE]
-- FR26: Epic 6 - Calendar events
-- FR27: Epic 6 - Time blocking
-- FR28: Epic 6 - Event reminders (consumes Epic 3)
-- FR29: Epic 6 - Schedule conflict detection
-- FR30: Epic 6 - Calendar optimization suggestions
-- FR31: Epic 7 - Budget management
-- FR32: Epic 7 - Transaction recording
-- FR33: Epic 7 - Transaction categorization
-- FR34: Epic 7 - Spending insights
-- FR35: Epic 7 - Spending/income forecasting
-- FR36: Epic 7 - Financial goal tracking
-- FR37: Epic 11 - Document upload
-- FR38: Epic 11 - Document metadata
-- FR39: Epic 11 - Secure storage reference
-- FR40: Epic 11 - Document search
+- FR18: Epic 5 - Task CRUD [DONE — owner-scoped versioned lifecycle and durable idempotency]
+- FR19: Epic 5 - Goal definition [DONE — versioned create/list/read/update/complete/archive]
+- FR20: Epic 5 - Habit tracking [DONE]
+- FR21: Epic 5 - Routines [DONE]
+- FR22: Epic 5 - Task/goal dependencies [DONE — persisted, owner-scoped, cycle-safe graph]
+- FR23: Epic 5 - Milestones [DONE]
+- FR24: Epic 5 - Recurring activities [DONE]
+- FR25: Epic 5 - Dependency-ordered execution (topological sort) [DONE — persisted graph integration]
+- FR26: Epic 6 - Calendar events [DONE]
+- FR27: Epic 6 - Time blocking [PARTIAL — focus plus Task/Goal-linked blocks and reauthorized bounded priority/deadline planning; deployment remains]
+- FR28: Epic 6 - Event reminders (consumes Epic 3) [PARTIAL — durable producer/consumer path; deployment evidence pending]
+- FR29: Epic 6 - Schedule conflict detection [DONE]
+- FR30: Epic 6 - Calendar optimization suggestions [PARTIAL — deterministic fallback plus explicit-candidate priority/deadline ranking; deployment remains]
+- FR31: Epic 7 - Budget management [DONE]
+- FR32: Epic 7 - Transaction recording [DONE]
+- FR33: Epic 7 - Transaction categorization [DONE]
+- FR34: Epic 7 - Spending insights [DONE]
+- FR35: Epic 7 - Spending/income forecasting [DONE — bounded, no-FX contract]
+- FR36: Epic 7 - Financial goal tracking [DONE]
+- FR37: Epic 11 - Document upload [DONE]
+- FR38: Epic 11 - Document metadata [DONE]
+- FR39: Epic 11 - Secure storage reference [DONE]
+- FR40: Epic 11 - Document search [PARTIAL — owner metadata plus privacy-safe UTF-8 text/CSV/Markdown/HTML, well-formed PDF, DOCX, PPTX, XLSX, and PNG/JPEG dimension-token search; an opt-in bounded local Tesseract OCR adapter exists, while deployment-approved OCR binaries, other binary extraction, and exhaustive indexing remain]
 - FR41: Epic 11 - AI document summary (consumes Epic 10)
 - FR42: Epic 11 - Blockchain proof request (consumes Epic 8)
-- FR43: Epic 12 - Session scheduling
-- FR44: Epic 12 - Join WebRTC room
+- FR43: Epic 12 - Session scheduling [PARTIAL — secure owner-only control-plane foundation]
+- FR44: Epic 12 - Join WebRTC room [PARTIAL — local-development permit only; no WebRTC/SFU]
 - FR45: Epic 12 - Session timer + warning
-- FR46: Epic 12 - Auto-end session
+- FR46: Epic 12 - Auto-end session [DONE — durable bounded expiry scheduler]
 - FR47: Epic 12 - Session recording
-- FR48: Epic 12 - HLS conversion
+- FR48: Epic 12 - HLS conversion [PARTIAL — opt-in local ffmpeg processing validates and atomically publishes private HLS artifacts; recording/event/production-worker integration remains]
 - FR49: Epic 12 - Audio transcription
 - FR50: Epic 12 - AI session summary (consumes Epic 10)
 - FR51: Epic 12 - Action items to follow-up tasks (consumes Epic 5)
 - FR52: Epic 12 - Optional blockchain anchor (consumes Epic 8)
-- FR53: Epic 10 - AI life-assistant interaction surface
+- FR53: Epic 10 - AI life-assistant interaction surface [PARTIAL — fail-closed provider foundation]
 - FR54: Epic 11 - RAG over documents (consumes Epic 10)
 - FR55: Epic 10 - Goal-planning recommendations (consumes Epic 5)
 - FR56: Epic 10 - Financial insights (consumes Epic 7)
 - FR57: Epic 10 - Session/journal summaries
 - FR58: Epic 10 - AI tool-calling
-- FR59: Epic 10 - AI decision audit logging
-- FR60: Epic 9 - Reusable algorithm implementations
-- FR61: Epic 9 - Algorithm benchmarking
-- FR62: Epic 9 - Interview-practice examples
-- FR63: Epic 8 - Document hash proof-of-existence
-- FR64: Epic 8 - Merkle proof generation
-- FR65: Epic 8 - Merkle root anchoring
-- FR66: Epic 8 - Credential proof verification
-- FR67: Epic 8 - AI audit hash anchoring
-- FR68: Epic 8 - Goal-achievement certificate proofs
-- FR69: Epic 3 - Email notifications
-- FR70: Epic 3 - Push notifications
-- FR71: Epic 3 - WebSocket/SSE notifications
-- FR72: Epic 3 - Reminder fanout
-- FR73: Epic 3 - Retry failed deliveries
-- FR74: Epic 3 - Dead-letter routing
+- FR59: Epic 10 - AI decision audit logging [PARTIAL — current redacted audit facts only]
+- FR60: Epic 9 - Reusable algorithm implementations [DONE]
+- FR61: Epic 9 - Algorithm benchmarking [DONE — smoke benchmark, not a capacity result]
+- FR62: Epic 9 - Interview-practice examples [DONE]
+- FR63: Epic 8 - Document hash proof-of-existence [DONE]
+- FR64: Epic 8 - Merkle proof generation [DONE]
+- FR65: Epic 8 - Merkle root anchoring [PARTIAL]
+- FR66: Epic 8 - Credential proof verification [PARTIAL]
+- FR67: Epic 8 - AI audit hash anchoring [PARTIAL]
+- FR68: Epic 8 - Goal-achievement certificate proofs [PARTIAL]
+- FR69: Epic 3 - Email notifications [PARTIAL]
+- FR70: Epic 3 - Push notifications [PARTIAL]
+- FR71: Epic 3 - WebSocket/SSE notifications [DONE — SSE]
+- FR72: Epic 3 - Reminder fanout [PARTIAL]
+- FR73: Epic 3 - Retry failed deliveries [DONE]
+- FR74: Epic 3 - Dead-letter routing [DONE]
 - FR75: Epic 13 - Dashboard metrics (consumes Epics 5, 6, 7)
 - FR76: Epic 13 - Habit trends
 - FR77: Epic 13 - Finance trends
@@ -594,11 +632,11 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 - Additional 6 (GraphQL gateway) → 13.1, 14.3, 17.4
 - Additional 7 (versioned gRPC contracts) → 6.5, 7.4, 10.2, 10.5, 11.7, 12.9, 13.1
 - Additional 8 (PostgreSQL system of record) → 1.1, 1.7, 5.1–5.8, 6.1, 7.1–7.6, 8.6
-- Additional 9 (MongoDB journals/AI history) → 4.1–4.5, 10.4, 11.7
+- Additional 9 (MongoDB journals/AI history) → 4.1–4.5, 10.4, 11.7 [PARTIAL — encrypted opt-in Profile journals/notes and AI history adapters with owner-scoped APIs; managed production controls and consent UX remain]
 - Additional 10 (Redis cache/session/limits/locks) → 1.2, 1.7, 2.3, 3.5, 5.8, 16.4
 - Additional 11 (Qdrant vector search) → 10.1, 10.4, 11.4–11.7, 17.6
 - Additional 12 (WebRTC and HLS) → 12.2, 12.5, 12.6
-- Additional 13 (Besu and Web3j) → 8.1–8.6, 17.5
+- Additional 13 (Besu and Web3j) → 8.1–8.6, 17.5 [PARTIAL — bounded Web3j/Besu adapter and durable anchor state exist; private network/deployment controls remain]
 - Additional 14 (JavaFX desktop) → 15.1–15.4
 - Additional 15 (Flutter mobile) → 16.1–16.4
 - Additional 16 (Kafka/Pulsar event backbone) → 3.1–3.5, 8.3, 12.4, 12.6, 13.6
@@ -613,7 +651,7 @@ All 91 FRs are covered by exactly one epic. NFR1–NFR42 and the 19 Additional R
 Users can register, log in (including via OAuth2/OIDC and passkeys), and manage their own sessions and authorization — the foundation every other epic builds on.
 
 - **FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11, FR12
-- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn assertion login (FR9), JWT issuance/refresh verification (FR10), the initial RBAC/ABAC decision boundary (FR11), and user-facing session management (FR12) exist in `identity-service`; passkey credential registration/provisioning remains a later story.
+- **Status:** Partially done — registration (FR6), first-party email/password login (FR7), the configured OAuth2/OIDC authorization-code flow (FR8), passkey/WebAuthn enrollment, assertion login, and one-time recovery-code login (FR9), JWT issuance/refresh verification (FR10), the initial RBAC/ABAC decision boundary (FR11), and user-facing session management (FR12) exist in `identity-service`; browser recovery UX, recovery communications, and production mTLS remain later work.
 - **Implementation notes:** Identity-service establishes the first authentication, structured
   logging, metrics, tracing, and distributed rate-limit patterns. Future gateway and client stories
   must consume these decisions rather than reimplementing account or session policy.
@@ -669,7 +707,10 @@ in `password_credential` as Argon2id hashes; session metadata and a SHA-256 acce
 attempt counters use atomic `INCR`/`EXPIRE` with hashed email/address material and fail closed on
 dependency errors. Argon2id verification is also bounded per service instance with a semaphore and
  short acquisition timeout. Story 1.5 owns the implemented refresh-token rotation, asymmetric
- signing/JWKS, and verification middleware; user-facing session listing/revocation remains Story 1.7.
+ signing/JWKS, verification middleware, and user-facing session listing/revocation. One-time
+ passkey recovery-code issuance and login are implemented; browser display remains a client
+ boundary. Generic recovery security notifications are written to Identity's transactional outbox
+ without raw codes; external provider delivery remains deployment work.
 
 ### Story 1.3: OAuth2/OIDC login
 
@@ -689,7 +730,7 @@ So that I can use an established identity without sharing its password with Life
 **When** the callback is received
 **Then** authentication is rejected, no account link or session is created, and the failure is audit logged without exposing provider tokens.
 
-### Story 1.4: Passkey/WebAuthn login [DONE]
+### Story 1.4: Passkey/WebAuthn login [PARTIAL]
 
 As a registered user,
 I want to authenticate with a passkey,
@@ -715,8 +756,13 @@ requires configured user verification, checks the registered public key and auth
 advances the counter with a conditional PostgreSQL update, and creates a `PASSKEY` session through
 the shared ADR-020 authority. Passkey endpoints share the distributed attempt limiter and emit
 redacted success, rejection, rate-limit, dependency, and session-capacity audit events. Private
-keys never enter the service; credential registration/provisioning remains a separate authenticated
-step-up story.
+keys never enter the service. Authenticated registration uses the paired
+`/api/v1/auth/passkey/registration/options` and `/api/v1/auth/passkey/registration` endpoints;
+ owner-scoped credential listing/removal is available through
+ `/api/v1/auth/passkey/credentials`; one-time recovery-code issuance and login are available
+ through `/api/v1/auth/passkey/recovery-codes` and `/api/v1/auth/passkey/recover`. Browser display,
+ generic recovery event enqueueing, external provider delivery, and recovery-device policy remain
+ deployment/client work, so this story is still not a complete passkey lifecycle claim.
 
 ### Story 1.5: JWT issuance and verification [DONE]
 
@@ -816,6 +862,10 @@ locks use explicit timeouts, and redacted revocation outcomes commit with the du
 Users interact with LifeOS through one coherent, reliable entry point rather than hitting fragile individual services directly — requests are authenticated, rate-limited, and traceable end-to-end.
 
 - **FRs covered:** FR1, FR2, FR3, FR4
+- **Status:** DONE for the implemented gateway contract. Route allow-listing, protected-route Identity
+  validation, Redis rate limiting, correlation propagation, bounded timeouts, bulkheads, circuits,
+  safe-read retries, and exact streaming exceptions are implemented and tested. Production deployment
+  topology and external staging evidence remain tracked under NFR40–NFR41.
 - **Implementation notes:** Depends on Epic 1 for the auth decisions it enforces. Covers FR4 (correlation IDs), NFR9 (rate limiting), and NFR13 (OpenTelemetry distributed tracing) at the edge.
 
 ### Story 2.1: REST routing and correlation IDs
@@ -887,16 +937,35 @@ route/client digest and fails closed when Redis cannot decide. Public requests r
 immediate client-address charge; protected requests receive that pre-authentication address charge
 and a second post-authentication charge keyed by the validated account ID. Upstream admission is
 non-waiting and isolated per route; consecutive dependency failures open only the affected route's
-circuit, with one half-open probe after the configured cool-down.
+circuit, with one half-open probe after the configured cool-down. Transient responses and transport
+failures for demonstrably replay-safe `GET`, `HEAD`, and `OPTIONS` requests receive bounded capped
+exponential full-jitter retries under one logical deadline; mutation methods are never replayed by
+the generic gateway. The implemented Task/Goal create mutation instead requires a durable,
+owner/tenant-scoped `Idempotency-Key` reservation, so a client retry converges on one goal.
 
 ### Epic 3: Reminders & Notifications
 
 Users receive timely email, push, and real-time notifications, with reliable delivery even when a channel is temporarily unavailable.
 
 - **FRs covered:** FR69, FR70, FR71, FR72, FR73, FR74
-- **Implementation notes:** Depends on Epic 1. First natural home for the outbox pattern (NFR7), retry/backoff (NFR2), and dead-letter handling (NFR6) — later epics (Calendar, Video) call into this one rather than reimplementing delivery.
+- **Status:** PARTIAL — versioned CloudEvents contracts, Calendar's V2 reminder producer/outbox,
+  Notification's durable inbox/fanout/SSE path, and Kafka relays are implemented and tested.
+  Goal lifecycle changes do not trigger notifications. User-visible email/push delivery still
+  depends on deployment-provisioned Kafka topics/ACLs, a provider vendor, retention, and an
+  end-to-end staging replay.
+- **Implementation notes:** `notification-service` owns a durable inbox, recipient-sequenced
+  history/SSE stream, encrypted endpoint registry, independent channel work, bounded jitter retry,
+  provider dead-letter persistence, and a Kafka transactional outbox relay. Calendar is the first
+  implemented producer and emits only privacy-safe V2 reminder content. See
+  [ADR-023](adr/ADR-023-notification-event-contract-and-durable-delivery.md) and
+  [notification-service API](api/notification-service.md).
 
 ### Story 3.1: Email notification delivery
+
+**Status:** PARTIAL — the encrypted endpoint path, bounded provider abstraction, provider
+idempotency key, outcome telemetry, and transactional delivery-status outbox are implemented.
+Calendar is the first source; a concrete email vendor/template deployment and an end-to-end
+staging replay remain pending.
 
 As a user,
 I want important LifeOS events delivered by email,
@@ -916,6 +985,11 @@ So that I can act even when I am not inside the application.
 
 ### Story 3.2: Push notification delivery
 
+**Status:** PARTIAL — encrypted endpoint enrollment, independent push work, bounded provider
+delivery, and idempotent disabling of confirmed invalid destinations are implemented. Calendar is
+the first source; a production push-vendor configuration and end-to-end staging replay remain
+pending.
+
 As a user,
 I want reminders delivered to my registered mobile devices,
 So that time-sensitive actions reach me away from the web app.
@@ -933,6 +1007,11 @@ So that time-sensitive actions reach me away from the web app.
 **Then** the token is disabled idempotently and the event follows the documented retry or dead-letter policy.
 
 ### Story 3.3: Real-time notification stream
+
+**Status:** [DONE] through the notification-service and the gateway's exact authenticated SSE
+relay — recipient-local ordering, bounded queues/connections/replay, heartbeat/timeout, REST
+resync, gateway stream admission, and finite gateway stream lifetime are active. WebSocket is not
+implemented in this first SSE slice; Calendar is the first source when its event relay is deployed.
 
 As an active user,
 I want notifications delivered through a live stream,
@@ -952,6 +1031,10 @@ So that the application can update without polling.
 
 ### Story 3.4: Reminder channel fanout
 
+**Status:** PARTIAL — a valid `NotificationRequestedV1` or V2 event creates independent requested
+email/push/realtime work with shared correlation and outcomes, and Calendar is the first V2
+producer. Deployment-provisioned Kafka/provider operation is still required for live delivery.
+
 As a user,
 I want one reminder to reach the channels I have enabled,
 So that I receive it reliably without duplicate business events.
@@ -969,6 +1052,10 @@ So that I receive it reliably without duplicate business events.
 **Then** healthy channels proceed independently and the failed channel follows retry/dead-letter policy without duplicating successful deliveries.
 
 ### Story 3.5: Notification retry and dead-letter handling
+
+**Status:** [DONE] for notification-owned delivery work — capped full-jitter provider retry,
+leases, durable provider dead letters, idempotent provider key, and separate bounded Kafka ingress
+DLT are present. Production monitoring/retention policy rollout remains pending.
 
 As an operator,
 I want failed notification work retried and permanently failed work isolated,
@@ -991,7 +1078,17 @@ So that transient outages recover without silently dropping user communication.
 Users maintain a personal profile, preferences, household members, privacy settings, and AI personalization settings.
 
 - **FRs covered:** FR13, FR14, FR15, FR16, FR17
-- **Implementation notes:** Depends on Epic 1. Straightforward CRUD domain — first candidate for MongoDB usage (ADR-009) since preferences/household data is semi-structured.
+- **Status:** PARTIAL — `services/profile-service` implements the FR13–FR17 service boundary:
+  self-only personal-profile CRUD; validated preferences; privacy controls; explicit, revocable
+  AI-personalization consent/categories; and household/member permissions in its PostgreSQL
+  `lifeos_profile` store. Every mutation uses `If-Match` (or create `If-None-Match: *`), durable
+  idempotency snapshots, redacted audit outcomes, and Identity decision plus local scope enforcement.
+  Protected gateway prefixes now map `/api/v1/profiles` and `/api/v1/households` to the profile
+  service. This does not implement clients,
+  AI-orchestrator consumption, a membership invitation/acceptance workflow, or production deployment.
+- **Implementation notes:** Depends on Epic 1. The initial slice owns PostgreSQL rather than a
+  shared or MongoDB store; see [profile-service API](api/profile-service.md). The API deliberately
+  has no arbitrary account-ID profile lookup.
 
 ### Story 4.1: Personal profile management
 
@@ -1088,10 +1185,15 @@ So that recommendations match my preferences and consent.
 Users create tasks and goals, track habits and routines, express dependencies between them, and see a valid execution order.
 
 - **FRs covered:** FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25
-- **Status:** Partially done — authenticated, owner/tenant-scoped goal create/list/read (part of FR19) and dependency-order computation (FR25, the algorithm itself is correct and complete) exist in `task-goal-service`. There is no `Task` entity at all (FR18), goals have no update/delete (so FR19 is not complete), and dependency data isn't persisted against real goals (FR22 computes an order from submitted data but doesn't store a dependency relationship). Habits, routines, milestones, and recurrence (FR20, FR21, FR23, FR24) are not yet built either.
-- **Implementation notes:** Depends on Epic 1. The existing dependency-ordering implementation reimplements Kahn's algorithm directly rather than calling a shared Algorithm Engine — note this as a future consolidation opportunity once Epic 9 exists, not a blocker.
+- **Status:** [DONE] — FR18/FR19 provide authenticated owner/tenant-scoped Task and Goal
+  lifecycles with version preconditions and durable idempotency; Goals archive and Tasks cancel as
+  terminal retained history. FR22/FR25 persist an owner-scoped mixed Task/Goal DAG and return a
+  bounded deterministic execution order through the shared algorithm contract. FR20/FR21/FR23/FR24
+  add owner-scoped habits, routines, milestones, and bounded recurring materialization with
+  deterministic trend/progress projections.
+- **Implementation notes:** Depends on Epic 1. Persisted and compatibility dependency ordering delegate to the shared bounded Algorithm Engine Kahn primitive; the compatibility adapter retains only input validation and its legacy unresolved-label diagnostic.
 
-### Story 5.1: Task lifecycle
+### Story 5.1: Task lifecycle [DONE]
 
 As an authenticated user,
 I want to create, update, complete, and view tasks,
@@ -1109,7 +1211,13 @@ So that actionable work is tracked in one place.
 **When** the command is submitted
 **Then** the service rejects it without a partial write or resource disclosure.
 
-### Story 5.2: Goal lifecycle [PARTIAL]
+**Implementation evidence:** `TaskLifecycleIntegrationTest` verifies H2/Flyway create/list/read,
+strong ETags, exact mutation replay, state transitions, and no-disclosure responses;
+`TaskIdempotencyRecoveryIntegrationTest` recovers an interrupted create reservation; and
+`TaskAndDependencyPostgresIntegrationTest` verifies matching concurrent Task creates converge on
+one durable PostgreSQL row.
+
+### Story 5.2: Goal lifecycle [DONE]
 
 As an authenticated user,
 I want to create, update, complete, and archive goals,
@@ -1126,6 +1234,13 @@ So that long-term outcomes remain actionable and measurable.
 **Given** an invalid transition, duplicate command, or missing goal
 **When** a mutation is attempted
 **Then** the service returns a deterministic error and preserves the prior state.
+
+**Implementation evidence:** `GoalAuthorizationIntegrationTest` verifies owner/missing-object
+behavior, state transitions, version preconditions, replay snapshots, and idempotency conflicts on
+H2; `GoalLifecyclePostgresIntegrationTest` verifies matching and competing concurrent mutations on
+PostgreSQL; `TaskGoalFlywayMigrationTest` verifies both V1-to-V5 and existing-V4-to-V5 upgrades; and
+identity decision-table tests verify `goal:update`, `goal:complete`, and `goal:archive` use the same
+owner/tenant ABAC boundary as reads.
 
 ### Story 5.3: Habit tracking
 
@@ -1163,7 +1278,7 @@ So that repeated work can be executed consistently.
 **When** the definition is submitted
 **Then** it is rejected with actionable validation errors and no partial update.
 
-### Story 5.5: Persisted task and goal dependencies
+### Story 5.5: Persisted task and goal dependencies [DONE]
 
 As an authenticated user,
 I want to express dependencies between real tasks and goals,
@@ -1181,7 +1296,12 @@ So that planning reflects the work I actually own.
 **When** the dependency is submitted
 **Then** the service rejects it before commit and explains the violated invariant.
 
-### Story 5.6: Dependency-respecting execution order [DONE/PARTIAL integration]
+**Implementation evidence:** `PersistedDependencyIntegrationTest` verifies mixed real Task/Goal
+edges, duplicate-idempotent PUT/DELETE, self/cycle rejection, and no-disclosure missing/cross-user
+behavior. `TaskAndDependencyPostgresIntegrationTest` verifies concurrent opposite edges serialize
+through the durable owner/tenant graph guard so only one can commit.
+
+### Story 5.6: Dependency-respecting execution order [DONE]
 
 As an authenticated user,
 I want my persisted goals and tasks returned in a valid dependency order,
@@ -1198,6 +1318,11 @@ So that I know what can be executed next.
 **Given** a cyclic or oversized graph
 **When** ordering is requested
 **Then** the service returns a bounded validation/error response and does not emit a misleading partial order.
+
+**Implementation evidence:** `GET /api/v1/dependencies/execution-order` projects only persisted
+caller-owned nodes and edges, applies deterministic repository tie order, and delegates traversal to
+`contracts:algorithm-engine` `BoundedTopologicalOrder`; the submitted-label endpoint remains an
+explicit compatibility API.
 
 ### Story 5.7: Milestones
 
@@ -1231,6 +1356,12 @@ So that future work is predictable without duplicate tasks.
 **When** the scheduler materializes occurrences
 **Then** it creates only the expected instances, uses an idempotency key, and records the source rule.
 
+**Implementation evidence:** `PlanningService` and `PlanningController` implement habit
+occurrence/trend, routine definition/materialization, and goal milestone commands. V7 PostgreSQL/H2
+migrations add owner-scoped planning tables and an independently committed command-idempotency
+reservation; `PlanningCommandIdempotencyTransactions` bounds reservation failures and prevents a
+uniqueness race from poisoning the caller transaction.
+
 **Given** a missed run or scheduler retry
 **When** materialization resumes
 **Then** it recovers within the configured window without unbounded catch-up or duplicate occurrences.
@@ -1240,9 +1371,16 @@ So that future work is predictable without duplicate tasks.
 Users manage calendar events, block time, get reminded before events, and get conflict/optimization help.
 
 - **FRs covered:** FR26, FR27, FR28, FR29, FR30
-- **Implementation notes:** Depends on Epic 1 and Epic 3 (FR28 reminders call the Notification epic rather than reimplementing delivery).
+- **Status:** [PARTIAL] — `calendar-service` implements owner-scoped event lifecycle and bounded
+  recurrence, focus blocks, deterministic conflict detection, free-focus suggestions, and a
+  durable V2 reminder outbox consumed by Notification. Task/Goal-backed blocks now use the
+  workload-authenticated ownership and priority/deadline projections; live Kafka/provider
+  delivery, and staging evidence remain.
+- **Implementation notes:** Depends on Epic 1 and Epic 3. It owns a PostgreSQL calendar store,
+  idempotency snapshots, ETags, schedule locks, and redacted audit outcomes; see
+  [ADR-026](adr/ADR-026-calendar-recurrence-conflict-and-reminder-outbox.md).
 
-### Story 6.1: Calendar event lifecycle
+### Story 6.1: Calendar event lifecycle [DONE]
 
 As an authenticated user,
 I want to create and manage calendar events,
@@ -1260,7 +1398,12 @@ So that my commitments are represented in LifeOS.
 **When** it is submitted
 **Then** the service rejects it without a partial write.
 
-### Story 6.2: Time blocking
+### Story 6.2: Time blocking [PARTIAL]
+
+**Current boundary:** personal focus blocks and Task/Goal-linked blocks are implemented with
+owner-scoped conflict admission. Linked resources are verified through TaskGoal's authenticated,
+no-disclosure projection; an absent deployment token keeps the path fail closed. Calendar does not
+copy Task/Goal ownership data.
 
 As an authenticated user,
 I want to reserve calendar time for a task, goal, or focus block,
@@ -1278,7 +1421,12 @@ So that intended work becomes actionable on my schedule.
 **When** it is submitted
 **Then** the service reports the conflict and offers no implicit overwrite.
 
-### Story 6.3: Event reminders
+### Story 6.3: Event reminders [PARTIAL]
+
+**Current boundary:** due reminders are leased, transformed into privacy-safe
+`NotificationRequestedV2` outbox records, and relayed with bounded retry/dead-letter behavior.
+Notification consumes V2 durably. A real broker/provider deployment and end-to-end replay are not
+claimed complete.
 
 As an authenticated user,
 I want reminders before calendar events,
@@ -1296,7 +1444,7 @@ So that I can prepare and arrive on time.
 **When** reminder publication fails
 **Then** the calendar applies bounded retry/outbox behavior and does not block unrelated event reads or writes.
 
-### Story 6.4: Schedule conflict detection
+### Story 6.4: Schedule conflict detection [DONE]
 
 As an authenticated user,
 I want overlapping commitments identified,
@@ -1314,7 +1462,11 @@ So that I can resolve conflicts before they disrupt my day.
 **When** detection runs
 **Then** they are not reported as overlapping unless the user's configured policy says otherwise.
 
-### Story 6.5: Calendar optimization suggestions
+### Story 6.5: Calendar optimization suggestions [PARTIAL]
+
+**Current boundary:** deterministic, non-mutating free-focus fallback and explicit-candidate
+priority/deadline Task/Goal ranking are implemented. Projection failure is fail-closed and visible
+as a degraded source; Calendar never fabricates ownership or planning facts.
 
 As an authenticated user,
 I want suggestions for resolving conflicts and protecting focus time,
@@ -1337,9 +1489,16 @@ So that my calendar better reflects my goals.
 Users manage budgets, record and categorize transactions, and get spending insights and forecasts.
 
 - **FRs covered:** FR31, FR32, FR33, FR34, FR35, FR36
-- **Implementation notes:** Depends on Epic 1. PostgreSQL system-of-record domain (ADR-008) — financial correctness (idempotent posting, NFR5) matters most here.
+- **Status:** [DONE] for the self-entered personal-finance scope — `finance-service` exposes
+  gateway-routed, Identity-v2-authorized budgets, immutable postings, correction history,
+  bounded insights/forecasting, and financial goals/contributions with PostgreSQL concurrency
+  coverage. It deliberately does not claim bank import, payments, FX conversion, household
+  finance, tax, or an external AI integration.
+- **Implementation notes:** Depends on Epic 1. PostgreSQL is the system of record; exact integer
+  minor units, immutable posting history, overlap-safe budgets, and non-persisting forecasts are
+  specified in [ADR-027](adr/ADR-027-personal-finance-immutable-postings-and-bounded-forecast.md).
 
-### Story 7.1: Budget lifecycle
+### Story 7.1: Budget lifecycle [DONE]
 
 As an authenticated user,
 I want to create and manage budgets by period and category,
@@ -1357,7 +1516,7 @@ So that I can make spending decisions against explicit limits.
 **When** the command is submitted
 **Then** the service rejects it without a partial financial write.
 
-### Story 7.2: Transaction recording
+### Story 7.2: Transaction recording [DONE]
 
 As an authenticated user,
 I want to record income and expenses,
@@ -1375,7 +1534,7 @@ So that my financial history is complete and auditable.
 **When** it is submitted
 **Then** the service returns the original result or a validation error without double-posting.
 
-### Story 7.3: Transaction categorization
+### Story 7.3: Transaction categorization [DONE]
 
 As an authenticated user,
 I want transactions categorized consistently,
@@ -1393,7 +1552,7 @@ So that budgets and insights use meaningful groups.
 **When** categorization is attempted
 **Then** the service rejects it without altering the transaction history.
 
-### Story 7.4: Spending insights
+### Story 7.4: Spending insights [DONE]
 
 As an authenticated user,
 I want spending and income summarized over selected periods,
@@ -1411,7 +1570,11 @@ So that I can understand where money is going.
 **When** insights are computed
 **Then** the service returns clearly labeled partial results rather than inventing values.
 
-### Story 7.5: Spending and income forecasting
+### Story 7.5: Spending and income forecasting [DONE]
+
+**Current boundary:** the forecast is pure and non-persisting, requires 8–52 completed weeks,
+uses exact robust weekly statistics, and returns insufficient-data/no-FX limitations instead of
+inventing a number.
 
 As an authenticated user,
 I want a forecast of future spending and income,
@@ -1429,7 +1592,7 @@ So that I can plan ahead with explicit uncertainty.
 **When** forecasting runs
 **Then** the service refuses false precision and explains why a forecast is unavailable or limited.
 
-### Story 7.6: Financial goal tracking
+### Story 7.6: Financial goal tracking [DONE]
 
 As an authenticated user,
 I want to track progress toward financial goals,
@@ -1452,9 +1615,18 @@ So that I can connect daily transactions to longer-term outcomes.
 Users can get tamper-evident proof that a document, credential, or achievement is genuine and unaltered, without exposing private data on-chain.
 
 - **FRs covered:** FR63, FR64, FR65, FR66, FR67, FR68
-- **Implementation notes:** Depends on Epic 1. Standalone utility other epics (Document Vault, Video) call into for proof requests — built once, consumed repeatedly.
+- **Status:** [PARTIAL] — `contracts:trust-ledger` and `trust-ledger-service` implement bounded,
+  authenticated stateless document hashing, Merkle construction, and local path verification
+  (FR63–FR64). They never persist document bytes or label a root as anchored. Besu/Web3j
+  anchoring, credential ledger checks, and AI audit anchoring remain separate durable workflow work.
+  Goal certificates now have a durable owner-scoped completion projection and digest-only issuance
+  path; the broker relay/ACL, external anchor worker, and deployed-chain verification remain
+  pending. AI commitments now have a distinct opt-in Trust Ledger projection.
+- **Implementation notes:** Depends on Epic 1. The current utility can be consumed by Document
+  Vault or Media later, but neither integration is implied; see
+  [ADR-025](adr/ADR-025-bounded-document-proof-core.md).
 
-### Story 8.1: Document hash proof
+### Story 8.1: Document hash proof [DONE]
 
 As an authenticated user,
 I want a canonical hash generated for a document,
@@ -1472,7 +1644,7 @@ So that later verification can detect content changes without exposing the docum
 **When** hashing is requested
 **Then** the service returns a bounded validation/error response and emits no partial proof.
 
-### Story 8.2: Merkle proof generation
+### Story 8.2: Merkle proof generation [DONE]
 
 As an authenticated user,
 I want a Merkle proof for a batch of document hashes,
@@ -1490,7 +1662,12 @@ So that many proofs can be verified against one root efficiently.
 **When** verification is requested
 **Then** verification fails deterministically without allocating unbounded memory.
 
-### Story 8.3: Blockchain root anchoring
+### Story 8.3: Blockchain root anchoring [PARTIAL]
+
+**Current boundary:** the owner-scoped anchor endpoint, durable idempotency/receipt state,
+and Web3j/Besu adapter are implemented behind explicit configuration. The default remains
+fail-closed and reports `PENDING_EXTERNAL_ANCHOR` until a reviewed private network,
+contract, signing key, and deployment configuration are present.
 
 As an authenticated user,
 I want a Merkle root anchored to the private Besu network,
@@ -1508,7 +1685,11 @@ So that the proof has a tamper-evident external timestamp.
 **When** anchoring runs
 **Then** bounded retry/outbox handling preserves one logical request and exposes confirmation status without falsely reporting success.
 
-### Story 8.4: Credential proof verification
+### Story 8.4: Credential proof verification [PARTIAL]
+
+**Current boundary:** local cryptographic Merkle-path verification and owner-scoped document/goal
+certificate verification are available. A result is `VALID` only for matching immutable facts with
+a stored receipt; independent queries against a deployed credential ledger remain pending.
 
 As a verifier,
 I want to verify a credential against an anchored proof,
@@ -1526,7 +1707,7 @@ So that I can detect tampering without receiving the issuer's private data.
 **When** verification runs
 **Then** the result is `invalid` or `indeterminate`, never `valid` by fallback.
 
-### Story 8.5: AI audit hash anchoring
+### Story 8.5: AI audit hash anchoring [PARTIAL]
 
 As an operator,
 I want selected AI audit records anchored by hash,
@@ -1544,32 +1725,40 @@ So that audit integrity can be independently checked.
 **When** canonicalization runs
 **Then** the request is rejected or redacted before any ledger call.
 
-### Story 8.6: Goal-achievement certificate proofs
+### Story 8.6: Goal-achievement certificate proofs [PARTIAL]
 
 As an authenticated user,
 I want a completed goal to produce a verifiable certificate proof,
 So that achievement claims can be checked without publishing private goal data.
 
-**Traceability:** FR68; NFR3, NFR5, NFR19–NFR28; ADR-008, ADR-013.
+**Traceability:** FR68; NFR3, NFR5, NFR19–NFR28; ADR-008, ADR-013, ADR-032.
 
 **Acceptance Criteria:**
 
 **Given** an authorized completed goal and its immutable achievement facts
 **When** certificate issuance is requested
-**Then** the service creates a canonical proof payload, anchors only the permitted hash metadata, and returns a verification reference.
+**Then** Trust Ledger revalidates the owner through Task/Goal's workload-authenticated projection,
+creates a canonical digest-only proof, and returns a durable verification reference. Besu receipt
+confirmation is reported only when the opt-in adapter is enabled.
 
 **Given** an incomplete, changed, or unauthorized goal
 **When** issuance is requested
-**Then** it is rejected and no certificate or ledger transaction is created.
+**Then** it is rejected and no certificate or ledger transaction is created. External anchoring,
+production key management, and certificate verification against a deployed chain remain pending.
 
 ### Epic 9: Algorithm Engine & Interview Readiness
 
 As an engineer using this project for FAANG-style interview preparation, reusable, benchmarked algorithm implementations exist that power real product features and double as interview-practice material — a secondary persona this project explicitly serves (see REQUIREMENTS.md "Career Goals This Project Supports").
 
 - **FRs covered:** FR60, FR61, FR62
-- **Implementation notes:** No hard dependency on other epics; can be built anytime, but delivers most value once at least one domain epic (Task/Goal, Calendar, Finance) exists to point its algorithms at as "real product use cases" rather than isolated examples.
+- **Status:** [DONE] — `contracts:algorithm-engine` supplies bounded topological ordering,
+  interval conflict detection, and priority ranking with deterministic tests, complexity docs,
+  product-backed examples, and a repeatable local smoke benchmark. It is a shared Java contract
+  module, not a remotely deployed algorithm service or a capacity benchmark.
+- **Implementation notes:** Task/Goal delegates persisted execution order to the shared Kahn
+  primitive. Calendar shares the interval/ranking semantics in its documented product examples.
 
-### Story 9.1: Reusable algorithm library
+### Story 9.1: Reusable algorithm library [DONE]
 
 As an engineer maintaining LifeOS,
 I want reusable planning, optimization, and ranking algorithms,
@@ -1587,7 +1776,10 @@ So that product services share correct implementations instead of duplicating lo
 **When** the algorithm is called
 **Then** it rejects the input predictably without stack or heap exhaustion.
 
-### Story 9.2: Algorithm benchmarking
+### Story 9.2: Algorithm benchmarking [DONE]
+
+**Current boundary:** benchmark output records a fixed-fixture smoke methodology and correctness
+checks; it is deliberately not committed as a production throughput or latency baseline.
 
 As an engineer,
 I want repeatable algorithm benchmarks,
@@ -1605,7 +1797,7 @@ So that performance claims are measured rather than guessed.
 **When** comparison runs
 **Then** the report identifies the regression without inventing unavailable measurements.
 
-### Story 9.3: Interview-practice examples
+### Story 9.3: Interview-practice examples [DONE]
 
 As an engineer preparing for interviews,
 I want product-backed algorithm examples,
@@ -1628,6 +1820,17 @@ So that I can explain both implementation and system context.
 Users get an AI assistant that gives goal-planning recommendations, financial insights, and session summaries, with every AI decision logged for auditability.
 
 - **FRs covered:** FR53, FR55, FR56, FR57, FR58, FR59
+- **Status:** FR53 and the redacted audit/safety foundation for FR59 are partial: the authenticated
+  conversation surface, bounded provider SPI, and fail-closed audit behavior exist, but no model
+  provider or production deployment is present. New audit rows also persist deterministic
+  anchor-ready SHA-256 commitments and a transactional hash-only outbox envelope; the opt-in leased
+  Kafka relay and Trust Ledger projection are implemented, while ACL/retention and the external
+  anchor workflow for FR67 remain pending. FR55 has a deterministic owner-scoped task/goal
+  ranking path, and FR58 has confirmed DRAFT_TASK and DRAFT_GOAL execution paths with a privacy-minimized
+  confirmation ledger plus downstream Task/Goal authorization and durable idempotency. FR56 now has a bounded owner-scoped Finance aggregate
+  projection and deterministic insight response. FR57 now has a consent-gated Profile journal
+  projection and deterministic source-linked digest; session/transcript integration, provider-backed
+  explanations, other tools, and production provider/RAG deployment remain pending.
 - **Implementation notes:** Depends on Epic 1, Epic 5 (FR55 needs goal data), Epic 7 (FR56 needs finance data). RAG-over-documents (originally FR54) is intentionally NOT in this epic — it's grouped into Epic 11 (Document Vault) instead, since it can't deliver value until documents exist, avoiding a circular dependency between this epic and Document Vault.
 
 ### Story 10.1: AI life-assistant interaction surface
@@ -1680,6 +1883,12 @@ So that I can make informed budgeting decisions.
 **When** the assistant responds
 **Then** it cites the source period/categories, distinguishes observations from forecasts, and avoids exposing raw unrelated transactions.
 
+The deterministic foundation is implemented by a workload-authenticated Finance projection. It
+returns only bounded period totals, category aggregates, explicit truncation/limitations, and the
+requested currency; the assistant never forwards the user's bearer token or raw transaction rows.
+The public endpoint is `POST /api/v1/assistant/financial-insights`. It is intentionally an
+aggregate read, not a financial write or a provider-quality claim.
+
 **Given** insufficient data or a request for prohibited financial action
 **When** the request is processed
 **Then** the assistant explains the limitation and does not invoke a write tool.
@@ -1698,6 +1907,12 @@ So that I can retain the important points without rereading everything.
 **When** summarization runs
 **Then** the output is linked to source ids, is clearly labeled as generated, and does not include content outside the user's scope.
 
+The deterministic foundation is implemented at `POST /api/v1/assistant/journal-summary`. Profile
+requires explicit AI personalization consent with the `JOURNALS` context category, reauthorizes the
+Identity-issued subject proof, and returns only bounded journal entries through a workload-authenticated
+internal projection. The assistant emits a source-linked digest without forwarding the user's bearer
+token or invoking a model provider. Session transcripts and provider-backed summaries remain partial.
+
 **Given** content is unavailable, sensitive beyond consent, or too large for the budget
 **When** summarization runs
 **Then** it fails safely with a bounded partial result or actionable error.
@@ -1708,7 +1923,7 @@ As an authenticated user,
 I want the assistant to propose and execute permitted LifeOS actions,
 So that planning can become work without unsafe automation.
 
-**Traceability:** FR58; NFR1–NFR11, NFR19–NFR27; ADR-003, ADR-004, ADR-007, ADR-017.
+**Traceability:** FR58; NFR1–NFR11, NFR19–NFR27; ADR-003, ADR-004, ADR-007, ADR-017, ADR-037, ADR-042.
 
 **Acceptance Criteria:**
 
@@ -1719,6 +1934,15 @@ So that planning can become work without unsafe automation.
 **Given** invalid arguments, denied policy, timeout, or duplicate execution
 **When** the tool is called
 **Then** no unauthorized side effect occurs and the conversation records the safe failure.
+
+**Given** a confirmed `DRAFT_TASK` or `DRAFT_GOAL` request
+**When** the downstream mutation completes or is retried with the same key
+**Then** Task/Goal returns the same versioned snapshot and resource-specific `Location`, while
+the assistant audit records the exact operation without retaining raw user content.
+
+`DRAFT_FINANCIAL_NOTE` is also accepted only after explicit confirmation and ledger reservation,
+but remains deliberately non-mutating: it returns `202 Accepted` with `PROPOSED` and performs no
+Finance write until a destination resource contract is approved.
 
 ### Story 10.6: AI decision audit logging
 
@@ -1743,9 +1967,10 @@ So that recommendations and tool actions can be explained and investigated.
 Users upload, search, and get AI summaries of their documents, with tamper-evident proof-of-existence available on request.
 
 - **FRs covered:** FR37, FR38, FR39, FR40, FR41, FR42, FR54
+- **Status:** FR37–FR39 are done. FR40 is a bounded owner-metadata and privacy-safe UTF-8 text/CSV/Markdown/HTML/PDF/DOCX/PPTX/XLSX token-search foundation with dimension-token support and an opt-in bounded PNG/JPEG Tesseract OCR adapter; deployment-approved OCR binaries, other binary extraction, and exhaustive indexing remain pending. FR41/FR54 now have an opt-in owner-filtered Qdrant projection/retrieval boundary; FR41 additionally requires the Profile `DOCUMENTS` consent category, pins summaries to one latest document version, and returns source chunk IDs. Reviewed model/embedding deployment, production Qdrant, and provider-backed generation remain partial/pending.
 - **Implementation notes:** Depends on Epic 1, Epic 8 (FR42), and Epic 10 (FR41, FR54). Upload/metadata/search (FR37–40) can ship as the epic's first stories without waiting on AI or blockchain; FR41/FR42/FR54 are later stories within this same epic once their dependencies exist.
 
-### Story 11.1: Secure document upload
+### Story 11.1: Secure document upload [DONE]
 
 As an authenticated user,
 I want to upload a document safely,
@@ -1763,7 +1988,7 @@ So that it becomes available to my private vault.
 **When** validation or storage fails
 **Then** no usable document reference is published and partial objects are cleaned up or quarantined.
 
-### Story 11.2: Document metadata
+### Story 11.2: Document metadata [DONE]
 
 As an authenticated user,
 I want document metadata stored and editable,
@@ -1781,7 +2006,7 @@ So that documents can be organized and understood later.
 **When** it is submitted
 **Then** the service rejects the change without disclosure or partial persistence.
 
-### Story 11.3: Secure storage references
+### Story 11.3: Secure storage references [DONE]
 
 As a platform owner,
 I want database records to contain secure object references rather than file bytes,
@@ -1799,7 +2024,7 @@ So that storage can scale independently and private content is not embedded in P
 **When** a storage reference is resolved
 **Then** access is denied and no provider credential or permanent public URL is returned.
 
-### Story 11.4: Document search
+### Story 11.4: Document search [PARTIAL — owner metadata plus privacy-safe plain-text/PDF/DOCX/PPTX/XLSX token search]
 
 As an authenticated user,
 I want to search my document metadata and indexed content,
@@ -1825,6 +2050,12 @@ So that I can understand it without reading every page first.
 
 **Traceability:** FR41; NFR1–NFR4, NFR10–NFR16, NFR19, NFR21–NFR28; ADR-003, ADR-009, ADR-011, ADR-018.
 
+**Current bounded implementation:** the assistant requires active Profile AI consent with the
+`DOCUMENTS` context category, reads only owner-filtered Qdrant chunks from one latest document
+version, and returns the source chunk UUIDs used. When `LOCAL_DETERMINISTIC` is explicitly enabled,
+the extractive result is labeled `local-deterministic/rules-v1`; the default provider remains
+disabled and production model/embedding deployment is still pending.
+
 **Acceptance Criteria:**
 
 **Given** an authorized, readable document and a bounded summary request
@@ -1847,7 +2078,7 @@ So that its integrity can later be verified.
 
 **Given** an authorized immutable document version
 **When** proof is requested
-**Then** Document Vault publishes one idempotent proof command containing only the hash/reference needed by Blockchain Trust Ledger.
+**Then** Document Vault durably reserves one owner-scoped idempotent request and publishes one versioned CloudEvent through a leased transactional outbox relay, containing only the document UUID/version/checksum and owner/tenant scope needed by Blockchain Trust Ledger; exhausted broker delivery is retained in a durable dead-letter table.
 
 **Given** a duplicate, changed, or unauthorized version
 **When** proof is requested
@@ -1865,7 +2096,7 @@ So that the AI assistant can use my knowledge without mixing it with another use
 
 **Given** indexed document chunks authorized for the user
 **When** a grounded question is asked
-**Then** retrieval filters by user/tenant policy, returns source ids, and the answer states when evidence is insufficient.
+**Then** retrieval filters by owner/tenant payload policy, returns source ids, and the answer states when evidence is insufficient.
 
 **Given** vector search or source storage is unavailable
 **When** the question is processed
@@ -1876,6 +2107,13 @@ So that the AI assistant can use my knowledge without mixing it with another use
 Users schedule and join live coaching/journaling video sessions, with recordings, transcription, AI summaries, and automatic follow-up task creation.
 
 - **FRs covered:** FR43, FR44, FR45, FR46, FR47, FR48, FR49, FR50, FR51, FR52
+- **Status:** FR43–48 remain partial: owner-scoped session/asset control-plane metadata, bounded
+  upload, private HLS reads, a local-development join permit, and an opt-in local ffmpeg adapter
+  exist. FR49–51 now have a bounded ended-session transcript-ingestion endpoint with durable
+  deterministic summary/action-item artifacts, and FR52 now has an explicit owner-scoped,
+  idempotent digest-only Media-to-Trust-Ledger command. Speech-to-text, provider-backed summaries,
+  production recording/object storage, receipt-confirmed chain deployment, consent UX, and
+  anchoring to a production network remain unavailable.
 - **Implementation notes:** Depends on Epic 1, Epic 3 (scheduling reminders), Epic 5 (FR51 creates tasks), Epic 10 (FR50 summary), Epic 8 (FR52, optional). The largest single epic by FR count — consider splitting into "live session mechanics" (FR43–46) and "post-session processing" (FR47–52) stories within the epic if a single dev agent's context gets strained.
 
 ### Story 12.1: Video session scheduling
@@ -1994,6 +2232,11 @@ So that I can search and review spoken content.
 
 **Traceability:** FR49; NFR1–NFR8, NFR10–NFR16, NFR19, NFR21–NFR28; ADR-003, ADR-009, ADR-016–ADR-018.
 
+**Current bounded implementation:** `POST /api/v1/media/sessions/{sessionId}/post-session` accepts
+an explicitly supplied transcript only after `ENDED`, persists a `LOCAL_DETERMINISTIC_TEXT`
+artifact, and rejects unbounded or unsupported provider claims. Timing/language metadata and a
+speech-to-text worker remain future adapters.
+
 **Acceptance Criteria:**
 
 **Given** an authorized finalized audio source
@@ -2012,6 +2255,9 @@ So that decisions and themes are easy to revisit.
 
 **Traceability:** FR50; NFR1–NFR4, NFR10–NFR16, NFR19, NFR21–NFR28; ADR-003, ADR-009, ADR-011, ADR-018.
 
+**Current bounded implementation:** the same endpoint writes a deterministic local summary labeled
+`LOCAL_DETERMINISTIC_TEXT`; no model-provider output or unsupported confidence is claimed.
+
 **Acceptance Criteria:**
 
 **Given** an authorized transcript and summary policy
@@ -2029,6 +2275,13 @@ I want confirmed session action items converted into follow-up tasks,
 So that commitments do not disappear after the conversation.
 
 **Traceability:** FR51; NFR5–NFR8, NFR19, NFR21–NFR28; ADR-003, ADR-007, ADR-017.
+
+**Current bounded implementation:** up to sixteen `ACTION:`, `TODO:`, or `FOLLOW-UP:` lines are
+durably extracted and replayed exactly. `POST /api/v1/media/sessions/{sessionId}/post-session/tasks`
+requires an exact action-item match, artifact `If-Match`, user bearer authorization, and
+`Idempotency-Key`; Media forwards only Identity's subject proof over a separate workload-authenticated
+TaskGoal command. Matching retries replay one durable Task snapshot and transcripts never create tasks
+implicitly. Provider-grade transcription, richer task links, and production deployment remain partial.
 
 **Acceptance Criteria:**
 
@@ -2056,14 +2309,23 @@ So that I can verify it was not altered after creation.
 
 **Given** consent is absent, summary changes, or ledger failure
 **When** anchoring runs
-**Then** no private content is anchored and the status is accurately pending/failed rather than falsely confirmed.
+**Then** no private content is anchored and the status is accurately pending/failed rather than falsely confirmed; a receipt is required before `CONFIRMED`.
 
 ### Epic 13: Personal Analytics & Insights Dashboard
 
 Users see a unified dashboard of metrics, trends, and AI-generated recommendations drawn from across the whole platform in one aggregated view.
 
 - **FRs covered:** FR5, FR75, FR76, FR77, FR78, FR79, FR80
-- **Implementation notes:** Depends on Epic 5, Epic 6, Epic 7 (data sources) and Epic 10 (FR79). First real consumer of the GraphQL aggregation gateway (ADR-006) — FR5 belongs here rather than Epic 2 because a GraphQL aggregation layer has nothing to aggregate until data-producing epics exist.
+- **Status:** [PARTIAL] — the gateway exposes an authenticated bounded `dashboard` GraphQL query
+  with Task/Calendar/Finance source fan-out, and Analytics now provides an account-scoped snapshot
+  store plus an optional V2 notification consumer with atomic inbox/snapshot projection, durable
+  dedupe, bounded DLT handling, and lag metrics. AI now consumes a bounded
+  workload-authenticated Analytics projection for deterministic recommendations; broader event
+  coverage, client visualization, and provider-backed narratives
+  remain.
+- **Implementation notes:** Depends on Epic 5, Epic 6, Epic 7 (data sources) and Epic 10 (FR79).
+  The current query is a safe REST-backed compatibility adapter; the versioned gRPC metric
+  contracts are present for the next transport step.
 
 ### Story 13.1: GraphQL dashboard aggregation and core metrics
 
@@ -2149,7 +2411,14 @@ So that I can choose a focused improvement.
 
 **Given** authorized analytics and personalization consent
 **When** recommendations are generated
-**Then** each recommendation identifies the signal and time window behind it, is labeled generated, and is recorded in the AI audit trail.
+**Then** each recommendation identifies the signal, exact calculation window, and evidence keys behind it, is labeled generated, and is recorded in the AI audit trail.
+
+The deterministic foundation is implemented at `POST /api/v1/assistant/analytics-recommendations`.
+AI first requires Profile consent, personalization enablement, and the `ANALYTICS` context category,
+then calls Analytics with a separate workload credential and an HMAC proof bound to the
+Identity-issued account/session; Analytics returns only bounded productivity signals and evidence
+keys. The assistant maps those signals to non-mutating, source-labeled guidance and records redacted
+audit facts. A model provider remains future work.
 
 **Given** insufficient data or disabled personalization
 **When** recommendations are requested
@@ -2167,7 +2436,8 @@ So that dashboard data becomes useful without repeatedly scanning operational ta
 
 **Given** a versioned domain event with trace context
 **When** the analytics consumer processes it
-**Then** the update is idempotent, observable by lag/error metrics, and correlated back to the originating request.
+**Then** the update is atomically coupled to its durable inbox reservation, idempotent, observable by
+processed/duplicate/error/lag metrics, and correlated back to the originating request.
 
 **Given** a poison event, consumer restart, or backlog above the limit
 **When** processing continues
@@ -2433,6 +2703,10 @@ So that mobile interruptions do not erase my plan.
 As an engineer using this project for FAANG-style interview preparation, a dedicated playground exists to practice and demonstrate algorithms, concurrency patterns, distributed-systems patterns, performance engineering, blockchain fundamentals, AI engineering, and system design — each lab is a standalone learning/demonstration deliverable, not a dependency of the product epics.
 
 - **FRs covered:** FR84, FR85, FR86, FR87, FR88, FR89, FR90
+- **Status:** PARTIAL — Algorithms and System Design deliverables are runnable/verified; the
+  concurrency, distributed-systems, performance, blockchain, and AI labs currently provide bounded
+  study/experiment contracts rather than the full runnable environments and external stacks named
+  by their requirements.
 - **Implementation notes:** No hard dependency on other epics — can run in parallel with product epics at any time — but each lab is most valuable once it can reference a real product use case from an existing epic (e.g., the Blockchain Lab after Epic 8, the AI Lab after Epic 10), so sequencing it late is a deliberate choice, not a requirement.
 
 ### Story 17.1: Algorithms Lab

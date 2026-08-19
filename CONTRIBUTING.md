@@ -45,6 +45,14 @@ This repo follows [Git Flow](https://nvie.com/posts/a-successful-git-branching-m
 
 Both `main` and `dev` require 0 approvals to merge (so a solo maintainer isn't locked out), but every PR still goes through review — see below.
 
+Both protected branches must also require the **Branch is up to date** status check from
+[`.github/workflows/pr-branch-up-to-date.yml`](.github/workflows/pr-branch-up-to-date.yml),
+with GitHub's **Require branches to be up to date before merging** option enabled. This
+strict branch-protection setting is what prevents a previously passing PR from merging
+after new commits land on its base branch; the workflow independently fails a PR whose
+base commit is not an ancestor of its head. Configure the same rule for both `main` and
+`dev` under Settings → Branches (or Repository rulesets).
+
 ### Release automation
 
 To request a normal release, add exactly one of `release:patch`, `release:minor`, or `release:major` to the PR being merged into `dev`. After the merge, [Prepare Release](.github/workflows/prepare-release.yml) calculates the next version from the latest release tag, creates `release/vX.Y.Z`, updates `build.gradle.kts`, and opens the release PR into `main`. The same workflow can be started manually with a bump choice from the Actions tab.
@@ -57,6 +65,8 @@ The workflows need the repository setting **Allow GitHub Actions to create and a
 
 * Branch off the latest `dev` (or `main`, for a `hotfix/*`), not off an old already-merged branch — this repo squash-merges every PR, which rewrites history on the target branch. Reusing a stale local branch after a squash-merge causes already-merged files to reappear as "new" in a later PR's diff (a real issue hit during development here). Fetch first, then branch: `git fetch origin dev && git checkout -b feature/your-branch origin/dev` — skipping the fetch can silently branch off a stale local copy.
 * PRs are squash-merged only (`allow_merge_commit` and `allow_rebase_merge` are disabled repo-wide); branches are auto-deleted on merge.
+* A PR must be updated after its base branch advances. The merge button remains blocked
+  until the **Branch is up to date** check passes again.
 * Every non-draft PR receives an automatic CodeRabbit full-review request from [`.github/workflows/coderabbit-review.yml`](.github/workflows/coderabbit-review.yml), once per head commit. If the workflow is unavailable, comment `@coderabbitai full review` manually. Wait for the review to finish and address every actionable finding before merging; the `code-review` Claude Code skill is also expected to run.
 
 ## Testing
@@ -65,3 +75,6 @@ Every meaningful change should include tests or a documented reason why tests do
 
 Run `bash scripts/test-coderabbit-review-workflow.sh` when changing the CodeRabbit workflow to
 validate its non-draft gate, exact head-commit de-duplication marker, and trusted bot-author filter.
+
+Run `bash scripts/test-pr-branch-up-to-date-workflow.sh` when changing the branch freshness
+workflow to validate its API-only trust boundary and merge-blocking contract.

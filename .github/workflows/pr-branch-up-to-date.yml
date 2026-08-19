@@ -1,0 +1,50 @@
+name: Require PR branch up to date
+
+on:
+  # This workflow is API-only and never checks out or executes pull-request code,
+  # so pull_request_target remains safe for fork pull requests.
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: pr-branch-up-to-date-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+jobs:
+  branch-up-to-date:
+    name: Branch is up to date
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Verify base branch is an ancestor of the PR head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          comparison=$(gh api \
+            "/repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}" \
+            --jq '[.status, (.behind_by | tostring)] | @tsv')
+          IFS=$'\t' read -r status behind_by <<< "${comparison}"
+
+          case "${status}" in
+            ahead|identical)
+              echo "PR head ${HEAD_SHA} contains base ${BASE_SHA} (${status})."
+              ;;
+            behind|diverged)
+              echo "::error::PR branch is ${behind_by} commit(s) behind or diverged from the base branch. Update it before merging."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unable to prove that the PR branch is up to date (compare status: ${status:-unknown})."
+              exit 1
+              ;;
+          esac

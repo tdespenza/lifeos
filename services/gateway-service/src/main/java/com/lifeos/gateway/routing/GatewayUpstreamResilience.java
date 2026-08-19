@@ -59,6 +59,14 @@ public class GatewayUpstreamResilience {
         for (GatewayProperties.Route route : properties.getRoutes()) {
             if (route.getId() != null) {
                 states.put(route.getId(), new RouteState(this.properties, nanoTime, meterRegistry, route.getId()));
+                if (route.isMediaUploadStreaming()) {
+                    String mediaUploadId = route.getId() + "-media-upload";
+                    states.put(mediaUploadId, new RouteState(this.properties, nanoTime, meterRegistry, mediaUploadId));
+                }
+                if (route.isMediaHlsStreaming()) {
+                    String mediaHlsId = route.getId() + "-media-hls";
+                    states.put(mediaHlsId, new RouteState(this.properties, nanoTime, meterRegistry, mediaHlsId));
+                }
             }
         }
     }
@@ -72,6 +80,44 @@ public class GatewayUpstreamResilience {
      */
     public Permit acquire(GatewayRoute route) {
         String routeId = route == null ? "unknown" : route.id();
+        return acquireRouteId(routeId);
+    }
+
+    /**
+     * Acquires the finite virtual route state reserved for exact Media source uploads.
+     *
+     * <p>A long source upload must not consume the ordinary Media metadata/session bulkhead or
+     * circuit state. The virtual key is materialized only from a startup-validated Media route,
+     * so it retains the finite route-state invariant.
+     *
+     * @param route configured Media assets route
+     * @return permit that must be closed after the forwarding attempt
+     */
+    public Permit acquireMediaUpload(GatewayRoute route) {
+        if (route == null || !route.mediaUploadStreaming()) {
+            throw new IllegalArgumentException("Media upload resilience requires a configured Media upload route");
+        }
+        return acquireRouteId(route.mediaUploadResilienceId());
+    }
+
+    /**
+     * Acquires the finite virtual route state reserved for exact Media HLS reads.
+     *
+     * <p>Long HLS reads cannot starve ordinary Media metadata/session traffic or source uploads.
+     * The virtual key is materialized only from a startup-validated Media route, preserving
+     * bounded route state and low-cardinality metrics.
+     *
+     * @param route configured Media assets route
+     * @return permit that must be closed after the forwarding attempt
+     */
+    public Permit acquireMediaHls(GatewayRoute route) {
+        if (route == null || !route.mediaHlsStreaming()) {
+            throw new IllegalArgumentException("Media HLS resilience requires a configured Media HLS route");
+        }
+        return acquireRouteId(route.mediaHlsResilienceId());
+    }
+
+    private Permit acquireRouteId(String routeId) {
         RouteState state = states.computeIfAbsent(
                 routeId, ignored -> new RouteState(properties, nanoTime, meterRegistry, routeId));
         CircuitPermit circuitPermit = state.circuit.tryAcquire();
@@ -131,6 +177,22 @@ public class GatewayUpstreamResilience {
                 outcomeRecorded = true;
                 state.circuit.recordFailure(circuitProbe, probeGeneration);
                 state.failures.increment();
+            }
+        }
+
+        /**
+         * Releases this admission without treating a client-side validation abort as an upstream
+         * health signal.
+         *
+         * <p>A request-streaming relay can discover a dishonest or absent content length only
+         * after it has opened an upstream connection. Such an oversized client body must not open
+         * a dependency circuit. If the admission was a half-open probe, it is cancelled so the
+         * next real upstream request remains the sole health probe.
+         */
+        public void recordAbandoned() {
+            if (!outcomeRecorded) {
+                outcomeRecorded = true;
+                state.circuit.cancelProbe(circuitProbe, probeGeneration);
             }
         }
 

@@ -4,9 +4,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +42,17 @@ public interface WebAuthnCredentialRepository extends JpaRepository<WebAuthnCred
      * @return enabled credentials
      */
     List<WebAuthnCredential> findAllByAccount_IdAndEnabledTrue(UUID accountId);
+
+    /** Lists enabled credentials in a stable owner-visible order. */
+    List<WebAuthnCredential> findAllByAccount_IdAndEnabledTrueOrderByCreatedAtAscIdAsc(UUID accountId);
+
+    /** Finds one enabled credential only when it belongs to the authenticated account. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "1000"))
+    Optional<WebAuthnCredential> findByIdAndAccount_IdAndEnabledTrue(UUID id, UUID accountId);
+
+    /** Counts enabled credentials for recovery-safe removal decisions. */
+    long countByAccount_IdAndEnabledTrue(UUID accountId);
 
     /**
      * Advances the signature counter only if the value observed during verification is still

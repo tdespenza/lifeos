@@ -1,0 +1,24 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:notification-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  flyway:
+    locations: classpath:db/migration-h2
+  kafka:
+    listener:
+      auto-startup: false
+
+notification:
+  endpoint-encryption-key: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+  idempotency-secret: notification-test-idempotency-secret-with-32-bytes
+  kafka:
+    consumer-enabled: false
+    realtime-consumer-enabled: false
+  delivery:
+    worker-enabled: false
+  outbox:
+    relay-enabled: false
+
+identity:
+  workload-token: notification-test-workload-token

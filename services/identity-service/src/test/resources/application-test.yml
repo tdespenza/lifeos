@@ -4,7 +4,7 @@ spring:
     # validate as H2's CLOB while leaving the production migration byte-for-byte unchanged.
     url: jdbc:h2:mem:identity-test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;INIT=CREATE DOMAIN IF NOT EXISTS OID AS CLOB
     username: sa
-    password:
+    password: identity-test-password
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
@@ -13,6 +13,8 @@ spring:
     enabled: true
     baseline-on-migrate: false
     locations: classpath:db/migration,classpath:db/migration-h2
+  kafka:
+    bootstrap-servers: localhost:9092
 
 management:
   server:
@@ -27,6 +29,8 @@ management:
 
 identity:
   auth:
+    registration:
+      idempotency-secret: test-only-registration-idempotency-secret-at-least-32-bytes
     jwt:
       issuer: lifeos-identity-test
       signing-secret: test-only-secret-that-is-at-least-32-bytes-long
@@ -35,9 +39,16 @@ identity:
       audit-client-fingerprint-secret: test-only-audit-fingerprint-secret-that-is-at-least-32-bytes
       rate-limit-key-secret: test-only-rate-limit-key-secret-that-is-at-least-32-bytes
     authorization:
-      policy-version: v1
+      policy-version: v2
       workload-identities:
         task-goal-service: test-only-task-goal-workload-secret
+        profile-service: test-only-profile-workload-secret
+        calendar-service: test-only-calendar-workload-secret
+        finance-service: test-only-finance-workload-secret
+        trust-ledger-service: test-only-trust-ledger-workload-secret
+        document-vault-service: test-only-document-vault-workload-secret
+        media-service: test-only-media-workload-secret
+        ai-assistant-service: test-only-ai-assistant-workload-secret
     oidc:
       callback-state-ttl: PT5M
       provider-connect-timeout: PT2S
@@ -49,3 +60,9 @@ identity:
       rp-name: LifeOS Test
       allowed-origins: http://localhost:4200
       user-verification: REQUIRED
+  passkey-recovery:
+    hmac-secret: test-only-passkey-recovery-secret-at-least-32-bytes
+    code-ttl: PT15M
+    code-count: 8
+  recovery-notification:
+    relay-enabled: false

@@ -5,9 +5,12 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: ${IDENTITY_DATASOURCE_URL:jdbc:postgresql://localhost:5432/lifeos_identity}
-    username: ${IDENTITY_DATASOURCE_USERNAME:lifeos}
-    password: ${IDENTITY_DATASOURCE_PASSWORD:lifeos}
+    # Database coordinates and credentials are deployment secrets. There are intentionally no
+    # production defaults: a missing or blank value must prevent startup instead of silently
+    # connecting with source-controlled credentials.
+    url: ${IDENTITY_DATASOURCE_URL}
+    username: ${IDENTITY_DATASOURCE_USERNAME}
+    password: ${IDENTITY_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -22,12 +25,24 @@ spring:
     baseline-on-migrate: ${IDENTITY_FLYWAY_BASELINE_ON_MIGRATE:false}
     baseline-version: ${IDENTITY_FLYWAY_BASELINE_VERSION:1}
     validate-migration-naming: true
+  kafka:
+    bootstrap-servers: ${LIFEOS_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000
+        request.timeout.ms: 3000
+        delivery.timeout.ms: 10000
   data:
     redis:
       connect-timeout: ${IDENTITY_REDIS_CONNECT_TIMEOUT:1s}
       timeout: ${IDENTITY_REDIS_COMMAND_TIMEOUT:1s}
 
 identity:
+  # Applies to Tomcat request-line/header reads, idle keep-alive sockets, and request-body uploads.
+  # It prevents a stalled client from retaining an inbound servlet request indefinitely.
+  inbound-request-timeout: ${IDENTITY_INBOUND_REQUEST_TIMEOUT:10s}
   auth:
     # Only list immediate load-balancer/proxy addresses here. Forwarded headers from all other
     # peers are ignored by ClientAddressResolver to prevent client-controlled audit fingerprints.
@@ -45,6 +60,10 @@ identity:
       parallelism: ${IDENTITY_ARGON2_PARALLELISM:1}
       max-concurrent-verifications: ${IDENTITY_ARGON2_MAX_CONCURRENT:16}
       verification-acquire-timeout: ${IDENTITY_ARGON2_ACQUIRE_TIMEOUT:250ms}
+    registration:
+      # Required independent HMAC secret. It protects persisted idempotency key and request
+      # digests, including a request fingerprint that contains the transient raw password.
+      idempotency-secret: ${IDENTITY_REGISTRATION_IDEMPOTENCY_SECRET:}
     jwt:
       issuer: ${IDENTITY_JWT_ISSUER:lifeos-identity}
       audience: ${IDENTITY_JWT_AUDIENCE:lifeos}
@@ -66,7 +85,7 @@ identity:
       audit-client-fingerprint-secret: ${IDENTITY_AUDIT_CLIENT_FINGERPRINT_SECRET:}
       rate-limit-key-secret: ${IDENTITY_RATE_LIMIT_KEY_SECRET:}
     authorization:
-      policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v1}
+      policy-version: ${IDENTITY_AUTHORIZATION_POLICY_VERSION:v2}
       workload-rate-limit:
         # Internal protected-service traffic has its own budget; never reuse the credential
         # login attempt limit, which would throttle normal authorized application traffic.
@@ -77,6 +96,14 @@ identity:
       workload-identities:
         gateway-service: ${IDENTITY_GATEWAY_WORKLOAD_TOKEN:}
         task-goal-service: ${IDENTITY_TASK_GOAL_WORKLOAD_TOKEN:}
+        profile-service: ${IDENTITY_PROFILE_WORKLOAD_TOKEN:}
+        calendar-service: ${IDENTITY_CALENDAR_WORKLOAD_TOKEN:}
+        finance-service: ${IDENTITY_FINANCE_WORKLOAD_TOKEN:}
+        trust-ledger-service: ${IDENTITY_TRUST_LEDGER_WORKLOAD_TOKEN:}
+        document-vault-service: ${IDENTITY_DOCUMENT_VAULT_WORKLOAD_TOKEN:}
+        media-service: ${IDENTITY_MEDIA_WORKLOAD_TOKEN:}
+        ai-assistant-service: ${IDENTITY_AI_ASSISTANT_WORKLOAD_TOKEN:}
+        analytics-service: ${IDENTITY_ANALYTICS_WORKLOAD_TOKEN:}
     oidc:
       callback-state-ttl: ${IDENTITY_OIDC_CALLBACK_STATE_TTL:PT5M}
       provider-connect-timeout: ${IDENTITY_OIDC_PROVIDER_CONNECT_TIMEOUT:PT2S}
@@ -90,6 +117,21 @@ identity:
       rp-name: ${IDENTITY_WEBAUTHN_RP_NAME:LifeOS}
       allowed-origins: ${IDENTITY_WEBAUTHN_ALLOWED_ORIGINS:http://localhost:4200}
       user-verification: ${IDENTITY_WEBAUTHN_USER_VERIFICATION:REQUIRED}
+  passkey-recovery:
+    hmac-secret: ${IDENTITY_PASSKEY_RECOVERY_SECRET:}
+    code-ttl: ${IDENTITY_PASSKEY_RECOVERY_CODE_TTL:PT15M}
+    code-count: ${IDENTITY_PASSKEY_RECOVERY_CODE_COUNT:8}
+  recovery-notification:
+    # Recovery events contain only generic security copy; raw recovery codes never enter Kafka.
+    relay-enabled: ${IDENTITY_RECOVERY_NOTIFICATION_RELAY_ENABLED:true}
+    topic: ${IDENTITY_RECOVERY_NOTIFICATION_TOPIC:lifeos.notification.requested.v2}
+    batch-size: ${IDENTITY_RECOVERY_NOTIFICATION_BATCH_SIZE:100}
+    max-concurrent-publishes: ${IDENTITY_RECOVERY_NOTIFICATION_MAX_CONCURRENT_PUBLISHES:8}
+    poll-delay: ${IDENTITY_RECOVERY_NOTIFICATION_POLL_DELAY:1s}
+    lease-duration: ${IDENTITY_RECOVERY_NOTIFICATION_LEASE_DURATION:30s}
+    max-attempts: ${IDENTITY_RECOVERY_NOTIFICATION_MAX_ATTEMPTS:10}
+    initial-backoff: ${IDENTITY_RECOVERY_NOTIFICATION_INITIAL_BACKOFF:1s}
+    max-backoff: ${IDENTITY_RECOVERY_NOTIFICATION_MAX_BACKOFF:5m}
 
 server:
   port: 8081

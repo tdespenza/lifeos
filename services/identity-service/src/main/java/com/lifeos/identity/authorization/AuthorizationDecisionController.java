@@ -73,19 +73,21 @@ public class AuthorizationDecisionController {
     public AuthorizationDecision decide(
             @RequestBody AuthorizationRequest request,
             HttpServletRequest servletRequest) {
-        authenticateWorkload(servletRequest);
-        AuthorizationDecisionEvaluation evaluation = decisionService.decideForAudit(request);
+        String workloadIdentity = authenticateWorkload(servletRequest);
+        AuthorizationDecisionEvaluation evaluation = decisionService.decideForAudit(request, workloadIdentity);
         AuthorizationDecision decision = evaluation.decision();
         metrics.record(decision);
         recordDecision(decision, evaluation.verifiedSubjectId(), servletRequest);
         return decision;
     }
 
-    private void authenticateWorkload(HttpServletRequest request) {
-        if (InternalAuthorizationRequestFilter.verifiedWorkloadIdentity(request) == null) {
-            String workloadIdentity = workloadIdentityVerifier.verify(request);
+    private String authenticateWorkload(HttpServletRequest request) {
+        String workloadIdentity = InternalAuthorizationRequestFilter.verifiedWorkloadIdentity(request);
+        if (workloadIdentity == null) {
+            workloadIdentity = workloadIdentityVerifier.verify(request);
             workloadRateLimiter.check(workloadIdentity);
         }
+        return workloadIdentity;
     }
 
     private void recordDecision(

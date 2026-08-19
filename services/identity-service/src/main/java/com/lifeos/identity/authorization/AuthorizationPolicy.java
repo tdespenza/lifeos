@@ -10,7 +10,7 @@ import java.util.Set;
 /**
  * Immutable, versioned RBAC rule table.
  *
- * <p>ABAC constraints remain explicit in {@link AuthorizationDecisionService}, where the trusted
+ * <p>ABAC constraints remain explicit in the closed action descriptors, where the trusted
  * resource facts and subject/session scope are available.
  *
  * @param version stable policy version
@@ -46,5 +46,15 @@ public record AuthorizationPolicy(String version, Map<AuthorizationAction, Set<A
     public boolean permits(AuthorizationAction action, Set<AuthorizationRole> roles) {
         Set<AuthorizationRole> required = allowedRoles.get(action);
         return required != null && roles.stream().anyMatch(required::contains);
+    }
+
+    /**
+     * Returns whether this version has a reviewed rule for the exact action.
+     *
+     * @param action exact closed action
+     * @return {@code true} only when the policy explicitly contains the action
+     */
+    public boolean supports(AuthorizationAction action) {
+        return allowedRoles.containsKey(action);
     }
 }

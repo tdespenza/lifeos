@@ -13,6 +13,39 @@ server:
   port: ${LIFEOS_GATEWAY_PORT:8080}
 
 gateway:
+  dashboard:
+    grpc:
+      # REST compatibility remains the default until internal mTLS hosts and workload tokens are
+      # provisioned. Enabling this switches the GraphQL dashboard fan-out to versioned gRPC.
+      enabled: ${LIFEOS_GATEWAY_DASHBOARD_GRPC_ENABLED:false}
+      deadline: ${LIFEOS_GATEWAY_DASHBOARD_GRPC_DEADLINE:2s}
+      task:
+        host: ${LIFEOS_GATEWAY_TASK_GRPC_HOST:localhost}
+        port: ${LIFEOS_GATEWAY_TASK_GRPC_PORT:10082}
+        tls-enabled: ${LIFEOS_GATEWAY_TASK_GRPC_TLS_ENABLED:false}
+        certificate-chain: ${LIFEOS_GATEWAY_TASK_GRPC_CERTIFICATE_CHAIN:}
+        private-key: ${LIFEOS_GATEWAY_TASK_GRPC_PRIVATE_KEY:}
+        trust-certificate-collection: ${LIFEOS_GATEWAY_TASK_GRPC_TRUST_CERTIFICATE_COLLECTION:}
+        workload-token: ${LIFEOS_GATEWAY_TASK_GRPC_WORKLOAD_TOKEN:}
+      calendar:
+        host: ${LIFEOS_GATEWAY_CALENDAR_GRPC_HOST:localhost}
+        port: ${LIFEOS_GATEWAY_CALENDAR_GRPC_PORT:10085}
+        tls-enabled: ${LIFEOS_GATEWAY_CALENDAR_GRPC_TLS_ENABLED:false}
+        certificate-chain: ${LIFEOS_GATEWAY_CALENDAR_GRPC_CERTIFICATE_CHAIN:}
+        private-key: ${LIFEOS_GATEWAY_CALENDAR_GRPC_PRIVATE_KEY:}
+        trust-certificate-collection: ${LIFEOS_GATEWAY_CALENDAR_GRPC_TRUST_CERTIFICATE_COLLECTION:}
+        workload-token: ${LIFEOS_GATEWAY_CALENDAR_GRPC_WORKLOAD_TOKEN:}
+      finance:
+        host: ${LIFEOS_GATEWAY_FINANCE_GRPC_HOST:localhost}
+        port: ${LIFEOS_GATEWAY_FINANCE_GRPC_PORT:10086}
+        tls-enabled: ${LIFEOS_GATEWAY_FINANCE_GRPC_TLS_ENABLED:false}
+        certificate-chain: ${LIFEOS_GATEWAY_FINANCE_GRPC_CERTIFICATE_CHAIN:}
+        private-key: ${LIFEOS_GATEWAY_FINANCE_GRPC_PRIVATE_KEY:}
+        trust-certificate-collection: ${LIFEOS_GATEWAY_FINANCE_GRPC_TRUST_CERTIFICATE_COLLECTION:}
+        workload-token: ${LIFEOS_GATEWAY_FINANCE_GRPC_WORKLOAD_TOKEN:}
+    task-upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+    calendar-upstream: ${LIFEOS_GATEWAY_CALENDAR_UPSTREAM:http://localhost:8085}
+    finance-upstream: ${LIFEOS_GATEWAY_FINANCE_UPSTREAM:http://localhost:8086}
   authentication:
     # Non-loopback identity authorities must use HTTPS. The workload token is intentionally
     # required from deployment secret configuration; protected routes fail closed without it.
@@ -29,13 +62,61 @@ gateway:
   max-response-body-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BODY_BYTES:10485760}
   max-response-buffer-bytes: ${LIFEOS_GATEWAY_MAX_RESPONSE_BUFFER_BYTES:671088640}
   connect-timeout: ${LIFEOS_GATEWAY_CONNECT_TIMEOUT:2s}
+  # Ordinary buffered HTTP routes retain a short finite exchange deadline. The Assistant route
+  # below has a separately reviewed deadline because it performs bounded Identity/provider work.
   read-timeout: ${LIFEOS_GATEWAY_READ_TIMEOUT:5s}
+  streaming:
+    # Only the exact GET notification SSE route uses these separate finite deadlines. Ordinary
+    # application routes retain the bounded five-second response-read timeout and 10 MiB buffer.
+    max-concurrent-connections: ${LIFEOS_GATEWAY_STREAMING_MAX_CONCURRENT_CONNECTIONS:32}
+    connect-timeout: ${LIFEOS_GATEWAY_STREAMING_CONNECT_TIMEOUT:2s}
+    read-lifetime: ${LIFEOS_GATEWAY_STREAMING_READ_LIFETIME:30m}
+  document-upload:
+    # Only exact POST /api/v1/documents uses this request-streaming exception. The maximum is
+    # Document Vault's ten-mebibyte file limit plus reviewed multipart framing overhead; bodies
+    # are copied through a fixed 8 KiB relay buffer and never retried by the gateway.
+    max-concurrent-uploads: ${LIFEOS_GATEWAY_DOCUMENT_UPLOAD_MAX_CONCURRENT_UPLOADS:8}
+    max-request-body-bytes: ${LIFEOS_GATEWAY_DOCUMENT_UPLOAD_MAX_REQUEST_BODY_BYTES:11010048}
+    connect-timeout: ${LIFEOS_GATEWAY_DOCUMENT_UPLOAD_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LIFEOS_GATEWAY_DOCUMENT_UPLOAD_READ_TIMEOUT:45s}
+  media-upload:
+    # Only exact PUT /api/v1/media/assets/{canonical-uuid}/source uses this separately bounded
+    # request relay. The 51 MiB ceiling includes Media's 50 MiB verified source cap plus multipart
+    # framing; the 75-second lifetime leaves a finite margin over the service's 60-second deadline.
+    max-concurrent-uploads: ${LIFEOS_GATEWAY_MEDIA_UPLOAD_MAX_CONCURRENT_UPLOADS:4}
+    max-request-body-bytes: ${LIFEOS_GATEWAY_MEDIA_UPLOAD_MAX_REQUEST_BODY_BYTES:53477376}
+    connect-timeout: ${LIFEOS_GATEWAY_MEDIA_UPLOAD_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LIFEOS_GATEWAY_MEDIA_UPLOAD_READ_TIMEOUT:75s}
+  media-hls:
+    # Only exact GET asset manifests/segments use this response-stream relay. HLS never borrows a
+    # normal response-body buffer; an upstream is stopped after one reviewed 25 MiB segment.
+    max-concurrent-streams: ${LIFEOS_GATEWAY_MEDIA_HLS_MAX_CONCURRENT_STREAMS:8}
+    max-response-body-bytes: ${LIFEOS_GATEWAY_MEDIA_HLS_MAX_RESPONSE_BODY_BYTES:26214400}
+    connect-timeout: ${LIFEOS_GATEWAY_MEDIA_HLS_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LIFEOS_GATEWAY_MEDIA_HLS_READ_TIMEOUT:60s}
+  ai-assistant:
+    # The JDK client starts this timer before the gateway connection completes. Reserve 2s gateway
+    # connect + 3s Identity validation + 5s provider work + 2s transfer/error margin so the
+    # assistant's structured provider timeout reaches callers instead of a generic gateway 504.
+    connect-timeout: ${LIFEOS_GATEWAY_AI_ASSISTANT_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LIFEOS_GATEWAY_AI_ASSISTANT_READ_TIMEOUT:12s}
+  # Applied to Tomcat request-line/header reads, keep-alive sockets, and request-body uploads.
+  # The explicit body-upload timeout prevents a stalled client from retaining a buffer permit.
+  inbound-request-timeout: ${LIFEOS_GATEWAY_INBOUND_REQUEST_TIMEOUT:10s}
+  analytics-proof-secret: ${LIFEOS_GATEWAY_ANALYTICS_PROOF_SECRET:}
   rate-limit:
     max-requests: ${LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS:600}
     pre-authentication-max-requests: ${LIFEOS_GATEWAY_RATE_LIMIT_PRE_AUTHENTICATION_MAX_REQUESTS:6000}
     window: ${LIFEOS_GATEWAY_RATE_LIMIT_WINDOW:PT1M}
     key-secret: ${LIFEOS_GATEWAY_RATE_LIMIT_KEY_SECRET}
   upstream:
+    retry:
+      # Only safe, idempotent reads are replayed. Bounded full-jitter backoff stays within the
+      # total deadline; writes are never automatically retried by the gateway.
+      max-attempts: ${LIFEOS_GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS:2}
+      initial-backoff: ${LIFEOS_GATEWAY_UPSTREAM_RETRY_INITIAL_BACKOFF:100ms}
+      max-backoff: ${LIFEOS_GATEWAY_UPSTREAM_RETRY_MAX_BACKOFF:1s}
+      total-timeout: ${LIFEOS_GATEWAY_UPSTREAM_RETRY_TOTAL_TIMEOUT:15s}
     bulkhead:
       max-concurrent-requests: ${LIFEOS_GATEWAY_UPSTREAM_MAX_CONCURRENT_REQUESTS:64}
     circuit-breaker:
@@ -60,6 +141,81 @@ gateway:
     - id: task-goal
       path-prefix: /api/v1/goals
       upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
+    - id: task-goal-tasks
+      path-prefix: /api/v1/tasks
+      upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
+    - id: task-goal-dependencies
+      path-prefix: /api/v1/dependencies
+      upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
+    - id: task-goal-habits
+      path-prefix: /api/v1/habits
+      upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
+    - id: task-goal-routines
+      path-prefix: /api/v1/routines
+      upstream: ${LIFEOS_GATEWAY_TASK_GOAL_UPSTREAM:http://localhost:8082}
+      authentication-required: true
+    - id: profile-profiles
+      path-prefix: /api/v1/profiles
+      upstream: ${LIFEOS_GATEWAY_PROFILE_UPSTREAM:http://localhost:8083}
+      authentication-required: true
+    - id: profile-households
+      path-prefix: /api/v1/households
+      upstream: ${LIFEOS_GATEWAY_PROFILE_UPSTREAM:http://localhost:8083}
+      authentication-required: true
+    - id: calendar
+      path-prefix: /api/v1/calendar
+      upstream: ${LIFEOS_GATEWAY_CALENDAR_UPSTREAM:http://localhost:8085}
+      authentication-required: true
+    - id: finance
+      path-prefix: /api/v1/finance
+      upstream: ${LIFEOS_GATEWAY_FINANCE_UPSTREAM:http://localhost:8086}
+      authentication-required: true
+    - id: document-vault
+      path-prefix: /api/v1/documents
+      upstream: ${LIFEOS_GATEWAY_DOCUMENT_VAULT_UPSTREAM:http://localhost:8088}
+      authentication-required: true
+      document-upload-streaming: true
+    - id: media-assets
+      path-prefix: /api/v1/media/assets
+      upstream: ${LIFEOS_GATEWAY_MEDIA_UPSTREAM:http://localhost:8089}
+      authentication-required: true
+      media-upload-streaming: true
+      media-hls-streaming: true
+    - id: media-sessions
+      path-prefix: /api/v1/media/sessions
+      upstream: ${LIFEOS_GATEWAY_MEDIA_UPSTREAM:http://localhost:8089}
+      authentication-required: true
+    - id: ai-assistant
+      path-prefix: /api/v1/assistant
+      upstream: ${LIFEOS_GATEWAY_AI_ASSISTANT_UPSTREAM:http://localhost:8090}
+      authentication-required: true
+    - id: trust-ledger
+      path-prefix: /api/v1/trust
+      upstream: ${LIFEOS_GATEWAY_TRUST_LEDGER_UPSTREAM:http://localhost:8087}
+      authentication-required: true
+    - id: analytics
+      path-prefix: /api/v1/analytics
+      upstream: ${LIFEOS_GATEWAY_ANALYTICS_UPSTREAM:http://localhost:8091}
+      authentication-required: true
+    # A distinct route ID provides a dedicated circuit/bulkhead state for live connections, so
+    # the notification REST history route cannot be starved by valid long-lived SSE clients.
+    - id: notification-stream
+      path-prefix: /api/v1/notifications/stream
+      upstream: ${LIFEOS_GATEWAY_NOTIFICATION_UPSTREAM:http://localhost:8084}
+      authentication-required: true
+      authentication-required-methods: [GET]
+      streaming: true
+    - id: notification-history
+      path-prefix: /api/v1/notifications
+      upstream: ${LIFEOS_GATEWAY_NOTIFICATION_UPSTREAM:http://localhost:8084}
+      authentication-required: true
+    - id: notification-endpoints
+      path-prefix: /api/v1/notification-endpoints
+      upstream: ${LIFEOS_GATEWAY_NOTIFICATION_UPSTREAM:http://localhost:8084}
       authentication-required: true
 
 management:

@@ -3,6 +3,7 @@ package com.lifeos.identity.account;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -35,9 +36,10 @@ class UserAccountRepositoryTest {
 
     @Test
     void emailUniqueConstraintRejectsDuplicateAccounts() {
-        repository.saveAndFlush(new UserAccount("ada@example.com", "Ada Lovelace"));
+        String email = "duplicate-" + UUID.randomUUID() + "@example.com";
+        repository.saveAndFlush(new UserAccount(email, "Ada Lovelace"));
 
-        assertThatThrownBy(() -> repository.saveAndFlush(new UserAccount("ada@example.com", "Ada Byron")))
+        assertThatThrownBy(() -> repository.saveAndFlush(new UserAccount(email, "Ada Byron")))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

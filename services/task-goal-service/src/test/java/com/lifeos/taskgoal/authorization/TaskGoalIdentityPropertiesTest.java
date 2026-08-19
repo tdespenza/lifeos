@@ -2,10 +2,16 @@ package com.lifeos.taskgoal.authorization;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class TaskGoalIdentityPropertiesTest {
+
+    @Test
+    void defaultsToTheV2TaskAuthorizationPolicyContract() {
+        assertThat(new TaskGoalIdentityProperties().getExpectedPolicyVersion()).isEqualTo("v2");
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {

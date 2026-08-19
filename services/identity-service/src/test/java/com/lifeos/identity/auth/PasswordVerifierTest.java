@@ -31,6 +31,15 @@ class PasswordVerifierTest {
     }
 
     @Test
+    void delegatesEnrollmentHashingWhenCapacityIsAvailable() {
+        PasswordEncoder encoder = Mockito.mock(PasswordEncoder.class);
+        when(encoder.encode("enrollment-secret")).thenReturn("argon2id-encoded");
+        PasswordVerifier verifier = new PasswordVerifier(encoder, new IdentityAuthProperties());
+
+        assertThat(verifier.encode("enrollment-secret")).isEqualTo("argon2id-encoded");
+    }
+
+    @Test
     void failsClosedWhenAllVerificationPermitsAreBusy() throws Exception {
         PasswordEncoder encoder = Mockito.mock(PasswordEncoder.class);
         CountDownLatch entered = new CountDownLatch(1);

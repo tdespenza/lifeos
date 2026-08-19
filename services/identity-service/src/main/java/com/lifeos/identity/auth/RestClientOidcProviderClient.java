@@ -2,12 +2,14 @@ package com.lifeos.identity.auth;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.net.http.HttpClient;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.net.http.HttpClient;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -23,7 +25,6 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestOperations;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.client.ClientHttpRequestFactory;
 
 /**
  * Nimbus/Spring implementation of the OIDC authorization-code exchange.
@@ -36,11 +37,24 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
     private final ConcurrentMap<DecoderCacheKey, JwtDecoder> decoderCache = new ConcurrentHashMap<>();
 
     /**
-     * Creates a provider client with a bounded, reusable HTTP client abstraction.
+     * Creates a provider client with bounded, observable HTTP transports.
+     *
+     * <p>Both injected builders carry Spring Boot's HTTP observation customizers. Constructing a
+     * {@link RestClient} or {@link RestTemplate} directly would skip those customizers and break
+     * W3C trace-context propagation across the token-exchange and JWK-retrieval dependency hops.
+     * The service still supplies its own request factories so the deployment-owned connection and
+     * response deadlines remain enforced.
+     *
+     * @param restClientBuilder observation-enabled token-exchange client builder
+     * @param restTemplateBuilder observation-enabled JWK retrieval client builder
+     * @param properties bounded OIDC transport settings
      */
     @Autowired
-    public RestClientOidcProviderClient(IdentityAuthProperties properties) {
-        this(buildRestClient(properties), buildJwkRestOperations(properties));
+    public RestClientOidcProviderClient(
+            RestClient.Builder restClientBuilder,
+            RestTemplateBuilder restTemplateBuilder,
+            IdentityAuthProperties properties) {
+        this(buildRestClient(restClientBuilder, properties), buildJwkRestOperations(restTemplateBuilder, properties));
     }
 
     /**
@@ -63,12 +77,14 @@ public class RestClientOidcProviderClient implements OidcProviderClient {
         this.jwkRestOperations = jwkRestOperations;
     }
 
-    private static RestClient buildRestClient(IdentityAuthProperties properties) {
-        return RestClient.builder().requestFactory(buildRequestFactory(properties)).build();
+    private static RestClient buildRestClient(
+            RestClient.Builder restClientBuilder, IdentityAuthProperties properties) {
+        return restClientBuilder.requestFactory(buildRequestFactory(properties)).build();
     }
 
-    private static RestOperations buildJwkRestOperations(IdentityAuthProperties properties) {
-        return new RestTemplate(buildRequestFactory(properties));
+    private static RestOperations buildJwkRestOperations(
+            RestTemplateBuilder restTemplateBuilder, IdentityAuthProperties properties) {
+        return restTemplateBuilder.requestFactory(() -> buildRequestFactory(properties)).build();
     }
 
     private static ClientHttpRequestFactory buildRequestFactory(IdentityAuthProperties properties) {

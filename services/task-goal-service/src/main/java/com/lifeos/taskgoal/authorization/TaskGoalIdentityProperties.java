@@ -25,7 +25,7 @@ public class TaskGoalIdentityProperties {
     private String workloadToken;
 
     @NotBlank(message = "expectedPolicyVersion must be configured")
-    private String expectedPolicyVersion = "v1";
+    private String expectedPolicyVersion = "v2";
 
     @NotNull(message = "connectTimeout must be configured")
     private Duration connectTimeout = Duration.ofSeconds(2);

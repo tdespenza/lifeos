@@ -1,11 +1,7 @@
 package com.lifeos.identity.account;
 
-import java.util.NoSuchElementException;
+import java.util.List;
 import java.util.UUID;
-import org.hibernate.exception.ConstraintViolationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,75 +11,42 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserAccountService {
 
-    private static final Logger log = LoggerFactory.getLogger(UserAccountService.class);
-
     private final UserAccountRepository repository;
+    private final AccountRegistrationIdempotencyService registrationService;
 
     /**
-     * Creates the service with its account repository.
+     * Creates the service with account lookup and public-registration collaborators.
      *
      * @param repository account persistence repository
+     * @param registrationService durable public password-registration coordinator
      */
-    public UserAccountService(UserAccountRepository repository) {
+    public UserAccountService(
+            UserAccountRepository repository,
+            AccountRegistrationIdempotencyService registrationService) {
         this.repository = repository;
+        this.registrationService = registrationService;
     }
 
     /**
-     * Registers an account while relying on the database unique constraint as the final race-safe
-     * guard against duplicate email addresses.
+     * Registers a first-party account and its password credential through the durable retry
+     * coordinator. Internal/OIDC account creation intentionally does not call this method because
+     * an externally verified identity is not evidence of a local password credential.
      *
      * @param email validated email address
      * @param displayName validated display name
-     * @return the newly persisted account
-     * @throws EmailAlreadyRegisteredException when the email is already registered, including when
-     *         a concurrent registration wins the database race
+     * @param password transient raw password
+     * @param idempotencyKeyValues all received opaque client retry-key header values
+     * @param clientAddress source address used only for the redacted audit fingerprint
+     * @return created or safely replayed registration result
      */
-    @Transactional
-    public UserAccount register(String email, String displayName) {
-        String normalizedEmail = EmailAddressNormalizer.normalize(email);
-        if (repository.existsByEmail(normalizedEmail)) {
-            logRegistrationConflict();
-            throw new EmailAlreadyRegisteredException();
-        }
-        try {
-            UserAccount account = repository.saveAndFlush(new UserAccount(normalizedEmail, displayName));
-            log.atInfo()
-                    .addKeyValue("event", "account_registration_succeeded")
-                    .log("Account registration succeeded");
-            return account;
-        } catch (DataIntegrityViolationException exception) {
-            if (isEmailUniqueConstraintViolation(exception)) {
-                logRegistrationConflict();
-                throw new EmailAlreadyRegisteredException(exception);
-            }
-            throw exception;
-        }
-    }
-
-    /**
-     * Records a duplicate-registration event without logging the submitted email address.
-     */
-    private void logRegistrationConflict() {
-        log.atInfo()
-                .addKeyValue("event", "account_registration_conflict")
-                .log("Account registration rejected because the email is already registered");
-    }
-
-    /**
-     * Determines whether a data-integrity failure came from the account email constraint.
-     *
-     * @param exception persistence failure to inspect
-     * @return {@code true} when the named email uniqueness constraint was violated
-     */
-    private boolean isEmailUniqueConstraintViolation(DataIntegrityViolationException exception) {
-        Throwable cause = exception;
-        while (cause != null) {
-            if (cause instanceof ConstraintViolationException constraintViolation) {
-                return "uk_user_account_email".equals(constraintViolation.getConstraintName());
-            }
-            cause = cause.getCause();
-        }
-        return false;
+    public AccountRegistrationResult register(
+            String email,
+            String displayName,
+            String password,
+            List<String> idempotencyKeyValues,
+            String clientAddress) {
+        return registrationService.createOrReplay(
+                email, displayName, password, idempotencyKeyValues, clientAddress);
     }
 
     /**
@@ -91,12 +54,12 @@ public class UserAccountService {
      *
      * @param id account UUID
      * @return the persisted account
-     * @throws NoSuchElementException when the account does not exist
+     * @throws AccountNotFoundException when the account does not exist
      */
     @Transactional(readOnly = true)
     public UserAccount getById(UUID id) {
         return repository.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("No account with id: " + id));
+                .orElseThrow(AccountNotFoundException::new);
     }
 
     /**
@@ -104,11 +67,11 @@ public class UserAccountService {
      *
      * @param id account UUID
      * @return the locked account
-     * @throws NoSuchElementException when the account does not exist
+     * @throws AccountNotFoundException when the account does not exist
      */
     @Transactional
     public UserAccount getByIdForUpdate(UUID id) {
         return repository.findByIdForUpdate(id)
-                .orElseThrow(() -> new NoSuchElementException("No account with id: " + id));
+                .orElseThrow(AccountNotFoundException::new);
     }
 }

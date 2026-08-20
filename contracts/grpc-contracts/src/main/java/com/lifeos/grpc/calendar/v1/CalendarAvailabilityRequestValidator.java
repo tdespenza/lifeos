@@ -8,6 +8,9 @@ public final class CalendarAvailabilityRequestValidator {
     /** Maximum interval accepted by the calendar availability contract. */
     public static final int MAXIMUM_RANGE_DAYS = 31;
 
+    /** Maximum unsigned page size accepted by the calendar availability contract. */
+    public static final long MAXIMUM_PAGE_SIZE = 100;
+
     private CalendarAvailabilityRequestValidator() {
     }
 
@@ -20,6 +23,9 @@ public final class CalendarAvailabilityRequestValidator {
     public static void validate(FindBusyIntervalsRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
+        }
+        if (Integer.toUnsignedLong(request.getPageSize()) > MAXIMUM_PAGE_SIZE) {
+            throw new IllegalArgumentException("page_size must be between 0 and 100");
         }
         TimestampRangeValidator.validate(
                 request.hasStartsAt() ? request.getStartsAt() : null,

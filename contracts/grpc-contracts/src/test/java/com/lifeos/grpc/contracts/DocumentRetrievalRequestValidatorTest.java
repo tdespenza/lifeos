@@ -12,6 +12,19 @@ import org.junit.jupiter.api.Test;
 class DocumentRetrievalRequestValidatorTest {
 
     @Test
+    void rejectsNullRequestAndResponse() {
+        GetAuthorizedExcerptResponse response = GetAuthorizedExcerptResponse.newBuilder().build();
+        GetAuthorizedExcerptRequest request = GetAuthorizedExcerptRequest.newBuilder().build();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DocumentRetrievalRequestValidator.validateResponse(response, null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DocumentRetrievalRequestValidator.validateResponse(null, request));
+    }
+
+    @Test
     void usesABoundedDefaultWhenMaximumCharactersIsZero() {
         GetAuthorizedExcerptRequest request = GetAuthorizedExcerptRequest.newBuilder().build();
 

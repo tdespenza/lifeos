@@ -12,6 +12,11 @@ import org.junit.jupiter.api.Test;
 class FinanceSummaryRequestValidatorTest {
 
     @Test
+    void rejectsNullRequest() {
+        assertThrows(IllegalArgumentException.class, () -> FinanceSummaryRequestValidator.validate(null));
+    }
+
+    @Test
     void acceptsTheMaximumBoundedRange() {
         assertDoesNotThrow(() -> FinanceSummaryRequestValidator.validate(request(
                 "2026-01-01T00:00:00Z", "2027-01-02T00:00:00Z")));

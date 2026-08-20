@@ -78,9 +78,11 @@ public record NotificationRequestedV1(
         boolean validHttps = https && value.isAbsolute() && !value.isOpaque()
                 && value.getHost() != null && !value.getHost().isBlank();
         boolean validLifeos = "lifeos".equalsIgnoreCase(scheme);
-        if (value.getRawUserInfo() != null || value.getRawFragment() != null
+        if (value.getRawUserInfo() != null || value.getRawQuery() != null
+                || value.getRawFragment() != null
                 || !(validHttps || validLifeos)) {
-            throw new IllegalArgumentException("actionUri must be an https or lifeos URI without user info or fragment");
+            throw new IllegalArgumentException(
+                    "actionUri must be an https or lifeos URI without user info, query, or fragment");
         }
     }
 }

@@ -24,6 +24,13 @@ class ProofAndAuditRequestTest {
                 "tenant-a",
                 1,
                 CHECKSUM));
+        assertDoesNotThrow(() -> new DocumentProofRequestedV1(
+                REQUEST_ID,
+                DOCUMENT_ID,
+                OWNER_ACCOUNT_ID,
+                "tenant-a",
+                0,
+                CHECKSUM));
     }
 
     @Test

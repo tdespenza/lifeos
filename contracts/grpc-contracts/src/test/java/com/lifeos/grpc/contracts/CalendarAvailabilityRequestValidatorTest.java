@@ -12,6 +12,11 @@ import org.junit.jupiter.api.Test;
 class CalendarAvailabilityRequestValidatorTest {
 
     @Test
+    void rejectsNullRequest() {
+        assertThrows(IllegalArgumentException.class, () -> CalendarAvailabilityRequestValidator.validate(null));
+    }
+
+    @Test
     void acceptsAValidBoundedRange() {
         assertDoesNotThrow(() -> CalendarAvailabilityRequestValidator.validate(
                 request("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")));
@@ -47,11 +52,25 @@ class CalendarAvailabilityRequestValidatorTest {
                 request("2026-01-01T00:00:00Z", "2026-02-02T00:00:00Z")));
     }
 
+    @Test
+    void rejectsPageSizesAboveTheUnsignedMaximum() {
+        assertThrows(IllegalArgumentException.class, () -> CalendarAvailabilityRequestValidator.validate(
+                requestWithPageSize(101)));
+        assertThrows(IllegalArgumentException.class, () -> CalendarAvailabilityRequestValidator.validate(
+                requestWithPageSize(-1)));
+    }
+
     private static FindBusyIntervalsRequest request(String startsAt, String endsAt) {
         return FindBusyIntervalsRequest.newBuilder()
                 .setOwnerAccountId("account-1")
                 .setStartsAt(timestamp(startsAt))
                 .setEndsAt(timestamp(endsAt))
+                .build();
+    }
+
+    private static FindBusyIntervalsRequest requestWithPageSize(int pageSize) {
+        return request("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z").toBuilder()
+                .setPageSize(pageSize)
                 .build();
     }
 

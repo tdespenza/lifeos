@@ -14,23 +14,43 @@ class NotificationRequestedV2Test {
 
     @Test
     void preservesTheV1DeliverySubsetAndAcceptsRegionTimeZones() {
+        UUID notificationId = UUID.randomUUID();
         UUID recipient = UUID.randomUUID();
+        String tenantId = recipient.toString();
+        String category = "calendar.reminder";
+        NotificationPriority priority = NotificationPriority.NORMAL;
+        String title = "Calendar reminder";
+        String body = "An upcoming calendar event is starting soon.";
+        URI actionUri = URI.create("lifeos://calendar/events/abc");
+        Set<NotificationChannel> requestedChannels = Set.of(NotificationChannel.REALTIME);
+        Instant expiresAt = Instant.parse("2026-08-18T12:00:00Z");
         NotificationRequestedV2 request = new NotificationRequestedV2(
-                UUID.randomUUID(),
+                notificationId,
                 recipient,
-                recipient.toString(),
-                "calendar.reminder",
-                NotificationPriority.NORMAL,
-                "Calendar reminder",
-                "An upcoming calendar event is starting soon.",
-                URI.create("lifeos://calendar/events/abc"),
-                Set.of(NotificationChannel.REALTIME),
-                Instant.parse("2026-08-17T12:00:00Z"),
+                tenantId,
+                category,
+                priority,
+                title,
+                body,
+                actionUri,
+                requestedChannels,
+                expiresAt,
                 "America/Chicago");
 
         assertEquals("America/Chicago", request.eventTimeZone());
+        assertEquals(new NotificationRequestedV1(
+                notificationId,
+                recipient,
+                tenantId,
+                category,
+                priority,
+                title,
+                body,
+                actionUri,
+                requestedChannels,
+                expiresAt), request.asV1());
         assertEquals(recipient, request.asV1().recipientAccountId());
-        assertEquals(Set.of(NotificationChannel.REALTIME), request.asV1().requestedChannels());
+        assertEquals(requestedChannels, request.asV1().requestedChannels());
     }
 
     @Test

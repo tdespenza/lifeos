@@ -16,6 +16,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class CloudEventV1Test {
 
+    private static final Instant TEST_TIME = Instant.parse("2026-08-17T12:00:00Z");
+
     @Test
     void acceptsACloudEventsOnePointZeroEnvelope() {
         assertDoesNotThrow(() -> new CloudEventV1<>(
@@ -38,7 +40,7 @@ class CloudEventV1Test {
                 URI.create("https://calendar.example.test"),
                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
                 "notification/1",
-                Instant.now(),
+                TEST_TIME,
                 "application/json",
                 UUID.randomUUID(),
                 "payload"));
@@ -48,7 +50,7 @@ class CloudEventV1Test {
                 URI.create("https://calendar.example.test?secret=no"),
                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
                 "notification/1",
-                Instant.now(),
+                TEST_TIME,
                 "application/json",
                 UUID.randomUUID(),
                 "payload"));
@@ -57,9 +59,9 @@ class CloudEventV1Test {
     @Test
     void rejectsNullRequiredAttributes() {
         assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
-                null, URI.create("https://calendar.example.test"), Instant.now()));
+                null, URI.create("https://calendar.example.test"), TEST_TIME));
         assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
-                UUID.randomUUID(), null, Instant.now()));
+                UUID.randomUUID(), null, TEST_TIME));
         assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
                 UUID.randomUUID(), URI.create("https://calendar.example.test"), null));
     }

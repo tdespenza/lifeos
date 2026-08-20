@@ -10,6 +10,11 @@ import org.junit.jupiter.api.Test;
 class DashboardRequestValidatorTest {
 
     @Test
+    void rejectsNullRequests() {
+        assertThrows(IllegalArgumentException.class, () -> DashboardRequestValidator.validate(null));
+    }
+
+    @Test
     void acceptsTheInclusivePeriodBoundaries() {
         assertDoesNotThrow(() -> DashboardRequestValidator.validate(request(1)));
         assertDoesNotThrow(() -> DashboardRequestValidator.validate(request(366)));

@@ -14,6 +14,7 @@ service TaskProjectionService {
 
 message GetPlanningSnapshotRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
+  // Selector only; the service must authorize it against authenticated transport identity.
   string owner_account_id = 2;
   // Zero selects the server default; values above 100 are rejected.
   uint32 page_size = 3;

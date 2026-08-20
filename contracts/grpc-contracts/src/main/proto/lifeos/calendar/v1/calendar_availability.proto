@@ -15,9 +15,12 @@ service CalendarAvailabilityService {
 
 message FindBusyIntervalsRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
+  // Selector only; the service must authorize it against authenticated transport identity.
   string owner_account_id = 2;
-  // The service rejects windows longer than 31 days.
+  // Required valid protobuf timestamp and inclusive lower bound.
   google.protobuf.Timestamp starts_at = 3;
+  // Required valid protobuf timestamp and exclusive upper bound. It must be after starts_at;
+  // the service rejects missing, invalid, reversed, equal, or overlong windows before querying.
   google.protobuf.Timestamp ends_at = 4;
   // Zero selects the server default; values above 100 are rejected.
   uint32 page_size = 5;

@@ -40,6 +40,8 @@ class ProofAndAuditRequestTest {
                 REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", -1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
                 REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", 1, "not-a-checksum"));
+        assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", 1, null));
     }
 
     @Test
@@ -58,5 +60,19 @@ class ProofAndAuditRequestTest {
                 AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, null, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
                 AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, CONVERSATION_ID, "not-a-checksum"));
+        assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
+                AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, CONVERSATION_ID, null));
+    }
+
+    @Test
+    void acceptsTheMaximumDocumentProofTenantLength() {
+        assertDoesNotThrow(() -> new DocumentProofRequestedV1(
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "t".repeat(255), 1, CHECKSUM));
+    }
+
+    @Test
+    void rejectsAnOverlongDocumentProofTenant() {
+        assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "t".repeat(256), 1, CHECKSUM));
     }
 }

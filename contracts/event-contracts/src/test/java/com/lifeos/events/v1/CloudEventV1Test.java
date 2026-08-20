@@ -54,6 +54,16 @@ class CloudEventV1Test {
                 "payload"));
     }
 
+    @Test
+    void rejectsNullRequiredAttributes() {
+        assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
+                null, URI.create("https://calendar.example.test"), Instant.now()));
+        assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
+                UUID.randomUUID(), null, Instant.now()));
+        assertThrows(NullPointerException.class, () -> requiredAttributeEnvelope(
+                UUID.randomUUID(), URI.create("https://calendar.example.test"), null));
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidEnvelopes")
     void rejectsInvalidEnvelopeValues(String description, Executable invalidEnvelope) {
@@ -125,6 +135,19 @@ class CloudEventV1Test {
         } catch (URISyntaxException exception) {
             throw new AssertionError("test URI must be valid", exception);
         }
+    }
+
+    private static CloudEventV1<String> requiredAttributeEnvelope(UUID id, URI source, Instant time) {
+        return new CloudEventV1<>(
+                id,
+                EventContract.CLOUD_EVENTS_SPEC_VERSION,
+                source,
+                EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
+                "notification/1",
+                time,
+                "application/json",
+                UUID.randomUUID(),
+                "payload");
     }
 
     private static CloudEventV1<String> envelope(

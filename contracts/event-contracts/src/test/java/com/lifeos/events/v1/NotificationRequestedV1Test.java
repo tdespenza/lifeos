@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
@@ -52,7 +53,7 @@ class NotificationRequestedV1Test {
 
     @Test
     void acceptsAnActionUriAtTheMaximumLength() {
-        URI actionUri = URI.create("https://example.test/" + "a".repeat(2_048 - "https://example.test/".length()));
+        URI actionUri = actionUriWithLength(2_048);
 
         validRequest(
                 "Reminder", "body", NotificationPriority.NORMAL, actionUri,
@@ -61,13 +62,22 @@ class NotificationRequestedV1Test {
 
     @Test
     void rejectsAnActionUriBeyondTheMaximumLength() {
-        URI actionUri = URI.create("https://example.test/" + "a".repeat(2_049 - "https://example.test/".length()));
+        URI actionUri = actionUriWithLength(2_049);
 
         assertThrows(
                 IllegalArgumentException.class,
                 () -> validRequest(
                         "Reminder", "body", NotificationPriority.NORMAL, actionUri,
                         EnumSet.of(NotificationChannel.EMAIL)));
+    }
+
+    private static URI actionUriWithLength(int length) {
+        try {
+            String prefix = "https://example.test/";
+            return new URI("https", "example.test", "/" + "a".repeat(length - prefix.length()), null);
+        } catch (URISyntaxException exception) {
+            throw new AssertionError("test URI must be valid", exception);
+        }
     }
 
     @Test

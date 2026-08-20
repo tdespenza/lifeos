@@ -65,4 +65,16 @@ class DocumentRetrievalRequestValidatorTest {
 
         DocumentRetrievalRequestValidator.validateResponse(response, request);
     }
+
+    @Test
+    void acceptsASupplementaryPlaneCharacterAsOneCodePoint() {
+        GetAuthorizedExcerptRequest request = GetAuthorizedExcerptRequest.newBuilder()
+                .setMaximumCharacters(1)
+                .build();
+        GetAuthorizedExcerptResponse response = GetAuthorizedExcerptResponse.newBuilder()
+                .addExcerpts(DocumentExcerpt.newBuilder().setText("😀").build())
+                .build();
+
+        DocumentRetrievalRequestValidator.validateResponse(response, request);
+    }
 }

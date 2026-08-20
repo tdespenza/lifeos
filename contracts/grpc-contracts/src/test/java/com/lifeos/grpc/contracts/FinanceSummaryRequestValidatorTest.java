@@ -45,13 +45,26 @@ class FinanceSummaryRequestValidatorTest {
                 .build();
 
         assertThrows(IllegalArgumentException.class, () -> FinanceSummaryRequestValidator.validate(request));
+        assertThrows(IllegalArgumentException.class, () -> FinanceSummaryRequestValidator.validate(request(
+                Timestamp.newBuilder().setSeconds(0).setNanos(-1).build(),
+                timestamp("2026-01-02T00:00:00Z"))));
+        assertThrows(IllegalArgumentException.class, () -> FinanceSummaryRequestValidator.validate(request(
+                Timestamp.newBuilder().setSeconds(-62_135_596_801L).build(),
+                timestamp("2026-01-02T00:00:00Z"))));
+        assertThrows(IllegalArgumentException.class, () -> FinanceSummaryRequestValidator.validate(request(
+                timestamp("2026-01-01T00:00:00Z"),
+                Timestamp.newBuilder().setSeconds(253_402_300_800L).build())));
     }
 
     private static GetPeriodSummaryRequest request(String startsAt, String endsAt) {
+        return request(timestamp(startsAt), timestamp(endsAt));
+    }
+
+    private static GetPeriodSummaryRequest request(Timestamp startsAt, Timestamp endsAt) {
         return GetPeriodSummaryRequest.newBuilder()
                 .setOwnerAccountId("account-1")
-                .setStartsAt(timestamp(startsAt))
-                .setEndsAt(timestamp(endsAt))
+                .setStartsAt(startsAt)
+                .setEndsAt(endsAt)
                 .build();
     }
 

@@ -19,7 +19,11 @@ final class EventText {
 
     static void requireSingleLine(String value, String field, int maximumLength) {
         requireText(value, field, maximumLength);
-        if (value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0 || value.indexOf('\t') >= 0) {
+        if (value.codePoints().anyMatch(character -> character == '\n'
+                || character == '\r'
+                || character == '\t'
+                || Character.getType(character) == Character.LINE_SEPARATOR
+                || Character.getType(character) == Character.PARAGRAPH_SEPARATOR)) {
             throw new IllegalArgumentException(field + " must be a single-line value");
         }
     }

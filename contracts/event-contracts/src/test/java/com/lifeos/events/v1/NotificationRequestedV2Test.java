@@ -70,4 +70,35 @@ class NotificationRequestedV2Test {
                 null,
                 "+05:00"));
     }
+
+    @Test
+    void rejectsNullTimeZone() {
+        assertThrows(IllegalArgumentException.class, () -> requestWithTimeZone(null));
+    }
+
+    @Test
+    void rejectsBlankTimeZone() {
+        assertThrows(IllegalArgumentException.class, () -> requestWithTimeZone("  "));
+    }
+
+    @Test
+    void rejectsOverlongTimeZone() {
+        assertThrows(IllegalArgumentException.class, () -> requestWithTimeZone("A".repeat(65)));
+    }
+
+    private static NotificationRequestedV2 requestWithTimeZone(String eventTimeZone) {
+        UUID recipient = UUID.randomUUID();
+        return new NotificationRequestedV2(
+                UUID.randomUUID(),
+                recipient,
+                recipient.toString(),
+                "calendar.reminder",
+                NotificationPriority.NORMAL,
+                "Calendar reminder",
+                "An upcoming calendar event is starting soon.",
+                null,
+                Set.of(NotificationChannel.EMAIL),
+                null,
+                eventTimeZone);
+    }
 }

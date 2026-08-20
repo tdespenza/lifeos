@@ -16,7 +16,10 @@ service FinanceSummaryService {
 message GetPeriodSummaryRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
   string owner_account_id = 2;
+  // Required inclusive lower bound. The service rejects an absent or invalid timestamp.
   google.protobuf.Timestamp starts_at = 3;
+  // Required exclusive upper bound. It must be strictly after starts_at, and the interval may
+  // not exceed 366 days. The service validates these invariants before querying transactions.
   google.protobuf.Timestamp ends_at = 4;
 }
 

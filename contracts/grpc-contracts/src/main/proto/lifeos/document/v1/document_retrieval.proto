@@ -16,6 +16,8 @@ message GetAuthorizedExcerptRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
   string document_id = 2;
   string document_version_id = 3;
+  // Zero selects a 16,384-code-point default; values above 64,000 are rejected. The effective
+  // budget applies to the combined Unicode code-point count across all returned excerpts.
   uint32 maximum_characters = 4;
 }
 
@@ -27,5 +29,6 @@ message GetAuthorizedExcerptResponse {
 
 message DocumentExcerpt {
   string chunk_id = 1;
+  // The service must keep the combined text of all excerpts within the request budget.
   string text = 2;
 }

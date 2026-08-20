@@ -110,7 +110,12 @@ class CloudEventV1Test {
                         "subject with line breaks",
                         (Executable) () -> envelope(URI.create("https://calendar.example.test"),
                                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
-                                "notification/1\r\ninjected", "application/json", UUID.randomUUID(), "payload")));
+                                "notification/1\r\ninjected", "application/json", UUID.randomUUID(), "payload")),
+                Arguments.of(
+                        "subject with unicode line separator",
+                        (Executable) () -> envelope(URI.create("https://calendar.example.test"),
+                                EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
+                                "notification/1\u2028injected", "application/json", UUID.randomUUID(), "payload")));
     }
 
     private static CloudEventV1<String> envelope(

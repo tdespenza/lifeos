@@ -38,6 +38,8 @@ public record NotificationRequestedV2(
         Instant expiresAt,
         String eventTimeZone) {
 
+    private static final Set<String> AVAILABLE_ZONE_IDS = Set.copyOf(ZoneId.getAvailableZoneIds());
+
     /** Creates an immutable, validated V2 request. */
     public NotificationRequestedV2 {
         NotificationRequestedV1 compatible = new NotificationRequestedV1(
@@ -84,7 +86,7 @@ public record NotificationRequestedV2(
             throw new IllegalArgumentException("eventTimeZone must be a bounded IANA zone identifier");
         }
         try {
-            if (!ZoneId.getAvailableZoneIds().contains(value)) {
+            if (!AVAILABLE_ZONE_IDS.contains(value)) {
                 throw new IllegalArgumentException("eventTimeZone must be a valid IANA zone identifier");
             }
             return ZoneId.of(value).getId();

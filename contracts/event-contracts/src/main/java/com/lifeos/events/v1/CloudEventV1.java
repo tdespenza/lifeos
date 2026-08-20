@@ -30,6 +30,7 @@ public record CloudEventV1<T>(
 
     private static final int MAX_TYPE_LENGTH = 200;
     private static final int MAX_SUBJECT_LENGTH = 255;
+    private static final int MAX_SOURCE_LENGTH = 2048;
 
     public CloudEventV1 {
         Objects.requireNonNull(id, "id must not be null");
@@ -53,9 +54,11 @@ public record CloudEventV1<T>(
 
     private static void validateSource(URI value) {
         Objects.requireNonNull(value, "source must not be null");
-        if (!value.isAbsolute() || value.getRawUserInfo() != null || value.getRawQuery() != null
+        if (value.toASCIIString().length() > MAX_SOURCE_LENGTH
+                || !value.isAbsolute() || value.getRawUserInfo() != null || value.getRawQuery() != null
                 || value.getRawFragment() != null) {
-            throw new IllegalArgumentException("source must be an absolute URI without user info, query, or fragment");
+            throw new IllegalArgumentException(
+                    "source must be an absolute URI of at most 2048 characters without user info, query, or fragment");
         }
     }
 

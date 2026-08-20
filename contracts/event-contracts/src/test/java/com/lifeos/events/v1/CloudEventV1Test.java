@@ -77,6 +77,12 @@ class CloudEventV1Test {
                                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
                                 "notification/1", "application/json", UUID.randomUUID(), "payload")),
                 Arguments.of(
+                        "oversized source",
+                        (Executable) () -> envelope(
+                                URI.create("https://calendar.example.test/" + "a".repeat(2048)),
+                                EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
+                                "notification/1", "application/json", UUID.randomUUID(), "payload")),
+                Arguments.of(
                         "non-json content type",
                         (Executable) () -> envelope(URI.create("https://calendar.example.test"),
                                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,

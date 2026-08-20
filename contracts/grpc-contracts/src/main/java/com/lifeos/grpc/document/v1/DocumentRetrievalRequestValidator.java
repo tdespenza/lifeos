@@ -38,7 +38,7 @@ public final class DocumentRetrievalRequestValidator {
      */
     public static int effectiveMaximumCharacters(int requestedMaximumCharacters) {
         if (requestedMaximumCharacters < 0 || requestedMaximumCharacters > MAXIMUM_CHARACTERS) {
-            throw new IllegalArgumentException("maximum_characters must not exceed 64000");
+            throw new IllegalArgumentException("maximum_characters must be between 0 and 64000");
         }
         return requestedMaximumCharacters == 0
                 ? DEFAULT_MAXIMUM_CHARACTERS

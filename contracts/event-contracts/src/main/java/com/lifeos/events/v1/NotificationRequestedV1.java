@@ -42,6 +42,7 @@ public record NotificationRequestedV1(
     private static final int MAX_CATEGORY_LENGTH = 64;
     private static final int MAX_TITLE_LENGTH = 140;
     private static final int MAX_BODY_LENGTH = 4_000;
+    private static final int MAX_ACTION_URI_LENGTH = 2_048;
 
     public NotificationRequestedV1 {
         Objects.requireNonNull(notificationId, "notificationId must not be null");
@@ -68,6 +69,9 @@ public record NotificationRequestedV1(
     private static void validateActionUri(URI value) {
         if (value == null) {
             return;
+        }
+        if (value.toASCIIString().length() > MAX_ACTION_URI_LENGTH) {
+            throw new IllegalArgumentException("actionUri must not exceed 2048 characters");
         }
         String scheme = value.getScheme();
         boolean https = "https".equalsIgnoreCase(scheme);

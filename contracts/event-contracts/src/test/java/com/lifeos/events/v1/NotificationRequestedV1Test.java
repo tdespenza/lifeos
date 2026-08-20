@@ -51,6 +51,26 @@ class NotificationRequestedV1Test {
     }
 
     @Test
+    void acceptsAnActionUriAtTheMaximumLength() {
+        URI actionUri = URI.create("https://example.test/" + "a".repeat(2_048 - "https://example.test/".length()));
+
+        validRequest(
+                "Reminder", "body", NotificationPriority.NORMAL, actionUri,
+                EnumSet.of(NotificationChannel.EMAIL));
+    }
+
+    @Test
+    void rejectsAnActionUriBeyondTheMaximumLength() {
+        URI actionUri = URI.create("https://example.test/" + "a".repeat(2_049 - "https://example.test/".length()));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> validRequest(
+                        "Reminder", "body", NotificationPriority.NORMAL, actionUri,
+                        EnumSet.of(NotificationChannel.EMAIL)));
+    }
+
+    @Test
     void rejectsInvalidPayloadFields() {
         assertAll(
                 () -> assertThrows(

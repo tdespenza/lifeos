@@ -9,13 +9,18 @@ import org.junit.jupiter.api.Test;
 class ProofAndAuditRequestTest {
 
     private static final String CHECKSUM = "a".repeat(64);
+    private static final UUID REQUEST_ID = UUID.fromString("00000000-0000-4000-8000-000000000001");
+    private static final UUID DOCUMENT_ID = UUID.fromString("00000000-0000-4000-8000-000000000002");
+    private static final UUID OWNER_ACCOUNT_ID = UUID.fromString("00000000-0000-4000-8000-000000000003");
+    private static final UUID AUDIT_EVENT_ID = UUID.fromString("00000000-0000-4000-8000-000000000004");
+    private static final UUID CONVERSATION_ID = UUID.fromString("00000000-0000-4000-8000-000000000005");
 
     @Test
     void acceptsValidDocumentProofRequest() {
         assertDoesNotThrow(() -> new DocumentProofRequestedV1(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
+                REQUEST_ID,
+                DOCUMENT_ID,
+                OWNER_ACCOUNT_ID,
                 "tenant-a",
                 1,
                 CHECKSUM));
@@ -23,43 +28,35 @@ class ProofAndAuditRequestTest {
 
     @Test
     void rejectsInvalidDocumentProofRequestFields() {
-        UUID requestId = UUID.randomUUID();
-        UUID documentId = UUID.randomUUID();
-        UUID ownerAccountId = UUID.randomUUID();
-
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                null, documentId, ownerAccountId, "tenant-a", 1, CHECKSUM));
+                null, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", 1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                requestId, null, ownerAccountId, "tenant-a", 1, CHECKSUM));
+                REQUEST_ID, null, OWNER_ACCOUNT_ID, "tenant-a", 1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                requestId, documentId, null, "tenant-a", 1, CHECKSUM));
+                REQUEST_ID, DOCUMENT_ID, null, "tenant-a", 1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                requestId, documentId, ownerAccountId, " ", 1, CHECKSUM));
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, " ", 1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                requestId, documentId, ownerAccountId, "tenant-a", -1, CHECKSUM));
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", -1, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new DocumentProofRequestedV1(
-                requestId, documentId, ownerAccountId, "tenant-a", 1, "not-a-checksum"));
+                REQUEST_ID, DOCUMENT_ID, OWNER_ACCOUNT_ID, "tenant-a", 1, "not-a-checksum"));
     }
 
     @Test
     void acceptsValidAiAuditHashRequest() {
         assertDoesNotThrow(() -> new AiAuditHashRequestedV1(
-                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), CHECKSUM));
+                AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, CONVERSATION_ID, CHECKSUM));
     }
 
     @Test
     void rejectsInvalidAiAuditHashRequestFields() {
-        UUID auditEventId = UUID.randomUUID();
-        UUID ownerAccountId = UUID.randomUUID();
-        UUID conversationId = UUID.randomUUID();
-
         assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
-                null, ownerAccountId, conversationId, CHECKSUM));
+                null, OWNER_ACCOUNT_ID, CONVERSATION_ID, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
-                auditEventId, null, conversationId, CHECKSUM));
+                AUDIT_EVENT_ID, null, CONVERSATION_ID, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
-                auditEventId, ownerAccountId, null, CHECKSUM));
+                AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, null, CHECKSUM));
         assertThrows(IllegalArgumentException.class, () -> new AiAuditHashRequestedV1(
-                auditEventId, ownerAccountId, conversationId, "not-a-checksum"));
+                AUDIT_EVENT_ID, OWNER_ACCOUNT_ID, CONVERSATION_ID, "not-a-checksum"));
     }
 }

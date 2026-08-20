@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -79,7 +80,7 @@ class CloudEventV1Test {
                 Arguments.of(
                         "oversized source",
                         (Executable) () -> envelope(
-                                URI.create("https://calendar.example.test/" + "a".repeat(2048)),
+                                oversizedSourceUri(),
                                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
                                 "notification/1", "application/json", UUID.randomUUID(), "payload")),
                 Arguments.of(
@@ -116,6 +117,14 @@ class CloudEventV1Test {
                         (Executable) () -> envelope(URI.create("https://calendar.example.test"),
                                 EventContract.NOTIFICATION_REQUESTED_V1_TYPE,
                                 "notification/1\u2028injected", "application/json", UUID.randomUUID(), "payload")));
+    }
+
+    private static URI oversizedSourceUri() {
+        try {
+            return new URI("https", "calendar.example.test", "/" + "a".repeat(2048), null);
+        } catch (URISyntaxException exception) {
+            throw new AssertionError("test URI must be valid", exception);
+        }
     }
 
     private static CloudEventV1<String> envelope(

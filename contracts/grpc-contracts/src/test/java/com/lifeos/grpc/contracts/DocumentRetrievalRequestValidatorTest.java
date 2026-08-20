@@ -32,6 +32,13 @@ class DocumentRetrievalRequestValidatorTest {
     }
 
     @Test
+    void rejectsANegativeRequestBudget() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DocumentRetrievalRequestValidator.effectiveMaximumCharacters(-1));
+    }
+
+    @Test
     void rejectsCombinedExcerptTextAboveTheEffectiveBudget() {
         GetAuthorizedExcerptRequest request = GetAuthorizedExcerptRequest.newBuilder()
                 .setMaximumCharacters(10)

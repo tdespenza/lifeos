@@ -2,17 +2,19 @@ syntax = "proto3";
 
 package lifeos.grpc.v1;
 
+import "google/protobuf/timestamp.proto";
+import "lifeos/common/v1/request_metadata.proto";
+
 option java_multiple_files = true;
 option java_package = "com.lifeos.grpc.v1";
 option java_outer_classname = "DashboardContracts";
 
-import "google/protobuf/timestamp.proto";
-
 message ScopedDashboardRequest {
-  string account_id = 1;
-  string tenant_id = 2;
-  int32 period_days = 3;
-  string correlation_id = 4;
+  // Account and tenant are selectors; authorization comes from authenticated transport context.
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string account_id = 2;
+  string tenant_id = 3;
+  int32 period_days = 4;
 }
 
 message TaskMetrics {

@@ -46,11 +46,11 @@ public record NotificationRequestedV1(
     public NotificationRequestedV1 {
         Objects.requireNonNull(notificationId, "notificationId must not be null");
         Objects.requireNonNull(recipientAccountId, "recipientAccountId must not be null");
-        CloudEventV1.requireText(tenantId, "tenantId", MAX_TENANT_LENGTH);
-        CloudEventV1.requireToken(category, "category", MAX_CATEGORY_LENGTH);
+        EventText.requireText(tenantId, "tenantId", MAX_TENANT_LENGTH);
+        EventText.requireToken(category, "category", MAX_CATEGORY_LENGTH);
         Objects.requireNonNull(priority, "priority must not be null");
-        CloudEventV1.requireText(title, "title", MAX_TITLE_LENGTH);
-        CloudEventV1.requireText(body, "body", MAX_BODY_LENGTH);
+        EventText.requireText(title, "title", MAX_TITLE_LENGTH);
+        EventText.requireText(body, "body", MAX_BODY_LENGTH);
         validateActionUri(actionUri);
         requestedChannels = immutableChannels(requestedChannels);
     }
@@ -70,8 +70,12 @@ public record NotificationRequestedV1(
             return;
         }
         String scheme = value.getScheme();
+        boolean https = "https".equalsIgnoreCase(scheme);
+        boolean validHttps = https && value.isAbsolute() && !value.isOpaque()
+                && value.getHost() != null && !value.getHost().isBlank();
+        boolean validLifeos = "lifeos".equalsIgnoreCase(scheme);
         if (value.getRawUserInfo() != null || value.getRawFragment() != null
-                || !("https".equalsIgnoreCase(scheme) || "lifeos".equalsIgnoreCase(scheme))) {
+                || !(validHttps || validLifeos)) {
             throw new IllegalArgumentException("actionUri must be an https or lifeos URI without user info or fragment");
         }
     }

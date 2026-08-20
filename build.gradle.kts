@@ -16,6 +16,8 @@ plugins {
     id("info.solidsoft.pitest") version "1.19.0" apply false
 }
 
+val junitBomVersion = "5.13.2"
+
 allprojects {
     group = "com.lifeos"
     version = "0.1.0-SNAPSHOT"
@@ -114,7 +116,8 @@ allprojects {
         // Gradle 9 no longer supplies this runtime launcher implicitly for a plain Java project.
         // Keep JUnit Platform execution working for contract/library modules as well as Boot apps.
         dependencies {
-            testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.12.2")
+            testImplementation(platform("org.junit:junit-bom:$junitBomVersion"))
+            testRuntimeOnly("org.junit.platform:junit-platform-launcher")
         }
 
         java {

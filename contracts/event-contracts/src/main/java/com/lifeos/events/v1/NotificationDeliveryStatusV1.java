@@ -29,7 +29,7 @@ public record NotificationDeliveryStatusV1(
         if (attempt < 0) {
             throw new IllegalArgumentException("attempt must not be negative");
         }
-        CloudEventV1.requireToken(reasonCode, "reasonCode", MAX_REASON_CODE_LENGTH);
+        EventText.requireToken(reasonCode, "reasonCode", MAX_REASON_CODE_LENGTH);
         Objects.requireNonNull(occurredAt, "occurredAt must not be null");
     }
 }

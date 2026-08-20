@@ -8,6 +8,6 @@ dependencies {
     api("io.opentelemetry:opentelemetry-api:1.49.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test:3.5.16")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("io.opentelemetry:opentelemetry-sdk-trace:1.49.0")
 }

@@ -16,8 +16,9 @@ Use gRPC (Protocol Buffers + HTTP/2) for all synchronous internal service-to-ser
 
 ### Transitional exception
 
-The `grpc-contracts` module and production service-mesh mTLS rollout do not yet exist in this
-repository. Story 1.6 therefore uses one narrow internal REST/JSON bridge between
+The `grpc-contracts` module now contains the versioned protobuf definitions and generated stubs,
+but the production service-mesh mTLS rollout does not yet exist in this repository. Story 1.6
+therefore continues to use one narrow internal REST/JSON bridge between
 `task-goal-service` and `identity-service` for durable JWT validation and authorization
 decisions. It is explicitly a migration seam, not a new default for internal calls: it uses
 versioned request/decision DTOs, authenticated workload identity, bounded client timeouts,

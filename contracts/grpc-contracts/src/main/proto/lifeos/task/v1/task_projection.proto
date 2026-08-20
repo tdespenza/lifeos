@@ -15,10 +15,15 @@ service TaskProjectionService {
 message GetPlanningSnapshotRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
   string owner_account_id = 2;
+  // Zero selects the server default; values above 100 are rejected.
+  uint32 page_size = 3;
+  // Opaque continuation token returned by the previous page.
+  string page_token = 4;
 }
 
 message GetPlanningSnapshotResponse {
   repeated PlannedTask tasks = 1;
+  string next_page_token = 2;
 }
 
 message PlannedTask {

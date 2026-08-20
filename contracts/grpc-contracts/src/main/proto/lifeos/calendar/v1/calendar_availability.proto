@@ -16,12 +16,18 @@ service CalendarAvailabilityService {
 message FindBusyIntervalsRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
   string owner_account_id = 2;
+  // The service rejects windows longer than 31 days.
   google.protobuf.Timestamp starts_at = 3;
   google.protobuf.Timestamp ends_at = 4;
+  // Zero selects the server default; values above 100 are rejected.
+  uint32 page_size = 5;
+  // Opaque continuation token returned by the previous page.
+  string page_token = 6;
 }
 
 message FindBusyIntervalsResponse {
   repeated BusyInterval intervals = 1;
+  string next_page_token = 2;
 }
 
 message BusyInterval {

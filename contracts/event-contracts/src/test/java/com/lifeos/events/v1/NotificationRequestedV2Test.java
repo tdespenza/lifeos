@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 class NotificationRequestedV2Test {
 
     @Test
-    void preservesTheV1DeliverySubsetAndCanonicalizesTheTimeZone() {
+    void preservesTheV1DeliverySubsetAndAcceptsRegionTimeZones() {
         UUID recipient = UUID.randomUUID();
         NotificationRequestedV2 request = new NotificationRequestedV2(
                 UUID.randomUUID(),
@@ -51,5 +51,23 @@ class NotificationRequestedV2Test {
                         null,
                         "Mars/Olympus"));
         assertTrue(exception.getMessage().contains("eventTimeZone"));
+    }
+
+    @Test
+    void rejectsFixedOffsetTimeZones() {
+        UUID recipient = UUID.randomUUID();
+
+        assertThrows(IllegalArgumentException.class, () -> new NotificationRequestedV2(
+                UUID.randomUUID(),
+                recipient,
+                recipient.toString(),
+                "calendar.reminder",
+                NotificationPriority.NORMAL,
+                "Calendar reminder",
+                "An upcoming calendar event is starting soon.",
+                null,
+                Set.of(NotificationChannel.EMAIL),
+                null,
+                "+05:00"));
     }
 }

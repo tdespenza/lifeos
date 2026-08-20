@@ -90,4 +90,28 @@ class DocumentRetrievalRequestValidatorTest {
 
         DocumentRetrievalRequestValidator.validateResponse(response, request);
     }
+
+    @Test
+    void acceptsTheMaximumExcerptCount() {
+        DocumentRetrievalRequestValidator.validateResponse(
+                responseWithExcerptCount(DocumentRetrievalRequestValidator.MAXIMUM_EXCERPTS),
+                GetAuthorizedExcerptRequest.newBuilder().build());
+    }
+
+    @Test
+    void rejectsAnExcerptCountAboveTheMaximum() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DocumentRetrievalRequestValidator.validateResponse(
+                        responseWithExcerptCount(DocumentRetrievalRequestValidator.MAXIMUM_EXCERPTS + 1),
+                        GetAuthorizedExcerptRequest.newBuilder().build()));
+    }
+
+    private static GetAuthorizedExcerptResponse responseWithExcerptCount(int count) {
+        GetAuthorizedExcerptResponse.Builder response = GetAuthorizedExcerptResponse.newBuilder();
+        for (int index = 0; index < count; index++) {
+            response.addExcerpts(DocumentExcerpt.getDefaultInstance());
+        }
+        return response.build();
+    }
 }

@@ -22,7 +22,7 @@ import java.util.UUID;
  * @param priority user-visible urgency
  * @param title short notification title
  * @param body bounded body text
- * @param actionUri optional HTTPS or {@code lifeos:} action target
+ * @param actionUri optional HTTPS or hierarchical {@code lifeos://} action target
  * @param requestedChannels nonempty independently deliverable channels
  * @param expiresAt optional absolute time after which delivery is skipped
  */
@@ -77,7 +77,7 @@ public record NotificationRequestedV1(
         boolean https = "https".equalsIgnoreCase(scheme);
         boolean validHttps = https && value.isAbsolute() && !value.isOpaque()
                 && value.getHost() != null && !value.getHost().isBlank();
-        boolean validLifeos = "lifeos".equalsIgnoreCase(scheme);
+        boolean validLifeos = "lifeos".equalsIgnoreCase(scheme) && value.isAbsolute() && !value.isOpaque();
         if (value.getRawUserInfo() != null || value.getRawQuery() != null
                 || value.getRawFragment() != null
                 || !(validHttps || validLifeos)) {

@@ -9,6 +9,9 @@ public final class DocumentRetrievalRequestValidator {
     /** Maximum request and combined-response character budget. */
     public static final int MAXIMUM_CHARACTERS = 64_000;
 
+    /** Maximum number of excerpts accepted in one response. */
+    public static final int MAXIMUM_EXCERPTS = 256;
+
     private DocumentRetrievalRequestValidator() {
     }
 
@@ -57,6 +60,9 @@ public final class DocumentRetrievalRequestValidator {
             GetAuthorizedExcerptRequest request) {
         if (response == null) {
             throw new IllegalArgumentException("response must not be null");
+        }
+        if (response.getExcerptsCount() > MAXIMUM_EXCERPTS) {
+            throw new IllegalArgumentException("response must not contain more than 256 excerpts");
         }
         int maximumCharacters = effectiveMaximumCharacters(request);
         long totalCharacters = response.getExcerptsList().stream()

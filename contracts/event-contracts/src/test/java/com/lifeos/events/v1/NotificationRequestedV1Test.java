@@ -54,6 +54,12 @@ class NotificationRequestedV1Test {
                         () -> validRequest(
                                 "Reminder", "body", NotificationPriority.NORMAL,
                                 URI.create("https://example.test/notify?token=secret"),
+                                EnumSet.of(NotificationChannel.EMAIL))),
+                () -> assertThrows(
+                        IllegalArgumentException.class,
+                        () -> validRequest(
+                                "Reminder", "body", NotificationPriority.NORMAL,
+                                URI.create("lifeos:calendar?token=secret"),
                                 EnumSet.of(NotificationChannel.EMAIL))));
     }
 

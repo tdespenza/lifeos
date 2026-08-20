@@ -23,6 +23,7 @@ message GetAuthorizedExcerptRequest {
 
 message GetAuthorizedExcerptResponse {
   string document_version_id = 1;
+  // At most 256 excerpts are returned; the service rejects larger responses before scanning text.
   repeated DocumentExcerpt excerpts = 2;
   bool evidence_insufficient = 3;
 }

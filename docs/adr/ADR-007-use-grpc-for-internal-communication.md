@@ -24,9 +24,9 @@ decisions. It is explicitly a migration seam, not a new default for internal cal
 versioned request/decision DTOs, authenticated workload identity, bounded client timeouts,
 fail-closed dependency behavior, and a transport-independent policy domain. Production deployment
 must restrict that route to internal TLS/mTLS (or an equivalent workload-identity control). The
-bridge must move to generated `grpc-contracts` stubs when the participating services adopt the
-contract or the production service-mesh mTLS rollout enables the gRPC path; no additional internal
-REST integrations should treat this exception as precedent.
+bridge replacement requires both participating services to adopt generated `grpc-contracts` stubs
+and the production service-mesh mTLS rollout to enable the gRPC path; neither condition alone is
+sufficient. No additional internal REST integrations should treat this exception as precedent.
 
 ## Why
 

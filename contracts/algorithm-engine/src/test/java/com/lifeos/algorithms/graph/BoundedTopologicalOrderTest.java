@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 
 class BoundedTopologicalOrderTest {
 
-    private final BoundedTopologicalOrder orderer = new BoundedTopologicalOrder(10, 10);
+    private final BoundedTopologicalOrder orderer = new BoundedTopologicalOrder(10, 10, 10);
 
     @Test
     void ordersAnAcyclicGraphWithFirstSeenStableTies() {
@@ -52,12 +52,20 @@ class BoundedTopologicalOrderTest {
                         List.of("a", "b", "c"), Arrays.asList(new DirectedEdge<>("a", "b"), null)));
         assertThrows(
                 AlgorithmInputException.class,
-                () -> new BoundedTopologicalOrder(2, 2).order(List.of("a", "b", "c"), List.of()));
+                () -> new BoundedTopologicalOrder(2, 2, 2).order(List.of("a", "b", "c"), List.of()));
         assertThrows(
                 AlgorithmInputException.class,
-                () -> new BoundedTopologicalOrder(4, 1)
+                () -> new BoundedTopologicalOrder(4, 10, 1)
                         .order(
                                 List.of("a", "b"),
                                 List.of(new DirectedEdge<>("a", "b"), new DirectedEdge<>("b", "c"))));
+    }
+
+    @Test
+    void rejectsDeclaredNodeRecordsExceedingTheSubmittedNodeLimitEvenWhenAllDuplicates() {
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> new BoundedTopologicalOrder(10, 3, 10)
+                        .order(List.of("same", "same", "same", "same"), List.of()));
     }
 }

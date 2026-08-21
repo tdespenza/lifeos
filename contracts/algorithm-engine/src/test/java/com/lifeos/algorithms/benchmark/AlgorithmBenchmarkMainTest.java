@@ -1,5 +1,6 @@
 package com.lifeos.algorithms.benchmark;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -28,17 +29,28 @@ class AlgorithmBenchmarkMainTest {
 
     @Test
     void escapesJsonControlCharactersInEnvironmentValues() throws Exception {
-        String originalOsName = System.getProperty("os.name");
-        System.setProperty("os.name", "control\u0001char");
         Path report = Files.createTempFile("algorithm-engine-benchmark-control-char", ".json");
+        String originalOsName = System.getProperty("os.name");
         try {
+            System.setProperty("os.name", "control\u0001char");
             AlgorithmBenchmarkMain.main(new String[] {report.toString()});
             String json = Files.readString(report);
 
             assertTrue(json.contains("control\\u0001char"));
         } finally {
-            System.setProperty("os.name", originalOsName);
+            if (originalOsName == null) {
+                System.clearProperty("os.name");
+            } else {
+                System.setProperty("os.name", originalOsName);
+            }
             Files.deleteIfExists(report);
         }
+    }
+
+    @Test
+    void rejectsMoreThanOneArgument() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AlgorithmBenchmarkMain.main(new String[] {"a", "b"}));
     }
 }

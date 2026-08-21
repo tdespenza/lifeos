@@ -33,6 +33,12 @@ class BoundedIntervalConflictDetectorTest {
     }
 
     @Test
+    void rejectsInvalidConstructorBounds() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(1, -1));
+    }
+
+    @Test
     void rejectsOversizedOutputAndMalformedCollections() {
         BoundedIntervalConflictDetector bounded = new BoundedIntervalConflictDetector(5, 1);
         assertThrows(

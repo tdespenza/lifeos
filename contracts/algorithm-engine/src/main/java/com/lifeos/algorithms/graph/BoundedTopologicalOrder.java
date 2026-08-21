@@ -24,27 +24,32 @@ import java.util.Set;
 public final class BoundedTopologicalOrder {
 
     public static final int DEFAULT_MAX_NODES = 10_000;
+    public static final int DEFAULT_MAX_SUBMITTED_NODES = 50_000;
     public static final int DEFAULT_MAX_SUBMITTED_EDGES = 50_000;
 
     private final int maxNodes;
+    private final int maxSubmittedNodes;
     private final int maxSubmittedEdges;
 
     /** Creates the standard planning-graph bounded orderer. */
     public BoundedTopologicalOrder() {
-        this(DEFAULT_MAX_NODES, DEFAULT_MAX_SUBMITTED_EDGES);
+        this(DEFAULT_MAX_NODES, DEFAULT_MAX_SUBMITTED_NODES, DEFAULT_MAX_SUBMITTED_EDGES);
     }
 
     /**
      * Creates an orderer with service-owned bounds.
      *
      * @param maxNodes maximum distinct explicit or edge-referenced nodes
+     * @param maxSubmittedNodes maximum declared-node records inspected, including duplicates
      * @param maxSubmittedEdges maximum edge records inspected, including duplicates
      */
-    public BoundedTopologicalOrder(int maxNodes, int maxSubmittedEdges) {
-        if (maxNodes < 1 || maxSubmittedEdges < 0) {
-            throw new IllegalArgumentException("algorithm bounds must be positive");
+    public BoundedTopologicalOrder(int maxNodes, int maxSubmittedNodes, int maxSubmittedEdges) {
+        if (maxNodes < 1 || maxSubmittedNodes < 0 || maxSubmittedEdges < 0) {
+            throw new IllegalArgumentException(
+                    "maxNodes must be at least 1, and maxSubmittedNodes/maxSubmittedEdges must be non-negative");
         }
         this.maxNodes = maxNodes;
+        this.maxSubmittedNodes = maxSubmittedNodes;
         this.maxSubmittedEdges = maxSubmittedEdges;
     }
 
@@ -67,7 +72,11 @@ public final class BoundedTopologicalOrder {
 
         Map<T, Set<T>> adjacency = new LinkedHashMap<>();
         Map<T, Integer> indegree = new LinkedHashMap<>();
+        int submittedNodeCount = 0;
         for (T node : declaredNodes) {
+            if (++submittedNodeCount > maxSubmittedNodes) {
+                throw new AlgorithmInputException("graph exceeds the configured node record limit");
+            }
             addNode(adjacency, indegree, node);
         }
 

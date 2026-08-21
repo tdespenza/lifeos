@@ -38,8 +38,12 @@ public final class AlgorithmBenchmarkMain {
      *
      * @param arguments one optional output JSON path; defaults under {@code build/reports}
      * @throws IOException if the local report cannot be written
+     * @throws IllegalArgumentException if more than one argument is provided
      */
     public static void main(String[] arguments) throws IOException {
+        if (arguments.length > 1) {
+            throw new IllegalArgumentException("expected at most one output path argument");
+        }
         Path output = arguments.length == 0
                 ? Path.of("build", "reports", "benchmarks", "algorithm-engine.json")
                 : Path.of(arguments[0]);

@@ -33,6 +33,20 @@ class BoundedIntervalConflictDetectorTest {
     }
 
     @Test
+    void preservesFirstSeenOrderForEqualNormalizedIntervals() {
+        TimeInterval<String> first = interval("first", 0, 10);
+        TimeInterval<String> second = interval("second", 0, 10);
+        TimeInterval<String> later = interval("later", 1, 9);
+
+        assertEquals(
+                List.of(
+                        new IntervalConflict<>(first, second),
+                        new IntervalConflict<>(first, later),
+                        new IntervalConflict<>(second, later)),
+                detector.findConflicts(List.of(first, second, later)));
+    }
+
+    @Test
     void rejectsInvalidConstructorBounds() {
         assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(0, 1));
         assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(1, -1));

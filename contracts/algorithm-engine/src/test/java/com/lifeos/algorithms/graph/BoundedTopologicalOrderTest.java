@@ -46,6 +46,10 @@ class BoundedTopologicalOrderTest {
     @Test
     void rejectsNullAndOversizedInputBeforeSorting() {
         assertThrows(AlgorithmInputException.class, () -> orderer.order(null, List.of()));
+        assertThrows(AlgorithmInputException.class, () -> orderer.order(List.of(), null));
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> orderer.order(Arrays.asList("a", null), List.of()));
         assertThrows(
                 AlgorithmInputException.class,
                 () -> orderer.order(

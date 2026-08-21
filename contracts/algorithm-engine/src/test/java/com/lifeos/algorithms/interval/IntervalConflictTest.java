@@ -25,6 +25,14 @@ class IntervalConflictTest {
         assertThrows(IllegalArgumentException.class, () -> new IntervalConflict<>(earlier, later));
     }
 
+    @Test
+    void rejectsAReversedOverlappingPair() {
+        TimeInterval<String> earlier = interval("first", 0, 10);
+        TimeInterval<String> later = interval("second", 5, 15);
+
+        assertThrows(IllegalArgumentException.class, () -> new IntervalConflict<>(later, earlier));
+    }
+
     private static TimeInterval<String> interval(String value, int startSeconds, int endSeconds) {
         return new TimeInterval<>(value, BASE.plusSeconds(startSeconds), BASE.plusSeconds(endSeconds));
     }

@@ -30,6 +30,9 @@ class BoundedIntervalConflictDetectorTest {
                         new IntervalConflict<>(second, fourth),
                         new IntervalConflict<>(fourth, third)),
                 conflicts);
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> conflicts.add(new IntervalConflict<>(first, second)));
     }
 
     @Test

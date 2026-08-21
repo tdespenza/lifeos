@@ -20,7 +20,7 @@ The edges are `task:research -> goal:launch`, `goal:launch -> task:build`, and `
 
 ### Failure Boundaries
 
-Reusing `BoundedTopologicalOrder` means this example inherits its bounds and failure modes directly: a `null` node or edge collection, a `null` edge, or exceeding `DEFAULT_MAX_NODES` / `DEFAULT_MAX_SUBMITTED_EDGES` throws `AlgorithmInputException`; a cycle throws `AlgorithmCycleException` before any partial order is returned. None of these are reachable with this example's fixed input — they are the same boundaries a caller wiring in real Task/Goal data must handle.
+Reusing `BoundedTopologicalOrder` means this example inherits its bounds and failure modes directly: a `null` declared-node or edge collection, a `null` node value, a `null` edge, or exceeding `DEFAULT_MAX_NODES` (distinct nodes), `DEFAULT_MAX_SUBMITTED_NODES` (declared-node records inspected, including duplicates), or `DEFAULT_MAX_SUBMITTED_EDGES` (edge records inspected, including duplicates) all throw `AlgorithmInputException`; a cycle throws `AlgorithmCycleException` before any partial order is returned. None of these are reachable with this example's fixed input — they are the same boundaries a caller wiring in real Task/Goal data must handle. See [`BoundedTopologicalOrder`'s class Javadoc](../../contracts/algorithm-engine/src/main/java/com/lifeos/algorithms/graph/BoundedTopologicalOrder.java) for the complete, authoritative bound contract.
 
 ### Interview Explanation
 

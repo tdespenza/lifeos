@@ -42,4 +42,19 @@ class BoundedPriorityRankerTest {
                 () -> new BoundedPriorityRanker(1)
                         .rank(List.of(new PrioritizedItem<>("a", 1, null), new PrioritizedItem<>("b", 1, null)), 1));
     }
+
+    @Test
+    void rejectsNonPositiveCandidateLimit() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedPriorityRanker(0));
+    }
+
+    @Test
+    void returnsAnImmutableResult() {
+        List<PrioritizedItem<String>> result =
+                ranker.rank(List.of(new PrioritizedItem<>("only", 1, null)), 1);
+
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> result.add(new PrioritizedItem<>("extra", 1, null)));
+    }
 }

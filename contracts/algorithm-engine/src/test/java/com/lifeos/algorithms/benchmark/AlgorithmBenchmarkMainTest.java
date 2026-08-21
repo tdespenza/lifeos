@@ -25,4 +25,20 @@ class AlgorithmBenchmarkMainTest {
             Files.deleteIfExists(report);
         }
     }
+
+    @Test
+    void escapesJsonControlCharactersInEnvironmentValues() throws Exception {
+        String originalOsName = System.getProperty("os.name");
+        System.setProperty("os.name", "control\u0001char");
+        Path report = Files.createTempFile("algorithm-engine-benchmark-control-char", ".json");
+        try {
+            AlgorithmBenchmarkMain.main(new String[] {report.toString()});
+            String json = Files.readString(report);
+
+            assertTrue(json.contains("control\\u0001char"));
+        } finally {
+            System.setProperty("os.name", originalOsName);
+            Files.deleteIfExists(report);
+        }
+    }
 }

@@ -48,6 +48,18 @@ class BoundedIntervalConflictDetectorTest {
                         .findConflicts(List.of(interval("a", 0, 1), interval("b", 2, 3))));
     }
 
+    @Test
+    void allowsZeroConflictLimitWhenNoConflictsExistAndThrowsWhenOneIsFound() {
+        BoundedIntervalConflictDetector zeroConflictLimit = new BoundedIntervalConflictDetector(5, 0);
+
+        assertEquals(
+                List.of(),
+                zeroConflictLimit.findConflicts(List.of(interval("a", 0, 1), interval("b", 1, 2))));
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> zeroConflictLimit.findConflicts(List.of(interval("a", 0, 2), interval("b", 1, 3))));
+    }
+
     private static TimeInterval<String> interval(String value, int startSeconds, int endSeconds) {
         return new TimeInterval<>(
                 value, BASE.plusSeconds(startSeconds), BASE.plusSeconds(endSeconds));

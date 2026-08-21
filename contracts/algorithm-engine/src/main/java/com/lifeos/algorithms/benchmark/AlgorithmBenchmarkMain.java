@@ -61,17 +61,17 @@ public final class AlgorithmBenchmarkMain {
         List<DirectedEdge<String>> edges = new ArrayList<>(GRAPH_NODES * 3);
         for (int index = 0; index < GRAPH_NODES; index++) {
             nodes.add("node-" + index);
-            if (index > 0) {
-                edges.add(new DirectedEdge<>("node-" + (index - 1), "node-" + index));
+            if (index > 1) {
+                edges.add(new DirectedEdge<>("node-" + (index - 2), "node-" + index));
             }
-            if (index > 2) {
-                edges.add(new DirectedEdge<>("node-" + (index - 3), "node-" + index));
+            if (index > 3) {
+                edges.add(new DirectedEdge<>("node-" + (index - 4), "node-" + index));
             }
         }
         BoundedTopologicalOrder algorithm = new BoundedTopologicalOrder();
         return measure("bounded_topological_order", GRAPH_NODES, GRAPH_NODES, () -> {
             List<String> ordered = algorithm.order(nodes, edges);
-            if (ordered.size() != GRAPH_NODES || !"node-0".equals(ordered.getFirst())) {
+            if (ordered.size() != GRAPH_NODES || !ordered.equals(nodes)) {
                 throw new IllegalStateException("topological benchmark correctness check failed");
             }
         });
@@ -146,9 +146,10 @@ public final class AlgorithmBenchmarkMain {
                     + "\"warmupIterations\":" + warmupIterations + "," + "\"measuredIterations\":"
                     + measuredIterations + "," + "\"clock\":\"System.nanoTime\"," + "\"limitations\":\""
                     + "dependency-free smoke benchmark; not a JMH baseline\"}," + "\"environment\":{"
-                    + "\"javaRuntimeVersion\":\"" + json(System.getProperty("java.runtime.version")) + "\","
-                    + "\"osName\":\"" + json(System.getProperty("os.name")) + "\"," + "\"osArch\":\""
-                    + json(System.getProperty("os.arch")) + "\"," + "\"availableProcessors\":"
+                    + "\"javaRuntimeVersion\":\"" + json(System.getProperty("java.runtime.version", "unknown"))
+                    + "\"," + "\"osName\":\"" + json(System.getProperty("os.name", "unknown")) + "\","
+                    + "\"osArch\":\"" + json(System.getProperty("os.arch", "unknown")) + "\","
+                    + "\"availableProcessors\":"
                     + Runtime.getRuntime().availableProcessors() + "}," + "\"cases\":[" + caseJson + "]}";
         }
     }

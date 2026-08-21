@@ -48,6 +48,26 @@ class AlgorithmBenchmarkMainTest {
     }
 
     @Test
+    void fallsBackToUnknownWhenAnEnvironmentPropertyIsUnset() throws Exception {
+        Path report = Files.createTempFile("algorithm-engine-benchmark-unset-property", ".json");
+        String originalOsArch = System.getProperty("os.arch");
+        try {
+            System.clearProperty("os.arch");
+            AlgorithmBenchmarkMain.main(new String[] {report.toString()});
+            String json = Files.readString(report);
+
+            assertTrue(json.contains("\"osArch\":\"unknown\""));
+        } finally {
+            if (originalOsArch == null) {
+                System.clearProperty("os.arch");
+            } else {
+                System.setProperty("os.arch", originalOsArch);
+            }
+            Files.deleteIfExists(report);
+        }
+    }
+
+    @Test
     void rejectsMoreThanOneArgument() {
         assertThrows(
                 IllegalArgumentException.class,

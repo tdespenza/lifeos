@@ -16,10 +16,12 @@ import java.util.Set;
  * Iterative Kahn topological ordering with explicit graph-size limits and stable first-seen
  * tie-breaking.
  *
- * <p>For {@code V} distinct nodes and {@code E} unique edges, the algorithm runs in O(V + E) time
- * and uses O(V + E) memory. Repeated identical edges are normalized before indegrees are updated;
- * this avoids duplicate input changing the result or consuming unbounded work. Cyclic input throws
- * before returning any partial order.
+ * <p>For {@code N} submitted node records, {@code R} submitted edge records, {@code V} distinct
+ * nodes, and {@code E} unique edges, the algorithm runs in O(N + R + V + E) time and uses
+ * O(V + E) memory. The {@code maxSubmittedNodes} and {@code maxSubmittedEdges} bounds cap
+ * duplicate-record work. Repeated identical edges are normalized before indegrees are updated, so
+ * duplicate input does not change the result. Cyclic input throws before returning any partial
+ * order.
  */
 public final class BoundedTopologicalOrder {
 

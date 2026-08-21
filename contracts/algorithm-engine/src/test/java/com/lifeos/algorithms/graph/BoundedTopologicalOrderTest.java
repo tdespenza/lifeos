@@ -62,6 +62,13 @@ class BoundedTopologicalOrderTest {
     }
 
     @Test
+    void rejectsInvalidConfiguredBounds() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(0, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(1, -1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(1, 1, -1));
+    }
+
+    @Test
     void rejectsDeclaredNodeRecordsExceedingTheSubmittedNodeLimitEvenWhenAllDuplicates() {
         assertThrows(
                 AlgorithmInputException.class,

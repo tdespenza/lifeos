@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package lifeos.task.v1;
+
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "TaskProjectionProto";
+option java_package = "com.lifeos.grpc.task.v1";
+
+service TaskProjectionService {
+  rpc GetPlanningSnapshot(GetPlanningSnapshotRequest) returns (GetPlanningSnapshotResponse);
+}
+
+message GetPlanningSnapshotRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  // Selector only; the service must authorize it against authenticated transport identity.
+  string owner_account_id = 2;
+  // Zero selects the server default; values above 100 are rejected.
+  uint32 page_size = 3;
+  // Opaque continuation token returned by the previous page.
+  string page_token = 4;
+}
+
+message GetPlanningSnapshotResponse {
+  repeated PlannedTask tasks = 1;
+  string next_page_token = 2;
+}
+
+message PlannedTask {
+  string task_id = 1;
+  string status = 2;
+  int32 dependency_rank = 3;
+}

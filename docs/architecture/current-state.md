@@ -13,11 +13,15 @@ A Gradle multi-module monorepo (`settings.gradle.kts`) with a Java 25 toolchain,
 
 Each service owns its own database rather than sharing one — this is the per-service-schema decision from [ADR-008](../adr/ADR-008-use-postgresql-as-system-of-record.md), applied from day one rather than retrofitted later.
 
+The `contracts/grpc-contracts` module also exists with versioned protobuf definitions and
+Gradle-generated Java gRPC stubs for the planned internal RPC surface. No production service
+endpoint or service-mesh mTLS path consumes those stubs yet.
+
 `infrastructure/docker-compose/docker-compose.yml` brings up PostgreSQL (with an init script creating both service databases) and Redis for local development.
 
 ## What is deliberately not built yet
 
-- **No GraphQL or gRPC** — the gateway and both domain services expose REST. Story 1.6 still uses a deliberately narrow, workload-authenticated, bounded internal REST adapter for validation and authorization decisions because the ADR-007 `grpc-contracts` module and production mTLS rollout do not exist yet. GraphQL/gRPC layers ([ADR-006](../adr/ADR-006-use-graphql-for-dashboard-aggregation.md), [ADR-007](../adr/ADR-007-use-grpc-for-internal-communication.md)) remain planned.
+- **No GraphQL or production gRPC endpoints** — the gateway and both domain services expose REST. Story 1.6 still uses a deliberately narrow, workload-authenticated, bounded internal REST adapter for validation and authorization decisions because service adoption of the ADR-007 contracts and the production mTLS rollout remain pending. GraphQL and production gRPC layers ([ADR-006](../adr/ADR-006-use-graphql-for-dashboard-aggregation.md), [ADR-007](../adr/ADR-007-use-grpc-for-internal-communication.md)) remain planned.
 - **No event bus** — no Kafka/Pulsar, no outbox pattern implementation ([ADR-016](../adr/ADR-016-use-event-driven-architecture.md), [ADR-017](../adr/ADR-017-use-outbox-pattern.md) describe the target design). Both services are purely synchronous today.
 - **Redis is used by gateway and identity-service rate limiting, OIDC callback state, and WebAuthn challenge state** — it stores bounded digest/HMAC-keyed counters and short-lived, single-use authorization/assertion state. Durable accounts, credentials, sessions, refresh families, consumed-token replay evidence, and external-identity mappings remain in PostgreSQL; Redis is not the refresh correctness authority and admission/authentication failures fail closed.
 - **Authentication and authorization are partial** — identity-service stores Argon2id password credentials, WebAuthn public-key metadata/counters, verified provider-subject mappings, durable token families, authorization memberships, and replay evidence; issues bounded access JWTs and opaque refresh tokens through the shared session authority; publishes configured public JWKS; validates JWTs plus durable session state; and returns generic failures. It evaluates deterministic role and owner/tenant policy decisions for the Task/Goal slice, which fail closed and create redacted audit outcomes. Passkey credential registration, key rotation windows, production gRPC/mTLS contracts, and user-facing session listing/revocation remain planned stories; gateway authentication enforcement is implemented.

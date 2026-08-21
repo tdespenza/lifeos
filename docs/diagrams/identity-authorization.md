@@ -17,12 +17,14 @@ identity and requests an object-level decision. Creation derives the owner and t
 validated subject, never from client JSON. Missing and cross-user goal reads use the same generic
 denial response, so the API does not disclose resource existence.
 
-The repository does not yet contain the `grpc-contracts` module required by ADR-007. The current
-adapter is therefore a deliberately narrow internal REST/JSON bridge with versioned DTOs, bounded
-connect/read timeouts, and authenticated workload headers. This is not a claim that mTLS or gRPC
-has already been deployed: production infrastructure must restrict this route to service traffic
-and enforce TLS/mTLS or an equivalent workload-identity control. The decision domain is independent
-of the adapter so it can move to generated gRPC contracts without changing policy semantics.
+The repository contains the `grpc-contracts` module required by ADR-007, including versioned
+protobuf definitions and Gradle-generated stubs, but no production service has adopted those
+stubs yet. The current adapter is therefore a deliberately narrow internal REST/JSON bridge with
+versioned DTOs, bounded connect/read timeouts, and authenticated workload headers. This is not a
+claim that mTLS or production gRPC has already been deployed: production infrastructure must
+restrict this route to service traffic and enforce TLS/mTLS or an equivalent workload-identity
+control. The decision domain is independent of the adapter so it can move to generated gRPC
+contracts without changing policy semantics.
 
 ```mermaid
 flowchart LR

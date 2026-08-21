@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package lifeos.finance.v1;
+
+import "google/protobuf/timestamp.proto";
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "FinanceSummaryProto";
+option java_package = "com.lifeos.grpc.finance.v1";
+
+service FinanceSummaryService {
+  rpc GetPeriodSummary(GetPeriodSummaryRequest) returns (GetPeriodSummaryResponse);
+}
+
+message GetPeriodSummaryRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  // Selector only; the service must authorize it against authenticated transport identity.
+  string owner_account_id = 2;
+  // Required inclusive lower bound. The service rejects an absent or invalid timestamp.
+  google.protobuf.Timestamp starts_at = 3;
+  // Required exclusive upper bound. It must be strictly after starts_at, and the interval may
+  // not exceed 366 days. The service validates these invariants before querying transactions.
+  google.protobuf.Timestamp ends_at = 4;
+}
+
+message GetPeriodSummaryResponse {
+  string currency = 1;
+  sint64 income_minor_units = 2;
+  sint64 expense_minor_units = 3;
+  sint64 net_minor_units = 4;
+}

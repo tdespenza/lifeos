@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package lifeos.document.v1;
+
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "DocumentRetrievalProto";
+option java_package = "com.lifeos.grpc.document.v1";
+
+service DocumentRetrievalService {
+  rpc GetAuthorizedExcerpt(GetAuthorizedExcerptRequest) returns (GetAuthorizedExcerptResponse);
+}
+
+message GetAuthorizedExcerptRequest {
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string document_id = 2;
+  string document_version_id = 3;
+  // Zero selects a 16,384-code-point default; values above 64,000 are rejected. The effective
+  // budget applies to the combined Unicode code-point count across all returned excerpts.
+  uint32 maximum_characters = 4;
+}
+
+message GetAuthorizedExcerptResponse {
+  string document_version_id = 1;
+  // At most 256 excerpts are returned; the service rejects larger responses before scanning text.
+  repeated DocumentExcerpt excerpts = 2;
+  bool evidence_insufficient = 3;
+}
+
+message DocumentExcerpt {
+  string chunk_id = 1;
+  // The service must keep the combined text of all excerpts within the request budget.
+  string text = 2;
+}

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package lifeos.grpc.v1;
+
+import "google/protobuf/timestamp.proto";
+import "lifeos/common/v1/request_metadata.proto";
+
+option java_multiple_files = true;
+option java_package = "com.lifeos.grpc.v1";
+option java_outer_classname = "DashboardContracts";
+
+message ScopedDashboardRequest {
+  // Account and tenant are selectors; authorization comes from authenticated transport context.
+  lifeos.common.v1.RequestMetadata metadata = 1;
+  string account_id = 2;
+  string tenant_id = 3;
+  // The service accepts a bounded lookback from 1 through 366 days and rejects other values.
+  int32 period_days = 4;
+}
+
+message TaskMetrics {
+  int32 total = 1;
+  int32 active = 2;
+  int32 completed = 3;
+  google.protobuf.Timestamp observed_at = 4;
+}
+
+message CalendarMetrics {
+  int32 event_count = 1;
+  string status = 2;
+  google.protobuf.Timestamp observed_at = 3;
+}
+
+message FinanceMetrics {
+  int32 budget_count = 1;
+  int32 transaction_count = 2;
+  string status = 3;
+  google.protobuf.Timestamp observed_at = 4;
+}
+
+service TaskMetricsService {
+  rpc GetMetrics(ScopedDashboardRequest) returns (TaskMetrics);
+}
+
+service CalendarMetricsService {
+  rpc GetMetrics(ScopedDashboardRequest) returns (CalendarMetrics);
+}
+
+service FinanceMetricsService {
+  rpc GetMetrics(ScopedDashboardRequest) returns (FinanceMetrics);
+}

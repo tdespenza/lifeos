@@ -20,6 +20,7 @@ class BoundedTopologicalOrderTest {
                 List.of(new DirectedEdge<>("write", "review"), new DirectedEdge<>("review", "ship")));
 
         assertEquals(List.of("write", "document", "review", "ship"), result);
+        assertThrows(UnsupportedOperationException.class, () -> result.add("unexpected"));
     }
 
     @Test
@@ -78,5 +79,14 @@ class BoundedTopologicalOrderTest {
                 AlgorithmInputException.class,
                 () -> new BoundedTopologicalOrder(10, 3, 10)
                         .order(List.of("same", "same", "same", "same"), List.of()));
+    }
+
+    @Test
+    void rejectsDuplicateEdgeRecordsExceedingTheSubmittedEdgeLimit() {
+        DirectedEdge<String> edge = new DirectedEdge<>("a", "b");
+
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> new BoundedTopologicalOrder(10, 10, 1).order(List.of("a", "b"), List.of(edge, edge)));
     }
 }

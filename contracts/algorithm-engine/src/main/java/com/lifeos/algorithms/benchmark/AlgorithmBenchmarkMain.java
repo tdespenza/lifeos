@@ -102,7 +102,7 @@ public final class AlgorithmBenchmarkMain {
         BoundedPriorityRanker algorithm = new BoundedPriorityRanker();
         return measure("bounded_priority_ranking", RANKING_CANDIDATES, 100, () -> {
             List<PrioritizedItem<Integer>> ranked = algorithm.rank(candidates, 100);
-            if (ranked.size() != 100 || ranked.getFirst().priorityScore() != 16) {
+            if (ranked.size() != 100 || ranked.getFirst().value() != 16) {
                 throw new IllegalStateException("ranking benchmark correctness check failed");
             }
         });

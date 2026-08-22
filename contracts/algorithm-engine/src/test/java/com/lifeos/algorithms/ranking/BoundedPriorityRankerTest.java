@@ -41,6 +41,11 @@ class BoundedPriorityRankerTest {
     }
 
     @Test
+    void returnsAnEmptyPrefixForAnEmptyCandidateCollection() {
+        assertEquals(List.of(), ranker.rank(List.of(), 1));
+    }
+
+    @Test
     void rejectsInvalidLimitsAndMalformedOrOversizedCollections() {
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(null, 1));
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(List.of(), 0));

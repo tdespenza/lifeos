@@ -22,6 +22,12 @@ import java.util.Set;
  * duplicate-record work. Repeated identical edges are normalized before indegrees are updated, so
  * duplicate input does not change the result. Cyclic input throws before returning any partial
  * order.
+ *
+ * <p>A recursive DFS-based topological sort is an alternative with the same asymptotic
+ * complexity, but its call stack grows with the graph's longest dependency chain, and cycle
+ * detection needs a separate "currently on the stack" set. This iterative, queue-based ordering
+ * avoids that call-stack growth and gives a stable first-seen tie-break for free from its
+ * insertion-ordered ready queue.
  */
 public final class BoundedTopologicalOrder {
 
@@ -76,17 +82,19 @@ public final class BoundedTopologicalOrder {
         Map<T, Integer> indegree = new LinkedHashMap<>();
         int submittedNodeCount = 0;
         for (T node : declaredNodes) {
-            if (++submittedNodeCount > maxSubmittedNodes) {
+            if (submittedNodeCount >= maxSubmittedNodes) {
                 throw new AlgorithmInputException("graph exceeds the configured node record limit");
             }
+            submittedNodeCount++;
             addNode(adjacency, indegree, node);
         }
 
         int submittedEdgeCount = 0;
         for (DirectedEdge<T> edge : edges) {
-            if (++submittedEdgeCount > maxSubmittedEdges) {
+            if (submittedEdgeCount >= maxSubmittedEdges) {
                 throw new AlgorithmInputException("graph exceeds the configured edge limit");
             }
+            submittedEdgeCount++;
             if (edge == null) {
                 throw new AlgorithmInputException("graph edges must not contain null");
             }

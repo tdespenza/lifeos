@@ -46,6 +46,14 @@ class BoundedPriorityRankerTest {
     }
 
     @Test
+    void returnsAllCandidatesWhenLimitExceedsCandidateCount() {
+        List<PrioritizedItem<String>> result =
+                ranker.rank(List.of(new PrioritizedItem<>("only", 1, null)), 2);
+
+        assertEquals(List.of("only"), result.stream().map(PrioritizedItem::value).toList());
+    }
+
+    @Test
     void rejectsInvalidLimitsAndMalformedOrOversizedCollections() {
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(null, 1));
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(List.of(), 0));

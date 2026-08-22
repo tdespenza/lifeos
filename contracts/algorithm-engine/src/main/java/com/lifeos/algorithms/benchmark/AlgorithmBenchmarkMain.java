@@ -123,8 +123,17 @@ public final class AlgorithmBenchmarkMain {
                 name,
                 inputSize,
                 expectedResultSize,
-                samples[samples.length / 2],
+                median(samples),
                 samples[(int) Math.ceil(samples.length * 0.95D) - 1]);
+    }
+
+    static long median(long[] sortedSamples) {
+        int upperMiddle = sortedSamples.length / 2;
+        if (sortedSamples.length % 2 == 0) {
+            int lowerMiddle = upperMiddle - 1;
+            return sortedSamples[lowerMiddle] + (sortedSamples[upperMiddle] - sortedSamples[lowerMiddle]) / 2;
+        }
+        return sortedSamples[upperMiddle];
     }
 
     private record BenchmarkCase(

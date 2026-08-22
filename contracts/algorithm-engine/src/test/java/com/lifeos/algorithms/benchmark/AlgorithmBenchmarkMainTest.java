@@ -1,5 +1,6 @@
 package com.lifeos.algorithms.benchmark;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -65,6 +66,16 @@ class AlgorithmBenchmarkMainTest {
             }
             Files.deleteIfExists(report);
         }
+    }
+
+    @Test
+    void averagesTheTwoCentralSamplesForAnEvenLengthArray() {
+        assertEquals(35L, AlgorithmBenchmarkMain.median(new long[] {10L, 20L, 30L, 40L, 50L, 60L}));
+    }
+
+    @Test
+    void returnsTheCentralSampleForAnOddLengthArray() {
+        assertEquals(30L, AlgorithmBenchmarkMain.median(new long[] {10L, 20L, 30L, 40L, 50L}));
     }
 
     @Test

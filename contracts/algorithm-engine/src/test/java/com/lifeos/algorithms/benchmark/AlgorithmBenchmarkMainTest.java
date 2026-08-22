@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 
 class AlgorithmBenchmarkMainTest {
 
@@ -29,6 +31,7 @@ class AlgorithmBenchmarkMainTest {
     }
 
     @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void escapesJsonControlCharactersInEnvironmentValues() throws Exception {
         Path report = Files.createTempFile("algorithm-engine-benchmark-control-char", ".json");
         String originalOsName = System.getProperty("os.name");
@@ -49,6 +52,7 @@ class AlgorithmBenchmarkMainTest {
     }
 
     @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void fallsBackToUnknownWhenAnEnvironmentPropertyIsUnset() throws Exception {
         Path report = Files.createTempFile("algorithm-engine-benchmark-unset-property", ".json");
         String originalOsArch = System.getProperty("os.arch");

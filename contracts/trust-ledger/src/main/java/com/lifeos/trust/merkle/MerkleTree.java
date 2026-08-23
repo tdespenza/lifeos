@@ -24,11 +24,11 @@ import java.util.Set;
  * <p>The default build accepts at most {@value #DEFAULT_MAX_LEAVES} leaves. The overload with
  * {@code maxLeaves} accepts any positive caller-supplied upper bound, so callers must keep that
  * value bounded for their available memory. For {@code n} leaves, construction takes O(n) time and
- * retains O(n) hash references across all levels (the total level size is less than 2n); with a
- * caller-supplied limit, worst-case memory is therefore O(maxLeaves), plus object overhead. Full
- * levels are retained deliberately so proofs can be produced in O(log n) time without a second
- * pass or subtree recomputation; a root-only or streaming implementation would reduce retained
- * memory but would require recomputation or another source pass for proofs.
+ * retains O(n) hash references across all levels; with a caller-supplied limit, worst-case memory
+ * is therefore O(maxLeaves), plus object overhead. Full levels are retained deliberately so proofs
+ * can be produced in O(log n) time without a second pass or subtree recomputation; a root-only or
+ * streaming implementation would reduce retained memory but would require recomputation or another
+ * source pass for proofs.
  */
 public final class MerkleTree {
 

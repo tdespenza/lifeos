@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.lifeos.trust.ProofInputException;
 import com.lifeos.trust.crypto.Hash32;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -107,7 +108,11 @@ class MerkleTreeTest {
     void rejectsEmptyDuplicateAndOversizedBatchesAndUnknownProofRequests() {
         assertThrows(ProofInputException.class, () -> MerkleTree.build(null));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of()));
+        assertThrows(
+                ProofInputException.class,
+                () -> MerkleTree.build(Collections.<Hash32>singletonList(null)));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of(hash(1), hash(1))));
+        assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of(hash(1)), 0));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of(hash(1), hash(2)), 1));
 
         MerkleTree tree = MerkleTree.build(DIGESTS);

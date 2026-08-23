@@ -1,7 +1,7 @@
 package com.lifeos.trust.merkle;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,6 +47,15 @@ class MerkleTreeTest {
         for (int index = 0; index < 4; index++) {
             assertTrue(MerkleProofVerifier.verifies(tree.proofFor(index), tree.root()));
         }
+    }
+
+    @Test
+    void rejectsNullProofAndExpectedRoot() {
+        MerkleTree tree = MerkleTree.build(DIGESTS);
+        MerkleProof proof = tree.proofFor(0);
+
+        assertFalse(MerkleProofVerifier.verifies(null, tree.root()));
+        assertFalse(MerkleProofVerifier.verifies(proof, null));
     }
 
     @Test

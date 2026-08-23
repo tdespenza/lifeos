@@ -15,5 +15,8 @@ class DocumentProofTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new DocumentProof(DocumentHasher.ALGORITHM, DIGEST, 0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DocumentProof(DocumentHasher.ALGORITHM, DIGEST, -1));
     }
 }

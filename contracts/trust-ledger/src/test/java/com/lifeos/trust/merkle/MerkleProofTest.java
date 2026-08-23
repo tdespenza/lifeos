@@ -16,6 +16,8 @@ class MerkleProofTest {
         Hash32 digest = hash(1);
         MerkleProofStep step = new MerkleProofStep(hash(2), MerkleSiblingSide.RIGHT);
 
+        assertThrows(NullPointerException.class, () -> new MerkleProofStep(null, MerkleSiblingSide.RIGHT));
+        assertThrows(NullPointerException.class, () -> new MerkleProofStep(digest, null));
         assertThrows(IllegalArgumentException.class, () -> new MerkleProof(0, 0, digest, List.of()));
         assertThrows(IllegalArgumentException.class, () -> new MerkleProof(-1, 1, digest, List.of()));
         assertThrows(IllegalArgumentException.class, () -> new MerkleProof(1, 1, digest, List.of()));

@@ -20,6 +20,10 @@ class Hash32Test {
         assertEquals((byte) 0xff, hash.bytes()[0]);
         assertEquals(hash, Hash32.fromHex(hash.toHex().toUpperCase(java.util.Locale.ROOT)));
         assertThrows(IllegalArgumentException.class, () -> Hash32.fromHex("not-a-hash"));
+        assertThrows(IllegalArgumentException.class, () -> Hash32.fromHex(null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Hash32.fromHex("g".repeat(Hash32.BYTE_LENGTH * 2)));
     }
 
     @Test

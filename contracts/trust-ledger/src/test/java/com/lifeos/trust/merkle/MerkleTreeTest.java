@@ -74,6 +74,22 @@ class MerkleTreeTest {
 
         assertFalse(MerkleProofVerifier.verifies(alteredLeaf, tree.root()));
         assertFalse(MerkleProofVerifier.verifies(alteredSibling, tree.root()));
+
+        List<MerkleProofStep> sideAlteredSteps = new ArrayList<>(original.steps());
+        sideAlteredSteps.set(
+                0,
+                new MerkleProofStep(
+                        firstStep.sibling(),
+                        firstStep.siblingSide() == MerkleSiblingSide.LEFT
+                                ? MerkleSiblingSide.RIGHT
+                                : MerkleSiblingSide.LEFT));
+        MerkleProof alteredSide = new MerkleProof(
+                original.leafIndex(),
+                original.leafCount(),
+                original.documentDigest(),
+                sideAlteredSteps);
+        assertFalse(MerkleProofVerifier.verifies(alteredSide, tree.root()));
+
         assertFalse(MerkleProofVerifier.verifies(original, hash(97)));
 
         MerkleProof alteredIndex = new MerkleProof(1, original.leafCount(), original.documentDigest(), original.steps());

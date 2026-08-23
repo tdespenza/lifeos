@@ -6,6 +6,8 @@ import com.lifeos.trust.crypto.Hash32;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.Set;
 
@@ -14,20 +16,29 @@ import java.util.Set;
  *
  * <p>Leaves are {@code SHA-256(0x00 || documentDigest)} and internal nodes are
  * {@code SHA-256(0x01 || left || right)}. At an odd level the final node is duplicated as its own
- * right sibling. These domain-separation and odd-node rules are part of the public proof format;
- * callers must not substitute raw concatenation or unordered leaf sets.
+ * right sibling. The anchored root is {@code SHA-256(0x02 || leafCount || levelRoot)}, where
+ * {@code leafCount} is a four-byte big-endian integer. These domain-separation, count-binding, and
+ * odd-node rules are part of the public proof format; callers must not substitute raw concatenation
+ * or unordered leaf sets.
  */
 public final class MerkleTree {
 
     public static final int DEFAULT_MAX_LEAVES = 10_000;
     private static final byte[] LEAF_DOMAIN = new byte[] {0};
     private static final byte[] NODE_DOMAIN = new byte[] {1};
+    private static final byte[] ROOT_DOMAIN = new byte[] {2};
 
     private final List<Hash32> documentDigests;
+    private final Map<Hash32, Integer> digestIndexes;
     private final List<List<Hash32>> levels;
 
     private MerkleTree(List<Hash32> documentDigests, List<List<Hash32>> levels) {
         this.documentDigests = List.copyOf(documentDigests);
+        Map<Hash32, Integer> indexes = new HashMap<>(this.documentDigests.size());
+        for (int index = 0; index < this.documentDigests.size(); index++) {
+            indexes.put(this.documentDigests.get(index), index);
+        }
+        this.digestIndexes = Map.copyOf(indexes);
         this.levels = levels.stream().map(List::copyOf).toList();
     }
 
@@ -74,9 +85,9 @@ public final class MerkleTree {
         return new MerkleTree(orderedDocumentDigests, levels);
     }
 
-    /** Returns the immutable root hash. A single-document root is its domain-separated leaf hash. */
+    /** Returns the immutable leaf-count-bound root hash. */
     public Hash32 root() {
-        return levels.getLast().getFirst();
+        return rootHash(levels.getLast().getFirst(), documentDigests.size());
     }
 
     /** Returns an inclusion proof for the original ordered leaf index. */
@@ -94,17 +105,28 @@ public final class MerkleTree {
             steps.add(new MerkleProofStep(sibling, currentIsLeft ? MerkleSiblingSide.RIGHT : MerkleSiblingSide.LEFT));
             index /= 2;
         }
-        return new MerkleProof(leafIndex, documentDigests.get(leafIndex), steps);
+        return new MerkleProof(leafIndex, documentDigests.size(), documentDigests.get(leafIndex), steps);
     }
 
     /** Returns an inclusion proof for a unique original digest. */
     public MerkleProof proofFor(Hash32 documentDigest) {
         Objects.requireNonNull(documentDigest, "documentDigest must not be null");
-        int index = documentDigests.indexOf(documentDigest);
-        if (index < 0) {
+        Integer index = digestIndexes.get(documentDigest);
+        if (index == null) {
             throw new ProofInputException("document digest is not present in this Merkle tree");
         }
         return proofFor(index);
+    }
+
+    static int expectedProofStepCount(int leafCount) {
+        if (leafCount < 1) {
+            throw new IllegalArgumentException("leafCount must be positive");
+        }
+        int steps = 0;
+        for (int nodes = leafCount; nodes > 1; nodes = nodes / 2 + nodes % 2) {
+            steps++;
+        }
+        return steps;
     }
 
     static Hash32 leafHash(Hash32 documentDigest) {
@@ -113,5 +135,9 @@ public final class MerkleTree {
 
     static Hash32 nodeHash(Hash32 left, Hash32 right) {
         return DocumentHasher.sha256(NODE_DOMAIN, left, right);
+    }
+
+    static Hash32 rootHash(Hash32 levelRoot, int leafCount) {
+        return DocumentHasher.sha256(ROOT_DOMAIN, leafCount, levelRoot);
     }
 }

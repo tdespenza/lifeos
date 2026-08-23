@@ -99,6 +99,15 @@ public final class DocumentHasher {
         return new Hash32(digest.digest());
     }
 
+    /** Hashes a protocol prefix, one big-endian integer, and one fixed-size digest value. */
+    public static Hash32 sha256(byte[] prefix, int value, Hash32 right) {
+        MessageDigest digest = sha256();
+        digest.update(prefix);
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(value).array());
+        digest.update(right.bytes());
+        return new Hash32(digest.digest());
+    }
+
     private static MessageDigest sha256() {
         try {
             return MessageDigest.getInstance(ALGORITHM);

@@ -1,6 +1,7 @@
 package com.lifeos.trust.merkle;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,7 +20,7 @@ class MerkleTreeTest {
         MerkleTree first = MerkleTree.build(DIGESTS);
         MerkleTree second = MerkleTree.build(DIGESTS);
 
-        assertTrue(first.root().equals(second.root()));
+        assertEquals(first.root(), second.root());
         for (int index = 0; index < DIGESTS.size(); index++) {
             MerkleProof proof = first.proofFor(index);
             assertTrue(MerkleProofVerifier.verifies(proof, first.root()));
@@ -28,15 +29,37 @@ class MerkleTreeTest {
     }
 
     @Test
+    void treatsASingleDigestRootAsItsCountBoundLeafRoot() {
+        Hash32 digest = hash(1);
+        MerkleTree tree = MerkleTree.build(List.of(digest));
+        MerkleProof proof = tree.proofFor(0);
+
+        assertEquals(1, proof.leafCount());
+        assertTrue(proof.steps().isEmpty());
+        assertEquals(MerkleTree.rootHash(MerkleTree.leafHash(digest), 1), tree.root());
+        assertTrue(MerkleProofVerifier.verifies(proof, tree.root()));
+    }
+
+    @Test
+    void verifiesEveryEvenBatchLeaf() {
+        MerkleTree tree = MerkleTree.build(List.of(hash(1), hash(2), hash(3), hash(4)));
+
+        for (int index = 0; index < 4; index++) {
+            assertTrue(MerkleProofVerifier.verifies(tree.proofFor(index), tree.root()));
+        }
+    }
+
+    @Test
     void rejectsTamperedLeafSiblingAndRoot() {
         MerkleTree tree = MerkleTree.build(DIGESTS);
         MerkleProof original = tree.proofFor(2);
-        MerkleProof alteredLeaf = new MerkleProof(original.leafIndex(), hash(99), original.steps());
+        MerkleProof alteredLeaf = new MerkleProof(original.leafIndex(), original.leafCount(), hash(99), original.steps());
         MerkleProofStep firstStep = original.steps().getFirst();
         List<MerkleProofStep> alteredSteps = new ArrayList<>(original.steps());
         alteredSteps.set(0, new MerkleProofStep(hash(98), firstStep.siblingSide()));
         MerkleProof alteredSibling = new MerkleProof(
                 original.leafIndex(),
+                original.leafCount(),
                 original.documentDigest(),
                 alteredSteps);
 
@@ -44,8 +67,15 @@ class MerkleTreeTest {
         assertFalse(MerkleProofVerifier.verifies(alteredSibling, tree.root()));
         assertFalse(MerkleProofVerifier.verifies(original, hash(97)));
 
-        MerkleProof alteredIndex = new MerkleProof(1, original.documentDigest(), original.steps());
+        MerkleProof alteredIndex = new MerkleProof(1, original.leafCount(), original.documentDigest(), original.steps());
         assertFalse(MerkleProofVerifier.verifies(alteredIndex, tree.root()));
+
+        MerkleProof alteredCount = new MerkleProof(
+                original.leafIndex(),
+                original.leafCount() + 1,
+                original.documentDigest(),
+                original.steps());
+        assertFalse(MerkleProofVerifier.verifies(alteredCount, tree.root()));
     }
 
     @Test

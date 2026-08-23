@@ -4,10 +4,10 @@ import com.lifeos.trust.ProofInputException;
 import com.lifeos.trust.crypto.DocumentHasher;
 import com.lifeos.trust.crypto.Hash32;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.Objects;
 import java.util.Set;
 
@@ -20,6 +20,15 @@ import java.util.Set;
  * {@code leafCount} is a four-byte big-endian integer. These domain-separation, count-binding, and
  * odd-node rules are part of the public proof format; callers must not substitute raw concatenation
  * or unordered leaf sets.
+ *
+ * <p>The default build accepts at most {@value #DEFAULT_MAX_LEAVES} leaves. The overload with
+ * {@code maxLeaves} accepts any positive caller-supplied upper bound, so callers must keep that
+ * value bounded for their available memory. For {@code n} leaves, construction takes O(n) time and
+ * retains O(n) hash references across all levels (the total level size is less than 2n); with a
+ * caller-supplied limit, worst-case memory is therefore O(maxLeaves), plus object overhead. Full
+ * levels are retained deliberately so proofs can be produced in O(log n) time without a second
+ * pass or subtree recomputation; a root-only or streaming implementation would reduce retained
+ * memory but would require recomputation or another source pass for proofs.
  */
 public final class MerkleTree {
 

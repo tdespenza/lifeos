@@ -89,6 +89,7 @@ class MerkleTreeTest {
 
     @Test
     void rejectsEmptyDuplicateAndOversizedBatchesAndUnknownProofRequests() {
+        assertThrows(ProofInputException.class, () -> MerkleTree.build(null));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of()));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of(hash(1), hash(1))));
         assertThrows(ProofInputException.class, () -> MerkleTree.build(List.of(hash(1), hash(2)), 1));

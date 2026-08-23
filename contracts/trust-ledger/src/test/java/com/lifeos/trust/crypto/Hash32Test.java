@@ -21,4 +21,11 @@ class Hash32Test {
         assertEquals(hash, Hash32.fromHex(hash.toHex().toUpperCase(java.util.Locale.ROOT)));
         assertThrows(IllegalArgumentException.class, () -> Hash32.fromHex("not-a-hash"));
     }
+
+    @Test
+    void rejectsInvalidDigestByteLengths() {
+        assertThrows(IllegalArgumentException.class, () -> new Hash32(null));
+        assertThrows(IllegalArgumentException.class, () -> new Hash32(new byte[Hash32.BYTE_LENGTH - 1]));
+        assertThrows(IllegalArgumentException.class, () -> new Hash32(new byte[Hash32.BYTE_LENGTH + 1]));
+    }
 }

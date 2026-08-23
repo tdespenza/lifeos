@@ -7,7 +7,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Objects;
 
 /**
  * Streams a document into a domain-separated SHA-256 proof without retaining document content.
@@ -44,10 +43,14 @@ public final class DocumentHasher {
      */
     public static DocumentProof hash(InputStream content, CanonicalDocumentMetadata metadata, long maxContentBytes)
             throws IOException {
-        Objects.requireNonNull(content, "content must not be null");
-        Objects.requireNonNull(metadata, "metadata must not be null");
+        if (content == null) {
+            throw new ProofInputException("content must not be null");
+        }
+        if (metadata == null) {
+            throw new ProofInputException("metadata must not be null");
+        }
         if (maxContentBytes < 1) {
-            throw new IllegalArgumentException("maximum document size must be positive");
+            throw new ProofInputException("maximum document size must be positive");
         }
 
         MessageDigest digest = sha256();

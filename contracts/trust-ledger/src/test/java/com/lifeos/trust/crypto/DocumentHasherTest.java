@@ -41,6 +41,13 @@ class DocumentHasherTest {
         assertThrows(
                 ProofInputException.class,
                 () -> DocumentHasher.hash(new ByteArrayInputStream(new byte[] {1, 2, 3}), PDF, 2));
+        assertThrows(ProofInputException.class, () -> DocumentHasher.hash(null, PDF));
+        assertThrows(
+                ProofInputException.class,
+                () -> DocumentHasher.hash(new ByteArrayInputStream(new byte[] {1}), null));
+        assertThrows(
+                ProofInputException.class,
+                () -> DocumentHasher.hash(new ByteArrayInputStream(new byte[] {1}), PDF, 0));
     }
 
     @Test

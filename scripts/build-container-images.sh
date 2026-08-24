@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
 readonly IMAGE_PREFIX="${LIFEOS_IMAGE_PREFIX:-lifeos}"
 readonly IMAGE_TAG="${LIFEOS_IMAGE_TAG:-local}"
 readonly PUSH_IMAGES="${LIFEOS_PUSH_IMAGES:-false}"

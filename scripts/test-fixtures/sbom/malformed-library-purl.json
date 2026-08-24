@@ -1,0 +1,21 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {
+    "component": {
+      "name": "lifeos"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "spring-boot-starter-web",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-web@3.5.0"
+    },
+    {
+      "type": "library",
+      "name": "malformed-purl",
+      "purl": "pkg:maven/com.example/malformed-purl@1.0.0?missingQualifierValue"
+    }
+  ]
+}

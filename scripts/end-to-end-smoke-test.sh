@@ -2,16 +2,19 @@
 set -euo pipefail
 
 readonly GATEWAY_URL="${LIFEOS_E2E_GATEWAY_BASE_URL:-}"
-readonly IDENTITY_URL="${LIFEOS_E2E_IDENTITY_BASE_URL:-}"
-readonly TASK_GOAL_URL="${LIFEOS_E2E_TASK_GOAL_BASE_URL:-}"
+readonly GATEWAY_MANAGEMENT_URL="${LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL:-}"
+readonly IDENTITY_MANAGEMENT_URL="${LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL:-}"
 readonly CORRELATION_ID="11111111-1111-4111-8111-111111111111"
 
-if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-    echo "curl and jq are required to run the end-to-end smoke test" >&2
+if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v rg >/dev/null 2>&1; then
+    echo "curl, jq, and rg are required to run the end-to-end smoke test" >&2
     exit 69
 fi
 
 validate_url() {
+    # Accept only deployment base URLs; endpoint paths are appended by the smoke test itself.
     local variable_name="$1"
     local value="$2"
     if [[ ! "${value}" =~ ^https://[^/?#]+(/[^?#]*)?$ ]]; then
@@ -21,10 +24,11 @@ validate_url() {
 }
 
 validate_url LIFEOS_E2E_GATEWAY_BASE_URL "${GATEWAY_URL}"
-validate_url LIFEOS_E2E_IDENTITY_BASE_URL "${IDENTITY_URL}"
-validate_url LIFEOS_E2E_TASK_GOAL_BASE_URL "${TASK_GOAL_URL}"
+validate_url LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL "${GATEWAY_MANAGEMENT_URL}"
+validate_url LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL "${IDENTITY_MANAGEMENT_URL}"
 
 assert_ready() {
+    # Require an explicit UP readiness response before exercising the cross-service request path.
     local service_name="$1"
     local base_url="$2"
     curl \
@@ -42,9 +46,10 @@ assert_ready() {
     printf '%s\n' "End-to-end prerequisite is ready: ${service_name}"
 }
 
-assert_ready gateway "${GATEWAY_URL}"
-assert_ready identity "${IDENTITY_URL}"
-assert_ready task-goal "${TASK_GOAL_URL}"
+# Gateway's public API listener and the gateway/identity readiness listeners use different ports.
+# Task/Goal is intentionally omitted until it exposes an independent readiness endpoint.
+assert_ready gateway "${GATEWAY_MANAGEMENT_URL}"
+assert_ready identity "${IDENTITY_MANAGEMENT_URL}"
 
 headers_file="$(mktemp)"
 body_file="$(mktemp)"

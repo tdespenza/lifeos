@@ -1,19 +1,90 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly TARGET_URL="${LIFEOS_PERFORMANCE_GATEWAY_BASE_URL:-}"
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly REPOSITORY_ROOT
+readonly TARGET_URL="${LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL:-}"
 readonly VUS="${LIFEOS_PERFORMANCE_VUS:-10}"
 readonly DURATION="${LIFEOS_PERFORMANCE_DURATION:-15s}"
-readonly SUMMARY_PATH="${LIFEOS_PERFORMANCE_SUMMARY_PATH:-${REPOSITORY_ROOT}/build/reports/performance/k6-summary.json}"
 readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
 
+canonicalize_path() {
+    # Resolve lexical path components and symlinks without creating any output directories first.
+    # A hop limit makes malformed circular links an input error rather than an unbounded loop.
+    local input_path="$1"
+    local candidate_path component link_target resolved_component
+    local symlink_hops=0
+    local -a pending_components=()
+    local -a resolved_components=()
+    local -a link_components=()
+
+    if [[ "${input_path}" == /* ]]; then
+        candidate_path="${input_path}"
+    else
+        candidate_path="${REPOSITORY_ROOT}/${input_path}"
+    fi
+    IFS='/' read -r -a pending_components <<< "${candidate_path#/}"
+
+    while [[ "${#pending_components[@]}" -gt 0 ]]; do
+        component="${pending_components[0]}"
+        pending_components=("${pending_components[@]:1}")
+        case "${component}" in
+            ''|.)
+                continue
+                ;;
+            ..)
+                if [[ "${#resolved_components[@]}" -gt 0 ]]; then
+                    resolved_components=("${resolved_components[@]:0:${#resolved_components[@]} - 1}")
+                fi
+                continue
+                ;;
+        esac
+
+        candidate_path="/"
+        if [[ "${#resolved_components[@]}" -gt 0 ]]; then
+            for resolved_component in "${resolved_components[@]}"; do
+                candidate_path="${candidate_path%/}/${resolved_component}"
+            done
+        fi
+        candidate_path="${candidate_path%/}/${component}"
+
+        if [[ -L "${candidate_path}" ]]; then
+            ((symlink_hops += 1))
+            if (( symlink_hops > 40 )); then
+                return 1
+            fi
+            link_target="$(readlink "${candidate_path}")" || return 1
+            IFS='/' read -r -a link_components <<< "${link_target#/}"
+            if [[ "${link_target}" == /* ]]; then
+                resolved_components=()
+            fi
+            pending_components=("${link_components[@]-}" "${pending_components[@]-}")
+        else
+            resolved_components+=("${component}")
+        fi
+    done
+
+    candidate_path="/"
+    if [[ "${#resolved_components[@]}" -gt 0 ]]; then
+        for resolved_component in "${resolved_components[@]}"; do
+            candidate_path="${candidate_path%/}/${resolved_component}"
+        done
+    fi
+    printf '%s\n' "${candidate_path}"
+}
+
+SUMMARY_PATH="$(canonicalize_path "${LIFEOS_PERFORMANCE_SUMMARY_PATH:-${REPOSITORY_ROOT}/build/reports/performance/k6-summary.json}")" || {
+    echo "LIFEOS_PERFORMANCE_SUMMARY_PATH must resolve to a valid path" >&2
+    exit 64
+}
+readonly SUMMARY_PATH
+
 if [[ ! "${TARGET_URL}" =~ ^https://[^/?#]+(/[^?#]*)?$ ]]; then
-    echo "LIFEOS_PERFORMANCE_GATEWAY_BASE_URL must be a canonical HTTPS URL" >&2
+    echo "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" >&2
     exit 64
 fi
 
-if [[ ! "${VUS}" =~ ^[1-9][0-9]?$ ]] || (( VUS > 100 )); then
+if [[ ! "${VUS}" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || (( VUS > 100 )); then
     echo "LIFEOS_PERFORMANCE_VUS must be between 1 and 100" >&2
     exit 64
 fi
@@ -29,6 +100,9 @@ if [[ "${SUMMARY_PATH}" != "${REPOSITORY_ROOT}/"* ]]; then
 fi
 
 mkdir -p "$(dirname "${SUMMARY_PATH}")"
+# Empty an old report before running so a successful command that fails to emit a new summary does
+# not accidentally pass the non-empty-report check below.
+: > "${SUMMARY_PATH}"
 
 if command -v k6 >/dev/null 2>&1; then
     k6 run \
@@ -40,12 +114,13 @@ if command -v k6 >/dev/null 2>&1; then
         "${K6_SCRIPT}"
 elif command -v docker >/dev/null 2>&1; then
     docker run --rm \
-        --volume "${REPOSITORY_ROOT}:/work" \
+        --volume "${REPOSITORY_ROOT}:/work:ro" \
+        --volume "${SUMMARY_PATH}:/tmp/k6-summary.json" \
         --workdir /work \
         grafana/k6:0.55.0 \
         run \
         --quiet \
-        --summary-export "/work/${SUMMARY_PATH#"${REPOSITORY_ROOT}"/}" \
+        --summary-export /tmp/k6-summary.json \
         --env "TARGET_URL=${TARGET_URL}" \
         --env "VUS=${VUS}" \
         --env "DURATION=${DURATION}" \

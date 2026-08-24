@@ -37,3 +37,17 @@ jobs:
 
       - name: Test release version helper
         run: bash scripts/test-release-version.sh
+
+      - name: Test operational script behavior
+        run: bash scripts/test-operational-scripts.sh
+
+      - name: Verify operational script syntax
+        run: bash scripts/verify-pipeline-scripts.sh
+
+      - name: Test SBOM validator
+        run: bash scripts/test-verify-sbom.sh
+
+      - name: Generate and validate CycloneDX SBOM
+        run: |
+          ./gradlew cyclonedxBom
+          bash scripts/verify-sbom.sh

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
 required_variables=(
     STAGING_DEPLOY_WEBHOOK_URL
     GITHUB_SHA
@@ -64,8 +65,6 @@ curl \
     --proto '=https' \
     --connect-timeout 10 \
     --max-time 120 \
-    --retry 2 \
-    --retry-all-errors \
     --header 'Content-Type: application/json' \
     --data "${payload}" \
     --output /dev/null \

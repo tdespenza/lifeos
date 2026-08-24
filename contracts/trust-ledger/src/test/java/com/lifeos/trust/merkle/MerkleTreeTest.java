@@ -117,6 +117,7 @@ class MerkleTreeTest {
 
         MerkleTree tree = MerkleTree.build(DIGESTS);
         assertThrows(ProofInputException.class, () -> tree.proofFor(-1));
+        assertThrows(NullPointerException.class, () -> tree.proofFor((Hash32) null));
         assertThrows(ProofInputException.class, () -> tree.proofFor(hash(99)));
     }
 

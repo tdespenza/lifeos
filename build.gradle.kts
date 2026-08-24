@@ -289,9 +289,20 @@ tasks.register<Exec>("endToEndTest") {
     commandLine("bash", rootProject.file("scripts/end-to-end-smoke-test.sh").absolutePath)
 }
 
+tasks.register<Exec>("performanceReadinessScenarioTest") {
+    description = "Executes the k6 readiness scenario with a deterministic mocked k6 runtime."
+    group = "verification"
+    commandLine(
+        "node",
+        "--experimental-vm-modules",
+        rootProject.file("scripts/test-performance-readiness-smoke.js").absolutePath
+    )
+}
+
 tasks.register<Exec>("performanceTest") {
     description = "Runs the bounded k6 readiness performance smoke test against an enabled environment."
     group = "verification"
+    dependsOn("performanceReadinessScenarioTest")
     commandLine("bash", rootProject.file("scripts/performance-smoke-test.sh").absolutePath)
 }
 
@@ -306,5 +317,5 @@ tasks.named("check") {
     // without making it a mutation-test command; PIT remains the explicit `mutationTest` task.
     dependsOn("formatCheck", "staticAnalysis")
     dependsOn(javaSubprojectTaskPaths("check"))
-    dependsOn("architectureTest")
+    dependsOn("architectureTest", "performanceReadinessScenarioTest")
 }

@@ -61,6 +61,7 @@ status_code="$(curl \
     --silent \
     --show-error \
     --location \
+    --max-redirs 0 \
     --proto '=https' \
     --connect-timeout 10 \
     --max-time 20 \

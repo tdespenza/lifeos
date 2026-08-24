@@ -25,6 +25,10 @@ fake_docker() {
         return "${FAKE_DOCKER_IMAGE_INSPECT_STATUS:-0}"
     fi
 
+    if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then
+        return "${FAKE_DOCKER_COMPOSE_VERSION_STATUS:-0}"
+    fi
+
     if [[ "${1:-}" == "compose" && " $* " == *" up "* ]]; then
         if [[ -n "${FAKE_DOCKER_COMPOSE_UP_MESSAGE:-}" ]]; then
             printf '%s\n' "${FAKE_DOCKER_COMPOSE_UP_MESSAGE}" >&2
@@ -40,8 +44,8 @@ fake_docker() {
     if [[ "${1:-}" == "run" && " $* " == *" --summary-export "* ]]; then
         local argument summary_volume=""
         for argument in "$@"; do
-            if [[ "${argument}" == *:/tmp/k6-summary.json ]]; then
-                summary_volume="${argument%:/tmp/k6-summary.json}"
+            if [[ "${argument}" == *:/tmp/lifeos-k6-summary.* ]]; then
+                summary_volume="${argument%:/tmp/lifeos-k6-summary.*}"
                 break
             fi
         done
@@ -57,6 +61,18 @@ fake_docker() {
 
 fake_jq() {
     fake_log_command jq "$@"
+
+    if [[ "$*" == *'type == "object" and all(.[]; type == "string")'* ]]; then
+        local validation_input
+        validation_input="$(cat)"
+        # This exact staging predicate has input-dependent jq semantics, so use the system jq
+        # outside the harness PATH to make malformed and structurally invalid fixtures fail alike.
+        if ! command -p jq --exit-status 'type == "object" and all(.[]; type == "string")' \
+            <<< "${validation_input}" >/dev/null 2>&1; then
+            return 64
+        fi
+        return 0
+    fi
 
     if [[ " $* " == *" --raw-output "* && -n "${FAKE_JQ_SERVICE_URL:-}" ]]; then
         printf '%s\n' "${FAKE_JQ_SERVICE_URL}"
@@ -93,6 +109,55 @@ fake_jq() {
 
 fake_curl() {
     fake_log_command curl "$@"
+
+    local argument dump_header_file="" redirect_url="" url=""
+    local follows_redirect=false
+    local maximum_redirects=""
+    for ((argument_index = 1; argument_index <= $#; argument_index += 1)); do
+        argument="${!argument_index}"
+        case "${argument}" in
+            --dump-header)
+                ((argument_index += 1))
+                dump_header_file="${!argument_index}"
+                ;;
+            --location)
+                follows_redirect=true
+                ;;
+            --max-redirs)
+                ((argument_index += 1))
+                maximum_redirects="${!argument_index}"
+                ;;
+            https://*)
+                url="${argument}"
+                ;;
+        esac
+    done
+
+    redirect_url="${FAKE_CURL_REDIRECT_URL:-}"
+    if [[ -n "${redirect_url}" && "${url}" == "${redirect_url}" ]]; then
+        if [[ -n "${dump_header_file}" ]]; then
+            printf 'HTTP/1.1 %s Redirect\r\n' "${FAKE_CURL_REDIRECT_STATUS:-302}" > "${dump_header_file}"
+            printf 'X-Correlation-ID: %s\r\n\r\n' \
+                "${FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID:-redirect-correlation-id}" \
+                >> "${dump_header_file}"
+            if [[ "${follows_redirect}" == "true" && "${maximum_redirects}" != "0" ]]; then
+                printf 'HTTP/1.1 200 OK\r\nX-Correlation-ID: %s\r\n\r\n' \
+                    "${FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID:-final-correlation-id}" \
+                    >> "${dump_header_file}"
+            fi
+        fi
+
+        if [[ "${follows_redirect}" == "true" && "${maximum_redirects}" == "0" ]]; then
+            return 47
+        fi
+        if [[ "${follows_redirect}" == "true" ]]; then
+            if [[ " $* " == *" --write-out "* ]]; then
+                printf '200'
+            fi
+            return 0
+        fi
+    fi
+
     if [[ -n "${FAKE_CURL_STDOUT:-}" ]]; then
         printf '%s\n' "${FAKE_CURL_STDOUT}"
     fi
@@ -102,6 +167,11 @@ fake_curl() {
 fake_rg() {
     fake_log_command rg "$@"
     return "${FAKE_RG_STATUS:-0}"
+}
+
+fake_dirname() {
+    fake_log_command dirname "$@"
+    printf '%s\n' "${FAKE_DIRNAME_OUTPUT:-/definitely-missing-lifeos-script-directory}"
 }
 
 fake_k6() {
@@ -145,6 +215,10 @@ case "$(basename "$0")" in
         ;;
     rg)
         fake_rg "$@"
+        exit
+        ;;
+    dirname)
+        fake_dirname "$@"
         exit
         ;;
 esac
@@ -229,7 +303,9 @@ assert_log_entry_excludes() {
     local log_file="${root}/commands.log"
 
     assert_file_contains "${log_file}" "${entry_marker}" "${description} command"
-    if grep -F -- "${entry_marker}" "${log_file}" | grep -Fq -- "${unexpected}"; then
+    local matching_entries
+    matching_entries="$(grep -F -- "${entry_marker}" "${log_file}")"
+    if grep -Fq -- "${unexpected}" <<< "${matching_entries}"; then
         fail "${description}: found unexpected '${unexpected}'"
     fi
 }
@@ -322,8 +398,7 @@ run_target() {
 
     RUN_OUTPUT="${root}/output.log"
     : > "${root}/commands.log"
-    set +e
-    (
+    if (
         export PATH="${root}/bin:${PATH}"
         export FAKE_COMMAND_LOG="${root}/commands.log"
         unset \
@@ -350,7 +425,13 @@ run_target() {
             LIFEOS_PUSH_IMAGES \
             LIFEOS_TRIVY_CACHE_DIR \
             LIFEOS_TRIVY_IMAGE \
+            FAKE_DOCKER_COMPOSE_VERSION_STATUS \
             FAKE_DOCKER_STDIN_LOG \
+            FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
+            FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
+            FAKE_CURL_REDIRECT_STATUS \
+            FAKE_CURL_REDIRECT_URL \
+            FAKE_DIRNAME_OUTPUT \
             RUNNER_TEMP \
             STAGING_SERVICE_HEALTH_URLS_JSON \
             STAGING_DEPLOY_WEBHOOK_URL
@@ -362,9 +443,11 @@ run_target() {
             export PATH="${root}/bin:/usr/bin:/bin"
         fi
         bash "${root}/scripts/${script}" "$@"
-    ) > "${RUN_OUTPUT}" 2>&1
-    RUN_STATUS=$?
-    set -e
+    ) > "${RUN_OUTPUT}" 2>&1; then
+        RUN_STATUS=0
+    else
+        RUN_STATUS=$?
+    fi
 }
 
 test_build_rejects_missing_services() {
@@ -439,6 +522,55 @@ test_build_passes_jar_argument_and_honors_push_switch() {
 
     assert_status 0 "container build with pushes disabled"
     assert_log_excludes "${TEST_ROOT}" $'docker\tpush\t' "disabled container image push"
+}
+
+test_container_scripts_reject_invalid_generated_image_references() {
+    local case_number=0
+    local image_prefix image_tag expected_reference expected_output_reference
+    local -a validation_cases=(
+        "registry:|local|registry:/example-service:local"
+        "team//api|local|team//api/example-service:local"
+        "lifeos|invalid/tag|lifeos/example-service:invalid/tag"
+        "[aaaa]|local|[aaaa]/example-service:local"
+    )
+    local validation_case
+
+    for validation_case in "${validation_cases[@]}"; do
+        IFS='|' read -r image_prefix image_tag expected_reference <<< "${validation_case}"
+        ((case_number += 1))
+        printf -v expected_output_reference '%q' "${expected_reference}"
+
+        new_harness "build-invalid-image-reference-${case_number}" build-container-images.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+        run_target "${TEST_ROOT}" build-container-images.sh \
+            "LIFEOS_IMAGE_PREFIX=${image_prefix}" \
+            "LIFEOS_IMAGE_TAG=${image_tag}"
+
+        assert_status 64 "container build with invalid generated reference ${expected_reference}"
+        assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+            "container build image-reference validation ${expected_reference}"
+        if [[ -s "${TEST_ROOT}/commands.log" ]]; then
+            fail "container build with invalid reference ${expected_reference} must not invoke Docker"
+        fi
+
+        new_harness "scan-invalid-image-reference-${case_number}" scan-container-images.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+
+        run_target "${TEST_ROOT}" scan-container-images.sh \
+            "LIFEOS_IMAGE_PREFIX=${image_prefix}" \
+            "LIFEOS_IMAGE_TAG=${image_tag}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "FAKE_DOCKER_IMAGE_INSPECT_STATUS=1"
+
+        assert_status 64 "container scan with invalid generated reference ${expected_reference}"
+        assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+            "container scan image-reference validation ${expected_reference}"
+        if [[ -s "${TEST_ROOT}/commands.log" ]]; then
+            fail "container scan with invalid reference ${expected_reference} must not invoke Docker"
+        fi
+    done
 }
 
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
@@ -544,6 +676,23 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
     assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' "database provisioning after a health timeout"
 }
 
+test_database_provisioning_requires_the_compose_plugin() {
+    new_harness provision-missing-compose-plugin provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh FAKE_DOCKER_COMPOSE_VERSION_STATUS=127
+
+    assert_status 69 "database provisioning without the Compose plugin"
+    assert_file_contains "${RUN_OUTPUT}" "docker Compose plugin is required" \
+        "database provisioning Compose plugin preflight"
+    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion' \
+        "database provisioning Compose plugin preflight command"
+    assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
+        "database provisioning after a missing Compose plugin"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning SQL execution after a missing Compose plugin"
+}
+
 test_database_provisioning_rejects_unbounded_timeout() {
     new_harness provision-invalid-timeout provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -571,11 +720,27 @@ test_database_provisioning_sql_keeps_create_queries_open_for_gexec() {
     local provision_file="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
 
     assert_file_contains "${provision_file}" \
-        $'WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = \'lifeos_identity\')\n\\gexec' \
+        $'WHERE NOT EXISTS (\n    SELECT 1\n    FROM pg_database\n    WHERE datname = \'lifeos_identity\'\n)\n\\gexec' \
         "identity database provisioning statement"
     assert_file_contains "${provision_file}" \
-        $'WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = \'lifeos_task_goal\')\n\\gexec' \
+        $'WHERE NOT EXISTS (\n    SELECT 1\n    FROM pg_database\n    WHERE datname = \'lifeos_task_goal\'\n)\n\\gexec' \
         "task-goal database provisioning statement"
+}
+
+test_verifier_repository_root_resolution_fails_closed() {
+    local verifier
+    for verifier in verify-pipeline-scripts.sh verify-sbom.sh; do
+        new_harness "${verifier%.sh}-root-resolution" "${verifier}"
+        ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/dirname"
+
+        run_target "${TEST_ROOT}" "${verifier}"
+
+        assert_nonzero_status "${verifier} with an unresolvable repository root"
+        assert_log_contains "${TEST_ROOT}" $'dirname\t' \
+            "${verifier} repository-root lookup"
+        assert_file_excludes "${RUN_OUTPUT}" "Validated" \
+            "${verifier} after repository-root lookup failure"
+    done
 }
 
 test_performance_smoke_accepts_100_vus_and_prefers_k6() {
@@ -606,8 +771,14 @@ test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
 
     assert_status 0 "performance smoke test using Docker fallback"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--volume\t'"${TEST_ROOT}"$':/work:ro\t--volume\t'"${TEST_ROOT}"$'/build/reports/performance/k6-summary.json:/tmp/k6-summary.json\t--workdir\t/work\tgrafana/k6:0.55.0\trun\t--quiet\t--summary-export\t/tmp/k6-summary.json' \
-        "performance Docker fallback mounts"
+        $'docker\trun\t--rm\t--volume\t'"${TEST_ROOT}"$':/work:ro\t--volume\t' \
+        "performance Docker fallback read-only repository mount"
+    assert_log_contains "${TEST_ROOT}" \
+        $'grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2\trun\t--quiet\t--summary-export\t/tmp/lifeos-k6-summary.' \
+        "performance Docker fallback digest-pinned image and temporary summary"
+    assert_log_excludes "${TEST_ROOT}" \
+        $':/tmp/k6-summary.json' \
+        "performance Docker fallback predictable container summary path"
     if [[ ! -s "${TEST_ROOT}/build/reports/performance/k6-summary.json" ]]; then
         fail "performance Docker fallback must write the mounted summary file"
     fi
@@ -684,7 +855,7 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
 
     assert_status 0 "staging deployment with a valid webhook"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
         "staging deployment bounded HTTPS transport"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://deploy.example.test/hooks/staging" \
@@ -698,6 +869,73 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
         "staging deployment webhook payload"
 }
 
+test_contract_sensitive_posts_reject_redirects() {
+    local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    new_harness deploy-redirect deploy-staging.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42" \
+        "FAKE_CURL_REDIRECT_URL=https://deploy.example.test/hooks/staging" \
+        "FAKE_CURL_REDIRECT_STATUS=302"
+
+    assert_status 47 "staging deployment receiving a 302 redirect"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https' \
+        "staging deployment redirect rejection"
+    assert_file_excludes "${RUN_OUTPUT}" \
+        "Staging deployment endpoint accepted" \
+        "staging deployment after a redirect"
+
+    new_harness end-to-end-post-redirect end-to-end-smoke-test.sh
+
+    # The fake response carries the canonical ID on a 302 hop and a different ID on the synthetic
+    # final response. Without --max-redirs 0, the old request would follow the redirect and the
+    # broad header scan would incorrectly accept that intermediate correlation header.
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_REDIRECT_URL=https://gateway.example.test/api/v1/accounts" \
+        "FAKE_CURL_REDIRECT_STATUS=302" \
+        "FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID=11111111-1111-4111-8111-111111111111" \
+        "FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID=different-final-correlation-id"
+
+    assert_status 47 "end-to-end account request receiving a 302 redirect"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--header\tX-Correlation-ID: 11111111-1111-4111-8111-111111111111' \
+        "end-to-end account redirect rejection"
+    assert_file_excludes "${RUN_OUTPUT}" \
+        "End-to-end gateway-to-identity contract passed" \
+        "end-to-end smoke after an intermediate correlation header"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "end-to-end readiness redirects remain enabled"
+
+    new_harness chaos-redirect run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+        "FAKE_CURL_REDIRECT_URL=https://chaos.example.test/experiments" \
+        "FAKE_CURL_REDIRECT_STATUS=303"
+
+    assert_status 47 "chaos webhook receiving a 303 redirect"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
+        "chaos webhook redirect rejection"
+    assert_log_line_count "${TEST_ROOT}" $'curl\t' 1 \
+        "chaos recovery probes after a redirected webhook"
+}
+
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic() {
     new_harness staging-missing-config staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -707,6 +945,30 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic() {
     assert_status 64 "staging smoke test without service URLs"
     assert_file_contains "${RUN_OUTPUT}" "STAGING_SERVICE_HEALTH_URLS_JSON is required" "staging smoke configuration validation"
     assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging smoke without service URLs"
+
+    new_harness staging-malformed-config staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":'
+
+    assert_status 64 "staging smoke test with malformed service URL JSON"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "STAGING_SERVICE_HEALTH_URLS_JSON must map service names to HTTPS actuator health URLs" \
+        "staging smoke malformed JSON validation"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging smoke with malformed service URL JSON"
+
+    new_harness staging-structurally-invalid-config staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON=["https://staging.example.test/actuator/health/readiness"]'
+
+    assert_status 64 "staging smoke test with a non-object service URL map"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "STAGING_SERVICE_HEALTH_URLS_JSON must map service names to HTTPS actuator health URLs" \
+        "staging smoke structural JSON validation"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging smoke with a non-object service URL map"
 
     new_harness staging-readiness-failure staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -752,7 +1014,7 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
 
     assert_status 0 "chaos experiment with successful recovery probes"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
         "chaos experiment bounded webhook transport"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://chaos.example.test/experiments" \
@@ -771,16 +1033,20 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch
+test_container_scripts_reject_invalid_generated_image_references
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_database_provisioning_waits_before_exec_and_handles_failures
+test_database_provisioning_requires_the_compose_plugin
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
+test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
 test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
+test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
 

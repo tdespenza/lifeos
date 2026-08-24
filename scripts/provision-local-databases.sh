@@ -23,6 +23,11 @@ if [[ ! "${STARTUP_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
     exit 64
 fi
 
+if ! docker compose version >/dev/null 2>&1; then
+    echo "docker Compose plugin is required to provision local LifeOS databases" >&2
+    exit 69
+fi
+
 # The script intentionally consumes the caller's Compose environment/.env file rather than storing
 # credentials. It is idempotent and does not drop, alter, or overwrite existing databases.
 docker compose -f "${COMPOSE_FILE}" up --detach --wait \

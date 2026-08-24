@@ -6,6 +6,14 @@ readonly REPOSITORY_ROOT
 readonly IMAGE_PREFIX="${LIFEOS_IMAGE_PREFIX:-lifeos}"
 readonly IMAGE_TAG="${LIFEOS_IMAGE_TAG:-local}"
 readonly PUSH_IMAGES="${LIFEOS_PUSH_IMAGES:-false}"
+readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
+readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
+# Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
+# "[aaaa]". Until that parser is available, accept only DNS-style registry hosts rather than
+# allowing an invalid generated reference to reach Docker.
+readonly IMAGE_REGISTRY_HOST_PATTERN="${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN}(\.${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN})*"
+readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
+readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
 SERVICES=()
 
 while IFS= read -r service; do
@@ -14,19 +22,21 @@ done < <(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -na
     -exec basename {} .Dockerfile \; | sort)
 readonly SERVICES
 
+# Validate the fully assembled reference so malformed registry ports, repository segments, tags,
+# and Dockerfile-derived service names fail before any image build or push is attempted.
+validate_image_reference() {
+    local image_reference="$1"
+
+    if [[ ! "${image_reference}" =~ ${IMAGE_REFERENCE_PATTERN} ]]; then
+        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
+            "${image_reference}" >&2
+        return 1
+    fi
+}
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to build LifeOS container images" >&2
     exit 69
-fi
-
-if [[ ! "${IMAGE_PREFIX}" =~ ^[a-z0-9][a-z0-9./:-]*$ ]]; then
-    echo "LIFEOS_IMAGE_PREFIX must be a lower-case container repository prefix" >&2
-    exit 64
-fi
-
-if [[ ! "${IMAGE_TAG}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
-    echo "LIFEOS_IMAGE_TAG must be a valid container tag" >&2
-    exit 64
 fi
 
 case "${PUSH_IMAGES}" in
@@ -41,6 +51,12 @@ if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     echo "No service Dockerfiles found in infrastructure/docker" >&2
     exit 66
 fi
+
+for service in "${SERVICES[@]}"; do
+    if ! validate_image_reference "${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"; then
+        exit 64
+    fi
+done
 
 for service in "${SERVICES[@]}"; do
     jar_directory="${REPOSITORY_ROOT}/services/${service}/build/libs"

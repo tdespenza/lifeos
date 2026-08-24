@@ -7,6 +7,18 @@ readonly TARGET_URL="${LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL:-}"
 readonly VUS="${LIFEOS_PERFORMANCE_VUS:-10}"
 readonly DURATION="${LIFEOS_PERFORMANCE_DURATION:-15s}"
 readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
+readonly K6_IMAGE="grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2"
+
+temporary_summary_path=""
+
+cleanup_temporary_summary() {
+    # Keep a failed Docker run from leaving its private bind-mount source in the host temp directory.
+    if [[ -n "${temporary_summary_path}" ]]; then
+        rm -f -- "${temporary_summary_path}"
+    fi
+}
+
+trap cleanup_temporary_summary EXIT
 
 canonicalize_path() {
     # Resolve lexical path components and symlinks without creating any output directories first.
@@ -113,18 +125,31 @@ if command -v k6 >/dev/null 2>&1; then
         --env "DURATION=${DURATION}" \
         "${K6_SCRIPT}"
 elif command -v docker >/dev/null 2>&1; then
+    temporary_summary_path="$(mktemp "${TMPDIR:-/tmp}/lifeos-k6-summary.XXXXXX")" || {
+        echo "Unable to create a temporary k6 summary file" >&2
+        exit 73
+    }
+    container_summary_path="/tmp/$(basename "${temporary_summary_path}")"
+
     docker run --rm \
         --volume "${REPOSITORY_ROOT}:/work:ro" \
-        --volume "${SUMMARY_PATH}:/tmp/k6-summary.json" \
+        --volume "${temporary_summary_path}:${container_summary_path}" \
         --workdir /work \
-        grafana/k6:0.55.0 \
+        "${K6_IMAGE}" \
         run \
         --quiet \
-        --summary-export /tmp/k6-summary.json \
+        --summary-export "${container_summary_path}" \
         --env "TARGET_URL=${TARGET_URL}" \
         --env "VUS=${VUS}" \
         --env "DURATION=${DURATION}" \
         "/work/scripts/performance/readiness-smoke.js"
+
+    if [[ ! -s "${temporary_summary_path}" ]]; then
+        echo "k6 did not produce a performance summary: ${SUMMARY_PATH}" >&2
+        exit 65
+    fi
+    mv -- "${temporary_summary_path}" "${SUMMARY_PATH}"
+    temporary_summary_path=""
 else
     echo "k6 or Docker is required to run the performance smoke test" >&2
     exit 69

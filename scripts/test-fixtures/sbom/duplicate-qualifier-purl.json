@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "duplicate-qualifier",
+      "purl": "pkg:maven/com.example/duplicate-qualifier@1.0.0?type=jar&type=war"
+    }
+  ]
+}

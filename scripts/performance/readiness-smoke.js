@@ -16,6 +16,7 @@ export const options = {
 export default function () {
   const response = http.get(`${targetUrl.replace(/\/$/, '')}/actuator/health/readiness`, {
     tags: {operation: 'readiness-smoke'},
+    timeout: '5s',
   });
   check(response, {
     'readiness status is 200': (result) => result.status === 200,

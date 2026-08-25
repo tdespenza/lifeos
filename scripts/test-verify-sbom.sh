@@ -6,47 +6,107 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VERIFY_SBOM="$SCRIPT_DIR/verify-sbom.sh"
 FIXTURE_DIR="$SCRIPT_DIR/test-fixtures/sbom"
 
+assert_json_object_fixture() {
+    local fixture="$1"
+
+    if [[ ! -s "$fixture" ]]; then
+        echo "FAIL: fixture is missing or empty: $fixture" >&2
+        exit 1
+    fi
+
+    if ! jq --exit-status --slurp '
+        length == 1 and (.[0] | type == "object")
+    ' "$fixture" >/dev/null; then
+        echo "FAIL: fixture is not a single valid JSON object: $fixture" >&2
+        exit 1
+    fi
+}
+
+assert_succeeds() {
+    local description="$1"
+    local fixture="$2"
+
+    assert_json_object_fixture "$fixture"
+    if ! bash "$VERIFY_SBOM" "$fixture"; then
+        echo "FAIL: $description" >&2
+        exit 1
+    fi
+}
+
 assert_fails() {
     local description="$1"
-    shift
-    if "$@"; then
+    local fixture="$2"
+
+    assert_json_object_fixture "$fixture"
+    if bash "$VERIFY_SBOM" "$fixture"; then
         echo "FAIL: $description (command unexpectedly succeeded)" >&2
         exit 1
     fi
 }
 
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/valid-library-purls.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/minimal-cyclonedx-1.5.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/valid-cryptographic-asset-1.6.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-metadata.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-metadata-component.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-components.json"
-bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-library-components.json"
+assert_multiple_documents_are_rejected() {
+    local fixture="$1"
+    local output
+
+    if [[ ! -s "$fixture" ]]; then
+        echo "FAIL: fixture is missing or empty: $fixture" >&2
+        exit 1
+    fi
+
+    if ! jq --exit-status --slurp '
+        length == 2 and all(.[]; type == "object")
+    ' "$fixture" >/dev/null; then
+        echo "FAIL: fixture must contain two valid JSON objects: $fixture" >&2
+        exit 1
+    fi
+
+    if output="$(bash "$VERIFY_SBOM" "$fixture" 2>&1)"; then
+        echo "FAIL: multiple top-level JSON documents are accepted" >&2
+        exit 1
+    fi
+
+    if [[ "$output" != *"CycloneDX SBOM must contain exactly one JSON document"* ]]; then
+        echo "FAIL: multiple top-level JSON documents produced an unexpected diagnostic" >&2
+        exit 1
+    fi
+}
+
+assert_succeeds "valid library PURLs are accepted" "$FIXTURE_DIR/valid-library-purls.json"
+assert_succeeds "a minimal CycloneDX 1.5 SBOM is accepted" "$FIXTURE_DIR/minimal-cyclonedx-1.5.json"
+assert_succeeds "a CycloneDX 1.6 cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.6.json"
+assert_succeeds "a later CycloneDX cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.7.json"
+assert_succeeds "an SBOM without metadata is accepted" "$FIXTURE_DIR/without-metadata.json"
+assert_succeeds "an SBOM without a metadata component is accepted" "$FIXTURE_DIR/without-metadata-component.json"
+assert_succeeds "an SBOM without components is accepted" "$FIXTURE_DIR/without-components.json"
+assert_succeeds "an SBOM without library components is accepted" "$FIXTURE_DIR/without-library-components.json"
 assert_fails "a library component without a PURL is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/missing-library-purl.json"
+    "$FIXTURE_DIR/missing-library-purl.json"
 assert_fails "a library component with a malformed PURL is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/malformed-library-purl.json"
+    "$FIXTURE_DIR/malformed-library-purl.json"
 assert_fails "a nested library component without a PURL is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/nested-missing-library-purl.json"
+    "$FIXTURE_DIR/nested-missing-library-purl.json"
 assert_fails "a nested library component with a malformed PURL is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/nested-malformed-library-purl.json"
+    "$FIXTURE_DIR/nested-malformed-library-purl.json"
 assert_fails "a component without a name is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/missing-component-name.json"
+    "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-component-name.json"
+    "$FIXTURE_DIR/invalid-component-name.json"
 assert_fails "a component without a type is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/missing-component-type.json"
+    "$FIXTURE_DIR/missing-component-type.json"
 assert_fails "a component with an unsupported type is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-component-type.json"
+    "$FIXTURE_DIR/invalid-component-type.json"
 assert_fails "an empty metadata component is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/empty-metadata-component.json"
+    "$FIXTURE_DIR/empty-metadata-component.json"
 assert_fails "an invalid metadata component is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-metadata-component.json"
+    "$FIXTURE_DIR/invalid-metadata-component.json"
 assert_fails "a library PURL with an invalid qualifier key is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-qualifier-key-purl.json"
+    "$FIXTURE_DIR/invalid-qualifier-key-purl.json"
 assert_fails "a library PURL with duplicate qualifier keys is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/duplicate-qualifier-purl.json"
+    "$FIXTURE_DIR/duplicate-qualifier-purl.json"
 assert_fails "a library PURL with malformed percent encoding is rejected" \
-    bash "$VERIFY_SBOM" "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
+    "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
+assert_fails "a CycloneDX 1.5 cryptographic asset is rejected" \
+    "$FIXTURE_DIR/invalid-cryptographic-asset-1.5.json"
+assert_multiple_documents_are_rejected "$FIXTURE_DIR/multiple-top-level-documents.json"
 
 echo "CycloneDX SBOM validation tests passed"

@@ -30,6 +30,9 @@ fake_docker() {
     fi
 
     if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then
+        if [[ "${FAKE_DOCKER_COMPOSE_VERSION_STATUS:-0}" == "0" ]]; then
+            printf '%s\n' "${FAKE_DOCKER_COMPOSE_VERSION_OUTPUT:-2.17.0}"
+        fi
         return "${FAKE_DOCKER_COMPOSE_VERSION_STATUS:-0}"
     fi
 
@@ -282,7 +285,13 @@ assert_file_contains() {
     local file="$1"
     local expected="$2"
     local description="$3"
-    local contents
+    local contents=""
+    if [[ ! -f "${file}" ]]; then
+        fail "${description}: required file is missing: ${file}"
+    fi
+    if [[ ! -r "${file}" ]]; then
+        fail "${description}: required file is not readable: ${file}"
+    fi
     IFS= read -r -d '' contents < "${file}" || true
     if [[ "${contents}" != *"${expected}"* ]]; then
         fail "${description}: missing '${expected}'"
@@ -293,7 +302,13 @@ assert_file_excludes() {
     local file="$1"
     local unexpected="$2"
     local description="$3"
-    local contents
+    local contents=""
+    if [[ ! -f "${file}" ]]; then
+        fail "${description}: required file is missing: ${file}"
+    fi
+    if [[ ! -r "${file}" ]]; then
+        fail "${description}: required file is not readable: ${file}"
+    fi
     IFS= read -r -d '' contents < "${file}" || true
     if [[ "${contents}" == *"${unexpected}"* ]]; then
         fail "${description}: found unexpected '${unexpected}'"
@@ -358,6 +373,24 @@ assert_log_line_count() {
     fi
 }
 
+assert_curl_retry_probe_count() {
+    local root="$1"
+    local expected_count="$2"
+    local description="$3"
+    local line
+    local actual_count=0
+
+    while IFS= read -r line; do
+        if [[ "${line}" == $'curl\t'* && "${line}" == *$'\t--retry\t'* ]]; then
+            ((actual_count += 1))
+        fi
+    done < "${root}/commands.log"
+
+    if [[ "${actual_count}" -ne "${expected_count}" ]]; then
+        fail "${description}: expected ${expected_count} curl retry probes, got ${actual_count}"
+    fi
+}
+
 new_harness() {
     local name="$1"
     shift
@@ -410,6 +443,16 @@ disable_fake_command() {
     unlink "${root}/bin/${command}"
 }
 
+add_prerequisite_command() {
+    local root="$1"
+    local command="$2"
+    local command_path
+
+    command_path="$(command -p -v "${command}")" || fail "System ${command} is required by the operational test harness"
+    mkdir -p "${root}/prerequisite-bin"
+    ln -s "${command_path}" "${root}/prerequisite-bin/${command}"
+}
+
 run_target() {
     local root="$1"
     local script="$2"
@@ -445,6 +488,7 @@ run_target() {
             LIFEOS_TRIVY_CACHE_DIR \
             LIFEOS_TRIVY_IMAGE \
             FAKE_DOCKER_COMPOSE_VERSION_STATUS \
+            FAKE_DOCKER_COMPOSE_VERSION_OUTPUT \
             FAKE_DOCKER_COMPOSE_UP_MESSAGE \
             FAKE_DOCKER_COMPOSE_UP_STATUS \
             FAKE_DOCKER_INFO_STATUS \
@@ -469,7 +513,9 @@ run_target() {
             shift
         done
         if [[ "${LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6:-false}" == "true" ]]; then
-            export PATH="${root}/bin:/usr/bin:/bin"
+            # Keep native-k6 absence deterministic even when a developer's host PATH has k6.
+            # Each fallback test supplies only its explicit non-k6 prerequisites in this directory.
+            export PATH="${root}/bin:${root}/prerequisite-bin"
         fi
         bash "${root}/scripts/${script}" "$@"
     ) > "${RUN_OUTPUT}" 2>&1; then
@@ -497,6 +543,31 @@ test_file_assertions_match_full_file_literals() {
         "non-contiguous multiline assertion") >/dev/null 2>&1; then
         fail "full-file multiline assertion must reject non-contiguous content"
     fi
+}
+
+test_file_assertions_fail_clearly_when_files_are_missing() {
+    new_harness file-assertions-missing
+    local missing_file="${TEST_ROOT}/missing.txt"
+
+    RUN_OUTPUT="${TEST_ROOT}/contains-missing-output.log"
+    if (assert_file_contains "${missing_file}" "expected" "missing contains assertion") \
+        > "${RUN_OUTPUT}" 2>&1; then
+        fail "file-contains assertion must fail when its file is missing"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" "required file is missing: ${missing_file}" \
+        "file-contains missing-file diagnostic"
+    assert_file_excludes "${RUN_OUTPUT}" "unbound variable" \
+        "file-contains missing-file diagnostic"
+
+    RUN_OUTPUT="${TEST_ROOT}/excludes-missing-output.log"
+    if (assert_file_excludes "${missing_file}" "unexpected" "missing excludes assertion") \
+        > "${RUN_OUTPUT}" 2>&1; then
+        fail "file-excludes assertion must fail when its file is missing"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" "required file is missing: ${missing_file}" \
+        "file-excludes missing-file diagnostic"
+    assert_file_excludes "${RUN_OUTPUT}" "unbound variable" \
+        "file-excludes missing-file diagnostic"
 }
 
 test_command_double_dispatch_fails_closed() {
@@ -709,6 +780,27 @@ test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
     assert_log_contains "${TEST_ROOT}" \
         $'\tfs\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--scanners\tvuln,secret,misconfig\t--severity\tHIGH,CRITICAL\t--skip-dirs\t.git\t--skip-dirs\t.gradle\t.' \
         "source security scan Trivy filesystem arguments"
+    assert_log_order "${TEST_ROOT}" \
+        $'docker\tinfo' \
+        $'docker\trun\t' \
+        "source security scan daemon preflight ordering"
+}
+
+test_source_scan_requires_an_accessible_docker_daemon() {
+    new_harness scan-source-unavailable-daemon scan-source-security.sh
+
+    run_target "${TEST_ROOT}" scan-source-security.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "FAKE_DOCKER_INFO_STATUS=1"
+
+    assert_status 69 "source security scan with an unavailable Docker daemon"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Docker daemon is unavailable or inaccessible" \
+        "source security scan Docker daemon preflight"
+    assert_log_contains "${TEST_ROOT}" $'docker\tinfo' \
+        "source security scan Docker daemon preflight command"
+    assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+        "source security scan after an unavailable Docker daemon"
 }
 
 test_database_provisioning_waits_before_exec_and_handles_failures() {
@@ -774,12 +866,58 @@ test_database_provisioning_requires_the_compose_plugin() {
     assert_status 69 "database provisioning without the Compose plugin"
     assert_file_contains "${RUN_OUTPUT}" "docker Compose plugin is required" \
         "database provisioning Compose plugin preflight"
-    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion' \
+    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion\t--short' \
         "database provisioning Compose plugin preflight command"
     assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
         "database provisioning after a missing Compose plugin"
     assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
         "database provisioning SQL execution after a missing Compose plugin"
+}
+
+test_database_provisioning_requires_a_supported_compose_version() {
+    new_harness provision-old-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=2.16.9"
+
+    assert_status 69 "database provisioning with an old Compose plugin"
+    assert_file_contains "${RUN_OUTPUT}" "docker Compose 2.17.0 or newer is required" \
+        "database provisioning old Compose version"
+    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion\t--short' \
+        "database provisioning old Compose version probe"
+    assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
+        "database provisioning after an old Compose plugin"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning SQL execution after an old Compose plugin"
+
+    new_harness provision-supported-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=v2.17.0-desktop.1"
+
+    assert_status 0 "database provisioning with the minimum supported Compose version"
+    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion\t--short' \
+        "database provisioning supported Compose version probe"
+    assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
+        "database provisioning supported Compose health wait"
+
+    new_harness provision-malformed-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=not-a-version"
+
+    assert_status 69 "database provisioning with malformed Compose version output"
+    assert_file_contains "${RUN_OUTPUT}" "must report a semantic version" \
+        "database provisioning malformed Compose version"
+    assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion\t--short' \
+        "database provisioning malformed Compose version probe"
+    assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
+        "database provisioning after malformed Compose version output"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning SQL execution after malformed Compose version output"
 }
 
 test_database_provisioning_rejects_unbounded_timeout() {
@@ -818,7 +956,7 @@ test_database_provisioning_sql_keeps_create_queries_open_for_gexec() {
 
 test_verifier_repository_root_resolution_fails_closed() {
     local verifier
-    for verifier in verify-pipeline-scripts.sh verify-sbom.sh; do
+    for verifier in verify-pipeline-scripts.sh verify-sbom.sh verify-architecture.sh; do
         new_harness "${verifier%.sh}-root-resolution" "${verifier}"
         ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/dirname"
 
@@ -852,6 +990,10 @@ test_performance_smoke_accepts_100_vus_and_prefers_k6() {
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
     new_harness performance-docker performance-smoke-test.sh performance/readiness-smoke.js
     disable_fake_command "${TEST_ROOT}" k6
+    local prerequisite
+    for prerequisite in bash basename dirname mkdir mktemp mv readlink rm; do
+        add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+    done
 
     run_target "${TEST_ROOT}" performance-smoke-test.sh \
         "LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6=true" \
@@ -1134,11 +1276,12 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
     assert_log_contains "${TEST_ROOT}" \
         $'\t--header\tContent-Type: application/json\t--data\t{"mock":true}\t--output\t/dev/null\thttps://chaos.example.test/experiments' \
         "chaos experiment webhook payload"
-    assert_log_line_count "${TEST_ROOT}" $'/actuator/health/readiness' 3 \
-        "chaos experiment recovery readiness probes"
+    assert_curl_retry_probe_count "${TEST_ROOT}" 3 \
+        "chaos experiment recovery probes"
 }
 
 test_file_assertions_match_full_file_literals
+test_file_assertions_fail_clearly_when_files_are_missing
 test_command_double_dispatch_fails_closed
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
@@ -1147,8 +1290,10 @@ test_container_scripts_reject_invalid_generated_image_references
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
+test_source_scan_requires_an_accessible_docker_daemon
 test_database_provisioning_waits_before_exec_and_handles_failures
 test_database_provisioning_requires_the_compose_plugin
+test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_verifier_repository_root_resolution_fails_closed

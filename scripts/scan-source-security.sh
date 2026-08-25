@@ -15,6 +15,11 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 69
 fi
 
+if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is unavailable or inaccessible; start Docker and verify access before running the Trivy source security scan" >&2
+    exit 69
+fi
+
 mkdir -p "${TRIVY_CACHE_DIR}"
 
 docker run --rm \

@@ -91,6 +91,7 @@ async function executeReadinessScenario() {
     assert.equal(requestCalls.length, 1);
     assert.equal(requestCalls[0].url, 'https://gateway.example.test/actuator/health/readiness');
     assert.equal(requestCalls[0].options.tags.operation, 'readiness-smoke');
+    assert.equal(requestCalls[0].options.timeout, '5s');
     assert.deepEqual(jsonFields, ['status']);
     assert.deepEqual(sleepCalls, [0.1]);
     assert.equal(checkCalls.length, 1);

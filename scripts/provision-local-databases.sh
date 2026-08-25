@@ -9,6 +9,80 @@ readonly STARTUP_TIMEOUT_SECONDS="${LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS:-6
 readonly MINIMUM_COMPOSE_VERSION_MAJOR=2
 readonly MINIMUM_COMPOSE_VERSION_MINOR=17
 readonly MINIMUM_COMPOSE_VERSION_PATCH=0
+readonly SEMVER_PATTERN='^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+
+is_valid_semver_numeric_identifier() {
+    local identifier="$1"
+
+    [[ "${identifier}" == "0" || "${identifier}" =~ ^[1-9][0-9]*$ ]]
+}
+
+has_valid_semver_prerelease_identifiers() {
+    local prerelease="$1"
+    local identifier
+    local -a identifiers
+
+    if [[ -z "${prerelease}" ]]; then
+        return 0
+    fi
+
+    IFS='.' read -r -a identifiers <<< "${prerelease}"
+    for identifier in "${identifiers[@]}"; do
+        if [[ "${identifier}" =~ ^[0-9]+$ ]] \
+            && ! is_valid_semver_numeric_identifier "${identifier}"; then
+            return 1
+        fi
+    done
+}
+
+decimal_is_less_than() {
+    local left="$1"
+    local right="$2"
+    local LC_ALL=C
+
+    if (( ${#left} != ${#right} )); then
+        (( ${#left} < ${#right} ))
+        return
+    fi
+
+    [[ "${left}" < "${right}" ]]
+}
+
+decimal_is_greater_than() {
+    decimal_is_less_than "$2" "$1"
+}
+
+is_supported_compose_version() {
+    local major="$1"
+    local minor="$2"
+    local patch="$3"
+    local prerelease="$4"
+
+    if decimal_is_less_than "${major}" "${MINIMUM_COMPOSE_VERSION_MAJOR}"; then
+        return 1
+    fi
+    if decimal_is_greater_than "${major}" "${MINIMUM_COMPOSE_VERSION_MAJOR}"; then
+        return 0
+    fi
+
+    if decimal_is_less_than "${minor}" "${MINIMUM_COMPOSE_VERSION_MINOR}"; then
+        return 1
+    fi
+    if decimal_is_greater_than "${minor}" "${MINIMUM_COMPOSE_VERSION_MINOR}"; then
+        return 0
+    fi
+
+    if decimal_is_less_than "${patch}" "${MINIMUM_COMPOSE_VERSION_PATCH}"; then
+        return 1
+    fi
+    if decimal_is_greater_than "${patch}" "${MINIMUM_COMPOSE_VERSION_PATCH}"; then
+        return 0
+    fi
+
+    # A prerelease has lower SemVer precedence than its corresponding release. At the threshold,
+    # 2.17.0-rc.1 must not be treated as 2.17.0, while build metadata remains precedence-neutral.
+    [[ -z "${prerelease}" ]]
+}
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to provision local LifeOS databases" >&2
@@ -33,19 +107,25 @@ fi
 
 # Compose added the bounded --wait-timeout startup flag in 2.17.0. Check the installed plugin
 # before issuing `up`, so an older CLI cannot silently ignore or reject the provisioning bound.
-if [[ ! "${compose_version}" =~ ^v?([0-9]{1,9})\.([0-9]{1,9})\.([0-9]{1,9})([-+][0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "${compose_version}" =~ ${SEMVER_PATTERN} ]]; then
     echo "docker Compose must report a semantic version (for example 2.17.0) to use --wait-timeout" >&2
     exit 69
 fi
-compose_major=$((10#${BASH_REMATCH[1]}))
-compose_minor=$((10#${BASH_REMATCH[2]}))
-compose_patch=$((10#${BASH_REMATCH[3]}))
+compose_major="${BASH_REMATCH[1]}"
+compose_minor="${BASH_REMATCH[2]}"
+compose_patch="${BASH_REMATCH[3]}"
+compose_prerelease="${BASH_REMATCH[5]:-}"
 
-if (( compose_major < MINIMUM_COMPOSE_VERSION_MAJOR
-    || (compose_major == MINIMUM_COMPOSE_VERSION_MAJOR
-        && (compose_minor < MINIMUM_COMPOSE_VERSION_MINOR
-            || (compose_minor == MINIMUM_COMPOSE_VERSION_MINOR
-                && compose_patch < MINIMUM_COMPOSE_VERSION_PATCH))) )); then
+if ! is_valid_semver_numeric_identifier "${compose_major}" \
+    || ! is_valid_semver_numeric_identifier "${compose_minor}" \
+    || ! is_valid_semver_numeric_identifier "${compose_patch}" \
+    || ! has_valid_semver_prerelease_identifiers "${compose_prerelease}"; then
+    echo "docker Compose must report a semantic version (for example 2.17.0) to use --wait-timeout" >&2
+    exit 69
+fi
+
+if ! is_supported_compose_version \
+    "${compose_major}" "${compose_minor}" "${compose_patch}" "${compose_prerelease}"; then
     echo "docker Compose 2.17.0 or newer is required to use --wait-timeout for local database provisioning" >&2
     exit 69
 fi

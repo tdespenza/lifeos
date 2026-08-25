@@ -24,6 +24,11 @@
       "purl": "pkg:maven/org.apache.commons/commons-lang3@3.17.0?type=jar"
     },
     {
+      "type": "library",
+      "name": "encoded-qualifier-separators",
+      "purl": "pkg:maven/com.example/encoded-qualifier-separators@1.0.0?repository_url=x%3Ftype%3Dy"
+    },
+    {
       "type": "application",
       "name": "nested-component-owner",
       "components": [

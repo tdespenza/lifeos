@@ -3,9 +3,9 @@ set -euo pipefail
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
-# Pin the scanner by digest rather than a mutable tag. Update it intentionally with its scan policy
-# and report format, then verify the new image in CI before changing this trusted toolchain input.
-readonly TRIVY_IMAGE="${LIFEOS_TRIVY_IMAGE:-aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac}"
+# Pin the trusted scanner by digest rather than accepting an environment replacement. Update it
+# intentionally with its scan policy and report format, then verify the new image in CI.
+readonly TRIVY_IMAGE="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
 # Keep the scanner database outside /repo. Otherwise a repeat local scan can recursively inspect
 # its own multi-gigabyte vulnerability cache and turn a source-security gate into an I/O bottleneck.
 readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-trivy-cache}"

@@ -5,9 +5,9 @@ REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly IMAGE_PREFIX="${LIFEOS_IMAGE_PREFIX:-lifeos}"
 readonly IMAGE_TAG="${LIFEOS_IMAGE_TAG:-local}"
-# Keep the scanner itself immutable; a mutable scanner tag would make the security gate
-# non-reproducible and could change its policy behavior between otherwise identical builds.
-readonly TRIVY_IMAGE="${LIFEOS_TRIVY_IMAGE:-aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac}"
+# Keep the scanner itself immutable. This container receives the Docker socket, so accepting an
+# environment-provided image would let an untrusted image control the Docker daemon.
+readonly TRIVY_IMAGE="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
 # Share a cache per runner/local machine without placing it in the repository or Docker context.
 readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-trivy-cache}"
 readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'

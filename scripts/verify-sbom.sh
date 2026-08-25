@@ -25,7 +25,7 @@ jq --exit-status --slurp '
 
     def valid_purl:
         if type != "string" then false
-        elif (test("^pkg:[a-z][a-z0-9.-]+/(?:[^/?#[:space:]]+/)*[^/?#@[:space:]]+(?:@[^/?#[:space:]]+)?(?:\\?[a-z][a-z0-9._-]*=[^&#[:space:]]+(?:&[a-z][a-z0-9._-]*=[^&#[:space:]]+)*)?(?:#(?:[^/?#[:space:]]+/)*[^/?#[:space:]]+)?$") | not) then false
+        elif (test("^pkg:[a-z][a-z0-9.-]+/(?:[^/?#[:space:]]+/)*[^/?#@[:space:]]+(?:@[^/?#[:space:]]+)?(?:\\?[a-z][a-z0-9._-]*=[^?=&#[:space:]]+(?:&[a-z][a-z0-9._-]*=[^?=&#[:space:]]+)*)?(?:#(?:[^/?#[:space:]]+/)*[^/?#[:space:]]+)?$") | not) then false
         elif (valid_percent_encoding | not) then false
         else
             purl_qualifier_keys as $keys

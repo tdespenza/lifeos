@@ -803,6 +803,38 @@ test_source_scan_requires_an_accessible_docker_daemon() {
         "source security scan after an unavailable Docker daemon"
 }
 
+test_security_scans_ignore_untrusted_trivy_image_overrides() {
+    local trusted_trivy_image="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
+    local untrusted_trivy_image="registry.example.test/untrusted-trivy:latest"
+
+    new_harness scan-container-trusted-image scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "LIFEOS_TRIVY_IMAGE=${untrusted_trivy_image}"
+
+    assert_status 0 "container scan with an untrusted Trivy image override"
+    assert_log_contains "${TEST_ROOT}" \
+        $'\t'"${trusted_trivy_image}"$'\timage\t' \
+        "container scan trusted Trivy image"
+    assert_log_excludes "${TEST_ROOT}" "${untrusted_trivy_image}" \
+        "container scan untrusted Trivy image override"
+
+    new_harness scan-source-trusted-image scan-source-security.sh
+
+    run_target "${TEST_ROOT}" scan-source-security.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "LIFEOS_TRIVY_IMAGE=${untrusted_trivy_image}"
+
+    assert_status 0 "source security scan with an untrusted Trivy image override"
+    assert_log_contains "${TEST_ROOT}" \
+        $'\t'"${trusted_trivy_image}"$'\tfs\t' \
+        "source security scan trusted Trivy image"
+    assert_log_excludes "${TEST_ROOT}" "${untrusted_trivy_image}" \
+        "source security scan untrusted Trivy image override"
+}
+
 test_database_provisioning_waits_before_exec_and_handles_failures() {
     new_harness provision-success provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -895,13 +927,53 @@ test_database_provisioning_requires_a_supported_compose_version() {
     add_database_provisioning_sql "${TEST_ROOT}"
 
     run_target "${TEST_ROOT}" provision-local-databases.sh \
-        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=v2.17.0-desktop.1"
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=v2.17.0+build.007"
 
-    assert_status 0 "database provisioning with the minimum supported Compose version"
+    assert_status 0 "database provisioning with the minimum supported Compose version and build metadata"
     assert_log_contains "${TEST_ROOT}" $'docker\tcompose\tversion\t--short' \
         "database provisioning supported Compose version probe"
     assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
         "database provisioning supported Compose health wait"
+
+    new_harness provision-newer-prerelease-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=v2.17.1-rc.1+build.9"
+
+    assert_status 0 "database provisioning with a numerically newer Compose prerelease"
+    assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
+        "database provisioning newer Compose prerelease health wait"
+
+    new_harness provision-threshold-prerelease-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=v2.17.0-rc.1+build.9"
+
+    assert_status 69 "database provisioning with a threshold Compose prerelease"
+    assert_file_contains "${RUN_OUTPUT}" "docker Compose 2.17.0 or newer is required" \
+        "database provisioning threshold Compose prerelease"
+    assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
+        "database provisioning after a threshold Compose prerelease"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning SQL execution after a threshold Compose prerelease"
+
+    local invalid_semver
+    for invalid_semver in 02.17.0 2.017.0 2.17.00 2.17.0-rc.01; do
+        new_harness "provision-invalid-compose-${invalid_semver//[^A-Za-z0-9]/-}" \
+            provision-local-databases.sh
+        add_database_provisioning_sql "${TEST_ROOT}"
+
+        run_target "${TEST_ROOT}" provision-local-databases.sh \
+            "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=${invalid_semver}"
+
+        assert_status 69 "database provisioning with invalid Compose semantic version ${invalid_semver}"
+        assert_file_contains "${RUN_OUTPUT}" "must report a semantic version" \
+            "database provisioning invalid Compose semantic version ${invalid_semver}"
+        assert_log_excludes "${TEST_ROOT}" $'\tup\t--detach\t--wait' \
+            "database provisioning after invalid Compose semantic version ${invalid_semver}"
+    done
 
     new_harness provision-malformed-compose provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -1291,6 +1363,7 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_requires_an_accessible_docker_daemon
+test_security_scans_ignore_untrusted_trivy_image_overrides
 test_database_provisioning_waits_before_exec_and_handles_failures
 test_database_provisioning_requires_the_compose_plugin
 test_database_provisioning_requires_a_supported_compose_version

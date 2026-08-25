@@ -105,6 +105,10 @@ assert_fails "a library PURL with duplicate qualifier keys is rejected" \
     "$FIXTURE_DIR/duplicate-qualifier-purl.json"
 assert_fails "a library PURL with malformed percent encoding is rejected" \
     "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
+assert_fails "a library PURL with unencoded qualifier-value separators is rejected" \
+    "$FIXTURE_DIR/unencoded-qualifier-value-separators-purl.json"
+assert_fails "a library PURL with an unencoded equals sign in a qualifier value is rejected" \
+    "$FIXTURE_DIR/unencoded-equals-qualifier-value-purl.json"
 assert_fails "a CycloneDX 1.5 cryptographic asset is rejected" \
     "$FIXTURE_DIR/invalid-cryptographic-asset-1.5.json"
 assert_multiple_documents_are_rejected "$FIXTURE_DIR/multiple-top-level-documents.json"

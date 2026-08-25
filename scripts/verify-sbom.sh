@@ -28,6 +28,44 @@ jq --exit-status --slurp '
         and (contains("[") | not)
         and (contains("]") | not);
 
+    # Only encoded separators and dot characters can change these structural checks.
+    def decode_purl_path_safety_characters:
+        gsub("%2[fF]"; "/")
+        | gsub("%2[eE]"; ".");
+
+    def purl_namespace_segments:
+        split("?")[0]
+        | split("#")[0]
+        | sub("^pkg:[^/]+/"; "")
+        | split("/")
+        | .[0:-1];
+
+    def purl_name_segment:
+        split("?")[0]
+        | split("#")[0]
+        | sub("^pkg:[^/]+/"; "")
+        | split("/")
+        | last
+        | split("@")[0];
+
+    def purl_subpath_segments:
+        split("#") as $parts
+        | if ($parts | length) == 2 then $parts[1] | split("/") else [] end;
+
+    def valid_namespace_segment:
+        decode_purl_path_safety_characters
+        | contains("/") | not;
+
+    def valid_name_segment:
+        decode_purl_path_safety_characters
+        | contains("/") | not;
+
+    def valid_subpath_segment:
+        decode_purl_path_safety_characters as $segment
+        | ($segment | contains("/") | not)
+        and $segment != "."
+        and $segment != "..";
+
     def valid_purl:
         if type != "string" then false
         elif (valid_purl_characters | not) then false
@@ -36,6 +74,9 @@ jq --exit-status --slurp '
         else
             purl_qualifier_keys as $keys
             | ($keys | length) == ($keys | unique | length)
+            and (purl_namespace_segments | all(.[]; valid_namespace_segment))
+            and (purl_name_segment | valid_name_segment)
+            and (purl_subpath_segments | all(.[]; valid_subpath_segment))
         end;
 
     def supports_cryptographic_assets($spec_version):
@@ -107,6 +148,6 @@ jq --exit-status --slurp '
     else
         .[0] | valid_sbom
     end
-' "${SBOM_PATH}" >/dev/null
+' -- "${SBOM_PATH}" >/dev/null
 
 printf '%s\n' "Validated CycloneDX SBOM: ${SBOM_PATH}"

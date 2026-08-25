@@ -71,6 +71,22 @@ assert_multiple_documents_are_rejected() {
     fi
 }
 
+assert_option_like_filename_is_rejected() {
+    local temporary_directory
+
+    temporary_directory="$(mktemp -d)"
+    assert_json_object_fixture "$FIXTURE_DIR/invalid-component-type.json"
+    cp "$FIXTURE_DIR/invalid-component-type.json" "$temporary_directory/--version"
+
+    if (cd "$temporary_directory" && bash "$VERIFY_SBOM" --version); then
+        rm -rf -- "$temporary_directory"
+        echo "FAIL: an option-like SBOM filename bypassed validation" >&2
+        exit 1
+    fi
+
+    rm -rf -- "$temporary_directory"
+}
+
 assert_succeeds "valid library PURLs are accepted" "$FIXTURE_DIR/valid-library-purls.json"
 assert_succeeds "percent-encoded PURL special characters are accepted" \
     "$FIXTURE_DIR/valid-percent-encoded-purl-characters.json"
@@ -115,8 +131,17 @@ assert_fails "a library PURL with unencoded qualifier-value separators is reject
     "$FIXTURE_DIR/unencoded-qualifier-value-separators-purl.json"
 assert_fails "a library PURL with an unencoded equals sign in a qualifier value is rejected" \
     "$FIXTURE_DIR/unencoded-equals-qualifier-value-purl.json"
+assert_fails "a library PURL with an encoded namespace separator is rejected" \
+    "$FIXTURE_DIR/encoded-namespace-separator-purl.json"
+assert_fails "a library PURL with an encoded name separator is rejected" \
+    "$FIXTURE_DIR/encoded-name-separator-purl.json"
+assert_fails "a library PURL with a dot-dot subpath is rejected" \
+    "$FIXTURE_DIR/dot-dot-subpath-purl.json"
+assert_fails "a library PURL with an encoded subpath separator is rejected" \
+    "$FIXTURE_DIR/encoded-subpath-separator-purl.json"
 assert_fails "a CycloneDX 1.5 cryptographic asset is rejected" \
     "$FIXTURE_DIR/invalid-cryptographic-asset-1.5.json"
-assert_multiple_documents_are_rejected "$FIXTURE_DIR/multiple-top-level-documents.json"
+assert_multiple_documents_are_rejected "$FIXTURE_DIR/multiple-top-level-documents.ndjson"
+assert_option_like_filename_is_rejected
 
 echo "CycloneDX SBOM validation tests passed"

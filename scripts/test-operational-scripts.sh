@@ -72,14 +72,14 @@ fake_jq() {
     if [[ "$*" == *'type == "object" and all(.[]; type == "string")'* ]]; then
         # This exact staging predicate has input-dependent jq semantics, so use the system jq
         # outside the harness PATH to make malformed and structurally invalid fixtures fail alike.
-        if ! command -p -v jq >/dev/null 2>&1; then
+        if [[ -z "${SYSTEM_JQ:-}" || ! -x "${SYSTEM_JQ}" ]]; then
             printf '%s\n' 'System jq is required to validate staging smoke JSON fixtures' >&2
             return 69
         fi
 
         local validation_input
         validation_input="$(cat)"
-        if ! command -p jq --exit-status 'type == "object" and all(.[]; type == "string")' \
+        if ! "${SYSTEM_JQ}" --exit-status 'type == "object" and all(.[]; type == "string")' \
             <<< "${validation_input}" >/dev/null 2>&1; then
             return 64
         fi
@@ -265,6 +265,12 @@ fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
 }
+
+if ! SYSTEM_JQ="$(command -v jq)"; then
+    fail "System jq is required by the operational test harness"
+fi
+readonly SYSTEM_JQ
+export SYSTEM_JQ
 
 assert_status() {
     local expected_status="$1"
@@ -481,6 +487,8 @@ run_target() {
     if (
         export PATH="${root}/bin:${PATH}"
         export FAKE_COMMAND_LOG="${root}/commands.log"
+        # Normalise the shell diagnostic asserted by root-resolution regression tests.
+        export LC_ALL=C
         unset \
             BASH_ENV \
             GITHUB_RUN_ID \
@@ -1088,10 +1096,15 @@ test_verifier_repository_root_resolution_fails_closed() {
 
         run_target "${TEST_ROOT}" "${verifier}"
 
-        assert_nonzero_status "${verifier} with an unresolvable repository root"
+        assert_status 1 "${verifier} with an unresolvable repository root"
         assert_log_contains "${TEST_ROOT}" $'dirname\t' \
             "${verifier} repository-root lookup"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "cd: /definitely-missing-lifeos-script-directory/..: No such file or directory" \
+            "${verifier} repository-root resolution failure"
         assert_file_excludes "${RUN_OUTPUT}" "Validated" \
+            "${verifier} after repository-root lookup failure"
+        assert_file_excludes "${RUN_OUTPUT}" "Architecture boundary verified" \
             "${verifier} after repository-root lookup failure"
     done
 }
@@ -1192,9 +1205,8 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
     new_harness deploy-staging-missing-curl deploy-staging.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
     disable_fake_command "${TEST_ROOT}" curl
-    mkdir -p "${TEST_ROOT}/prerequisite-bin"
-    ln -s "$(command -p -v bash)" "${TEST_ROOT}/prerequisite-bin/bash"
-    ln -s "$(command -p -v dirname)" "${TEST_ROOT}/prerequisite-bin/dirname"
+    add_prerequisite_command "${TEST_ROOT}" bash
+    add_prerequisite_command "${TEST_ROOT}" dirname
 
     # Supplying only the executable and utility required to start the script makes command -v
     # exercise the production prerequisite check, rather than merely making the fake curl fail

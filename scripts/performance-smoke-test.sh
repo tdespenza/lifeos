@@ -91,7 +91,7 @@ SUMMARY_PATH="$(canonicalize_path "${LIFEOS_PERFORMANCE_SUMMARY_PATH:-${REPOSITO
 }
 readonly SUMMARY_PATH
 
-if [[ ! "${TARGET_URL}" =~ ^https://[^/?#]+(/[^?#]*)?$ ]]; then
+if [[ ! "${TARGET_URL}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]]; then
     echo "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" >&2
     exit 64
 fi

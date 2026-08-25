@@ -129,6 +129,22 @@ assert_fails "a library PURL with a raw backslash is rejected" \
     "$FIXTURE_DIR/raw-backslash-purl.json"
 assert_fails "a library PURL with raw non-ASCII characters is rejected" \
     "$FIXTURE_DIR/raw-non-ascii-purl.json"
+assert_fails "a library PURL with a raw ampersand in its namespace is rejected" \
+    "$FIXTURE_DIR/raw-ampersand-namespace-purl.json"
+assert_fails "a library PURL with a raw equals sign in its namespace is rejected" \
+    "$FIXTURE_DIR/raw-equals-namespace-purl.json"
+assert_fails "a library PURL with a raw at sign in its namespace is rejected" \
+    "$FIXTURE_DIR/raw-at-sign-namespace-purl.json"
+assert_fails "a library PURL with a raw ampersand in its name is rejected" \
+    "$FIXTURE_DIR/raw-ampersand-name-purl.json"
+assert_fails "a library PURL with a raw equals sign in its name is rejected" \
+    "$FIXTURE_DIR/raw-equals-name-purl.json"
+assert_fails "a library PURL with a raw ampersand in its version is rejected" \
+    "$FIXTURE_DIR/raw-ampersand-version-purl.json"
+assert_fails "a library PURL with a raw equals sign in its version is rejected" \
+    "$FIXTURE_DIR/raw-equals-version-purl.json"
+assert_fails "a library PURL with a raw at sign in its version is rejected" \
+    "$FIXTURE_DIR/raw-at-sign-version-purl.json"
 assert_fails "a library PURL with unencoded qualifier-value separators is rejected" \
     "$FIXTURE_DIR/unencoded-qualifier-value-separators-purl.json"
 assert_fails "a library PURL with an unencoded equals sign in a qualifier value is rejected" \

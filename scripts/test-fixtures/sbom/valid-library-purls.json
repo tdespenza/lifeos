@@ -21,7 +21,7 @@
     {
       "type": "library",
       "name": "commons-lang3",
-      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.17.0?type=jar"
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.17.0?type=jar&classifier=sources"
     },
     {
       "type": "library",

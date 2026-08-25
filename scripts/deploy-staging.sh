@@ -29,7 +29,7 @@ for variable in "${required_variables[@]}"; do
     fi
 done
 
-if [[ ! "${STAGING_DEPLOY_WEBHOOK_URL}" =~ ^https:// ]]; then
+if [[ ! "${STAGING_DEPLOY_WEBHOOK_URL}" =~ ^https://[^/@?#]+([/?#].*)?$ ]]; then
     echo "STAGING_DEPLOY_WEBHOOK_URL must use HTTPS" >&2
     exit 64
 fi

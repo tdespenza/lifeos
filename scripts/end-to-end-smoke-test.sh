@@ -19,7 +19,7 @@ validate_url() {
     # Accept only deployment base URLs; endpoint paths are appended by the smoke test itself.
     local variable_name="$1"
     local value="$2"
-    if [[ ! "${value}" =~ ^https://[^/?#]+(/[^?#]*)?$ ]]; then
+    if [[ ! "${value}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]]; then
         echo "${variable_name} must be a canonical HTTPS URL without query or fragment" >&2
         exit 64
     fi

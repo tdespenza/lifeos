@@ -17,7 +17,7 @@ fi
 validate_url() {
     local variable_name="$1"
     local value="$2"
-    if [[ ! "${value}" =~ ^https://[^/?#]+(/[^?#]*)?$ ]]; then
+    if [[ ! "${value}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]]; then
         echo "${variable_name} must be a canonical HTTPS URL without query or fragment" >&2
         exit 64
     fi
@@ -26,7 +26,7 @@ validate_url() {
 validate_readiness_url() {
     local variable_name="$1"
     local value="$2"
-    if [[ ! "${value}" =~ ^https://[^/?#]+(/[^?#]*)?/actuator/health/readiness$ ]]; then
+    if [[ ! "${value}" =~ ^https://[^/@?#]+(/[^?#]*)?/actuator/health/readiness$ ]]; then
         echo "${variable_name} must be a canonical HTTPS actuator readiness endpoint" >&2
         exit 64
     fi
@@ -35,7 +35,7 @@ validate_readiness_url() {
 validate_health_url() {
     local variable_name="$1"
     local value="$2"
-    if [[ ! "${value}" =~ ^https://[^/?#]+(/[^?#]*)?/actuator/health$ ]]; then
+    if [[ ! "${value}" =~ ^https://[^/@?#]+(/[^?#]*)?/actuator/health$ ]]; then
         echo "${variable_name} must be a canonical HTTPS actuator health endpoint" >&2
         exit 64
     fi

@@ -150,6 +150,7 @@ fake_curl() {
     local follows_redirect=false
     local maximum_redirects=""
     local writes_status_code=false
+    local argument_index
     for ((argument_index = 1; argument_index <= $#; argument_index += 1)); do
         argument="${!argument_index}"
         case "${argument}" in
@@ -642,7 +643,7 @@ run_target() {
             RUNNER_TEMP \
             STAGING_SERVICE_HEALTH_URLS_JSON \
             STAGING_DEPLOY_WEBHOOK_URL
-        while [[ $# -gt 0 && "$1" == *=* ]]; do
+        while [[ $# -gt 0 && "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
             declare -x "$1"
             shift
         done
@@ -657,6 +658,28 @@ run_target() {
     else
         RUN_STATUS=$?
     fi
+}
+
+test_run_target_exports_only_valid_environment_assignments() {
+    new_harness run-target-arguments
+    local target_script="${TEST_ROOT}/scripts/argument-probe.sh"
+
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        "printf 'environment=%s\\n' \"\${RUN_TARGET_TEST_ENV:-missing}\"" \
+        "printf 'argument=%s\\n' \"\${1-<missing>}\"" \
+        > "${target_script}"
+
+    run_target "${TEST_ROOT}" argument-probe.sh \
+        "RUN_TARGET_TEST_ENV=preserved" \
+        "--payload=literal"
+
+    assert_status 0 "run_target with an argument containing an equals sign"
+    assert_file_contains "${RUN_OUTPUT}" "environment=preserved" \
+        "run_target valid environment assignment"
+    assert_file_contains "${RUN_OUTPUT}" "argument=--payload=literal" \
+        "run_target non-assignment argument"
 }
 
 test_file_assertions_match_full_file_literals() {
@@ -1470,6 +1493,89 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic() {
 
 }
 
+test_operational_urls_reject_userinfo_before_live_traffic() {
+    local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local invalid_setting
+    local case_number=0
+
+    new_harness staging-userinfo staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://user:password@staging.example.test/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://user:password@staging.example.test/actuator/health/readiness"
+
+    assert_status 64 "staging smoke test with userinfo in a health URL"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Staging health URL for example-service must be a canonical HTTPS actuator health endpoint" \
+        "staging smoke userinfo validation"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging smoke with userinfo must not probe services"
+
+    for invalid_setting in \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://user:password@gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://user:password@gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://user:password@identity-management.example.test"; do
+        ((case_number += 1))
+        new_harness "end-to-end-userinfo-${case_number}" end-to-end-smoke-test.sh
+
+        run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+            "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+            "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+            "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+            "${invalid_setting}"
+
+        assert_status 64 "end-to-end smoke test with userinfo in endpoint ${case_number}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "end-to-end smoke test with userinfo must not invoke dependencies"
+    done
+
+    new_harness performance-userinfo performance-smoke-test.sh performance/readiness-smoke.js
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://user:password@gateway.example.test"
+
+    assert_status 64 "performance smoke test with userinfo in the target URL"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" \
+        "performance smoke userinfo validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "performance smoke test with userinfo must not run k6 or Docker"
+
+    new_harness deploy-userinfo deploy-staging.sh
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://user:password@deploy.example.test/hooks/staging" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42"
+
+    assert_status 64 "staging deployment with userinfo in the webhook URL"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "STAGING_DEPLOY_WEBHOOK_URL must use HTTPS" \
+        "staging deployment userinfo validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "staging deployment with userinfo must not construct a payload or invoke curl"
+
+    new_harness deploy-query-at-sign deploy-staging.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging?signature=service@example.test" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42"
+
+    assert_status 0 "staging deployment with an at sign in a webhook query"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://deploy.example.test/hooks/staging?signature=service@example.test" \
+        "staging deployment preserves signed webhook queries"
+}
+
 test_health_checks_retry_down_responses_and_fail_closed() {
     new_harness staging-health-recovery staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -1569,6 +1675,30 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
         "chaos experiment recovery backoff"
 }
 
+test_chaos_experiment_rejects_userinfo_before_payload_or_probes() {
+    local invalid_setting
+    local case_number=0
+    for invalid_setting in \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://user:password@chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://user:password@gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://user:password@identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://user:password@task-goal.example.test/actuator/health"; do
+        ((case_number += 1))
+        new_harness "chaos-userinfo-${case_number}" run-chaos-experiment.sh
+
+        run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+            "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+            "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+            "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+            "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+            "${invalid_setting}"
+
+        assert_status 64 "chaos experiment with userinfo in endpoint ${case_number}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "chaos experiment with userinfo must not construct a payload or probe services"
+    done
+}
+
 test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
     new_harness chaos-webhook-failure run-chaos-experiment.sh
 
@@ -1608,6 +1738,7 @@ test_file_assertions_match_full_file_literals
 test_file_assertions_fail_clearly_when_files_are_missing
 test_log_assertions_fail_clearly_for_invalid_patterns_and_missing_logs
 test_command_double_dispatch_fails_closed
+test_run_target_exports_only_valid_environment_assignments
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch
@@ -1630,8 +1761,10 @@ test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
+test_operational_urls_reject_userinfo_before_live_traffic
 test_health_checks_retry_down_responses_and_fail_closed
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
+test_chaos_experiment_rejects_userinfo_before_payload_or_probes
 test_chaos_experiment_fails_for_webhook_and_recovery_errors
 
 printf '%s\n' 'Operational script behavioral tests passed'

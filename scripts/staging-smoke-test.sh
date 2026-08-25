@@ -89,7 +89,7 @@ for service in "${SERVICES[@]}"; do
         exit 64
     fi
 
-    if [[ ! "${health_url}" =~ ^https://[^/?#]+(/[^?#]*)?/actuator/health(/(readiness|liveness))?$ ]]; then
+    if [[ ! "${health_url}" =~ ^https://[^/@?#]+(/[^?#]*)?/actuator/health(/(readiness|liveness))?$ ]]; then
         echo "Staging health URL for ${service} must be a canonical HTTPS actuator health endpoint" >&2
         exit 64
     fi

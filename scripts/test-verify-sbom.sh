@@ -17,6 +17,7 @@ assert_fails() {
 
 bash "$VERIFY_SBOM" "$FIXTURE_DIR/valid-library-purls.json"
 bash "$VERIFY_SBOM" "$FIXTURE_DIR/minimal-cyclonedx-1.5.json"
+bash "$VERIFY_SBOM" "$FIXTURE_DIR/valid-cryptographic-asset-1.6.json"
 bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-metadata.json"
 bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-metadata-component.json"
 bash "$VERIFY_SBOM" "$FIXTURE_DIR/without-components.json"
@@ -29,6 +30,18 @@ assert_fails "a nested library component without a PURL is rejected" \
     bash "$VERIFY_SBOM" "$FIXTURE_DIR/nested-missing-library-purl.json"
 assert_fails "a nested library component with a malformed PURL is rejected" \
     bash "$VERIFY_SBOM" "$FIXTURE_DIR/nested-malformed-library-purl.json"
+assert_fails "a component without a name is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/missing-component-name.json"
+assert_fails "a component with a non-string name is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-component-name.json"
+assert_fails "a component without a type is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/missing-component-type.json"
+assert_fails "a component with an unsupported type is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-component-type.json"
+assert_fails "an empty metadata component is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/empty-metadata-component.json"
+assert_fails "an invalid metadata component is rejected" \
+    bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-metadata-component.json"
 assert_fails "a library PURL with an invalid qualifier key is rejected" \
     bash "$VERIFY_SBOM" "$FIXTURE_DIR/invalid-qualifier-key-purl.json"
 assert_fails "a library PURL with duplicate qualifier keys is rejected" \
@@ -36,4 +49,4 @@ assert_fails "a library PURL with duplicate qualifier keys is rejected" \
 assert_fails "a library PURL with malformed percent encoding is rejected" \
     bash "$VERIFY_SBOM" "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
 
-echo "CycloneDX SBOM PURL validation tests passed"
+echo "CycloneDX SBOM validation tests passed"

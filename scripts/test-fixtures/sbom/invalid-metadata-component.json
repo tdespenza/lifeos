@@ -3,7 +3,7 @@
   "specVersion": "1.5",
   "metadata": {
     "component": {
-      "type": "application",
+      "type": "unsupported",
       "name": "lifeos"
     }
   }

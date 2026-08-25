@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "metadata": {
-    "component": {
+  "components": [
+    {
       "type": "application",
-      "name": "lifeos"
+      "name": 42
     }
-  }
+  ]
 }

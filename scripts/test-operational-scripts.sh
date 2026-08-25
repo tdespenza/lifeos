@@ -205,7 +205,7 @@ fake_k6() {
     printf '%s\n' '{"metrics":{}}' > "${summary_path}"
 }
 
-case "$(basename "$0")" in
+case "${0##*/}" in
     docker)
         fake_docker "$@"
         exit
@@ -230,13 +230,19 @@ case "$(basename "$0")" in
         fake_dirname "$@"
         exit
         ;;
+    test-operational-scripts.sh)
+        ;;
+    *)
+        printf 'Unsupported operational-test command double: %s\n' "${0##*/}" >&2
+        exit 64
+        ;;
 esac
 
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIRECTORY
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIRECTORY}/.." && pwd)"
 readonly REPOSITORY_ROOT
-TEST_SCRIPT_PATH="${SCRIPT_DIRECTORY}/$(basename "${BASH_SOURCE[0]}")"
+TEST_SCRIPT_PATH="${SCRIPT_DIRECTORY}/${BASH_SOURCE[0]##*/}"
 readonly TEST_SCRIPT_PATH
 TEST_DIRECTORIES=()
 RUN_OUTPUT=""
@@ -276,7 +282,9 @@ assert_file_contains() {
     local file="$1"
     local expected="$2"
     local description="$3"
-    if ! grep -Fq -- "${expected}" "${file}"; then
+    local contents
+    IFS= read -r -d '' contents < "${file}" || true
+    if [[ "${contents}" != *"${expected}"* ]]; then
         fail "${description}: missing '${expected}'"
     fi
 }
@@ -285,7 +293,9 @@ assert_file_excludes() {
     local file="$1"
     local unexpected="$2"
     local description="$3"
-    if grep -Fq -- "${unexpected}" "${file}"; then
+    local contents
+    IFS= read -r -d '' contents < "${file}" || true
+    if [[ "${contents}" == *"${unexpected}"* ]]; then
         fail "${description}: found unexpected '${unexpected}'"
     fi
 }
@@ -435,13 +445,22 @@ run_target() {
             LIFEOS_TRIVY_CACHE_DIR \
             LIFEOS_TRIVY_IMAGE \
             FAKE_DOCKER_COMPOSE_VERSION_STATUS \
+            FAKE_DOCKER_COMPOSE_UP_MESSAGE \
+            FAKE_DOCKER_COMPOSE_UP_STATUS \
             FAKE_DOCKER_INFO_STATUS \
+            FAKE_DOCKER_IMAGE_INSPECT_STATUS \
             FAKE_DOCKER_STDIN_LOG \
+            FAKE_DOCKER_STATUS \
+            FAKE_CURL_STATUS \
+            FAKE_CURL_STDOUT \
             FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
             FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
             FAKE_CURL_REDIRECT_STATUS \
             FAKE_CURL_REDIRECT_URL \
             FAKE_DIRNAME_OUTPUT \
+            FAKE_JQ_READINESS_STATUS \
+            FAKE_JQ_SERVICE_URL \
+            FAKE_RG_STATUS \
             RUNNER_TEMP \
             STAGING_SERVICE_HEALTH_URLS_JSON \
             STAGING_DEPLOY_WEBHOOK_URL
@@ -458,6 +477,43 @@ run_target() {
     else
         RUN_STATUS=$?
     fi
+}
+
+test_file_assertions_match_full_file_literals() {
+    new_harness file-assertions
+    local assertion_file="${TEST_ROOT}/assertions.txt"
+    printf '%s\n' \
+        'begin' \
+        'literal [value]*?' \
+        'end' > "${assertion_file}"
+
+    assert_file_contains "${assertion_file}" \
+        $'begin\nliteral [value]*?\nend' \
+        "full-file literal assertion"
+    assert_file_excludes "${assertion_file}" \
+        $'begin\nmissing\nend' \
+        "non-contiguous multiline assertion"
+    if (assert_file_contains "${assertion_file}" $'begin\nmissing\nend' \
+        "non-contiguous multiline assertion") >/dev/null 2>&1; then
+        fail "full-file multiline assertion must reject non-contiguous content"
+    fi
+}
+
+test_command_double_dispatch_fails_closed() {
+    new_harness command-double-dispatch
+    ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/unrecognized-command"
+
+    RUN_OUTPUT="${TEST_ROOT}/unknown-command-output.log"
+    if "${TEST_ROOT}/bin/unrecognized-command" > "${RUN_OUTPUT}" 2>&1; then
+        RUN_STATUS=0
+    else
+        RUN_STATUS=$?
+    fi
+
+    assert_status 64 "unrecognized command double"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Unsupported operational-test command double: unrecognized-command" \
+        "unrecognized command double"
 }
 
 test_build_rejects_missing_services() {
@@ -681,7 +737,7 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
         "CREATE DATABASE %I', 'lifeos_task_goal'" \
         "database provisioning task-goal SQL payload"
     assert_file_contains "${TEST_ROOT}/executed-provisioning.sql" \
-        $'lifeos_identity\')\n\\gexec' \
+        $'WHERE datname = \'lifeos_identity\'\n)\n\\gexec' \
         "database provisioning psql gexec payload"
 
     new_harness provision-request-failure provision-local-databases.sh
@@ -1082,6 +1138,8 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
         "chaos experiment recovery readiness probes"
 }
 
+test_file_assertions_match_full_file_literals
+test_command_double_dispatch_fails_closed
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch

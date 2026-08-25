@@ -6,7 +6,12 @@ readonly REPOSITORY_ROOT
 readonly PROVISION_FILE="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
 readonly POSTGRES_IMAGE="${LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE:-postgres:17-alpine}"
 readonly POSTGRES_USER="lifeos_provision_test"
-readonly POSTGRES_PASSWORD="lifeos_provision_test_password"
+POSTGRES_PASSWORD="${LIFEOS_PROVISION_CONCURRENCY_POSTGRES_PASSWORD:-}"
+if [[ -z "${POSTGRES_PASSWORD}" ]]; then
+    # Each disposable container receives an unpredictable test-only credential; it is never logged.
+    POSTGRES_PASSWORD="$(LC_ALL=C od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')"
+fi
+readonly POSTGRES_PASSWORD
 CONTAINER_NAME="lifeos-provision-concurrency-$$-$(date +%s)"
 readonly CONTAINER_NAME
 readonly LOCK_NAME="lifeos.provision-databases"

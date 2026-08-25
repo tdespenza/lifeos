@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # This file also acts as the deterministic command double used by the tests below. Each harness
-# places symlinks named docker, jq, curl, k6, and rg in PATH, so the operational scripts
+# places symlinks named docker, jq, curl, k6, rg, and sleep in PATH, so the operational scripts
 # are exercised exactly as they are invoked in CI without requiring Docker, a network connection,
 # or a k6 binary.
 fake_log_command() {
@@ -16,6 +16,14 @@ fake_log_command() {
         line+=$'\t'"${argument}"
     done
     printf '%s\n' "${line}" >> "${FAKE_COMMAND_LOG}"
+}
+
+is_health_probe_log_entry() {
+    local line="$1"
+    local request_url="${line##*$'\t'}"
+
+    [[ "${line}" == $'curl\t'* && "${request_url}" == https://* \
+        && "${request_url}" == *'/actuator/health'* ]]
 }
 
 fake_docker() {
@@ -91,8 +99,24 @@ fake_jq() {
         return 0
     fi
 
-    if [[ "${FAKE_JQ_READINESS_STATUS:-0}" != "0" && "$*" == *'.status == "UP"'* ]]; then
-        return "${FAKE_JQ_READINESS_STATUS}"
+    if [[ "$*" == *'.status == "UP"'* ]]; then
+        # Health-status sequences exercise the real jq predicate against fake curl's JSON response.
+        # Existing tests can still force a generic predicate failure without constructing a response.
+        if [[ "${FAKE_JQ_READINESS_STATUS:-0}" != "0" ]]; then
+            cat >/dev/null
+            return "${FAKE_JQ_READINESS_STATUS}"
+        fi
+        if [[ -n "${FAKE_CURL_HEALTH_STATUS_SEQUENCE:-}" ]]; then
+            if [[ -z "${SYSTEM_JQ:-}" || ! -x "${SYSTEM_JQ}" ]]; then
+                printf '%s\n' 'System jq is required to validate fake health responses' >&2
+                return 69
+            fi
+            "${SYSTEM_JQ}" "$@"
+            return
+        fi
+
+        cat >/dev/null
+        return 0
     fi
 
     if [[ " $* " == *" --raw-input "* ]]; then
@@ -122,9 +146,10 @@ fake_jq() {
 fake_curl() {
     fake_log_command curl "$@"
 
-    local argument dump_header_file="" redirect_url="" url=""
+    local argument dump_header_file="" output_file="" redirect_url="" url=""
     local follows_redirect=false
     local maximum_redirects=""
+    local writes_status_code=false
     for ((argument_index = 1; argument_index <= $#; argument_index += 1)); do
         argument="${!argument_index}"
         case "${argument}" in
@@ -132,12 +157,20 @@ fake_curl() {
                 ((argument_index += 1))
                 dump_header_file="${!argument_index}"
                 ;;
+            --output)
+                ((argument_index += 1))
+                output_file="${!argument_index}"
+                ;;
             --location)
                 follows_redirect=true
                 ;;
             --max-redirs)
                 ((argument_index += 1))
                 maximum_redirects="${!argument_index}"
+                ;;
+            --write-out)
+                ((argument_index += 1))
+                writes_status_code=true
                 ;;
             https://*)
                 url="${argument}"
@@ -170,6 +203,49 @@ fake_curl() {
         fi
     fi
 
+    if [[ -n "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE:-}" && "${url}" == */api/v1/accounts ]]; then
+        if [[ -n "${dump_header_file}" ]]; then
+            printf 'HTTP/1.1 %s Response\r\nX-Correlation-ID: %s\r\n\r\n' \
+                "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE}" \
+                "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID:-11111111-1111-4111-8111-111111111111}" \
+                > "${dump_header_file}"
+        fi
+        if [[ -n "${output_file}" ]]; then
+            printf '%s\n' '{"error":"mocked registration validation failure"}' > "${output_file}"
+        fi
+        if [[ "${writes_status_code}" == "true" ]]; then
+            printf '%s' "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE}"
+        fi
+        return "${FAKE_CURL_STATUS:-0}"
+    fi
+
+    if [[ -n "${FAKE_CURL_HEALTH_STATUS_SEQUENCE:-}" && "${url}" == *'/actuator/health'* ]]; then
+        local health_status_index=0
+        local health_request_count=0
+        local health_status
+        local log_line
+        local -a health_statuses
+
+        IFS=',' read -r -a health_statuses <<< "${FAKE_CURL_HEALTH_STATUS_SEQUENCE}"
+        if [[ "${#health_statuses[@]}" -eq 0 || -z "${health_statuses[0]}" ]]; then
+            printf '%s\n' 'FAKE_CURL_HEALTH_STATUS_SEQUENCE must contain at least one status' >&2
+            return 64
+        fi
+
+        while IFS= read -r log_line; do
+            if is_health_probe_log_entry "${log_line}"; then
+                ((health_request_count += 1))
+            fi
+        done < "${FAKE_COMMAND_LOG}"
+        health_status_index=$((health_request_count - 1))
+        if (( health_status_index >= ${#health_statuses[@]} )); then
+            health_status_index=$((${#health_statuses[@]} - 1))
+        fi
+        health_status="${health_statuses[health_status_index]}"
+        printf '{"status":"%s"}\n' "${health_status}"
+        return "${FAKE_CURL_STATUS:-0}"
+    fi
+
     if [[ -n "${FAKE_CURL_STDOUT:-}" ]]; then
         printf '%s\n' "${FAKE_CURL_STDOUT}"
     fi
@@ -179,6 +255,11 @@ fake_curl() {
 fake_rg() {
     fake_log_command rg "$@"
     return "${FAKE_RG_STATUS:-0}"
+}
+
+fake_sleep() {
+    fake_log_command sleep "$@"
+    return "${FAKE_SLEEP_STATUS:-0}"
 }
 
 fake_dirname() {
@@ -227,6 +308,10 @@ case "${0##*/}" in
         ;;
     rg)
         fake_rg "$@"
+        exit
+        ;;
+    sleep)
+        fake_sleep "$@"
         exit
         ;;
     dirname)
@@ -406,6 +491,25 @@ assert_curl_retry_probe_count() {
     fi
 }
 
+assert_health_probe_count() {
+    local root="$1"
+    local expected_count="$2"
+    local description="$3"
+    local line
+    local actual_count=0
+
+    assert_readable_file "${root}/commands.log" "${description}"
+    while IFS= read -r line; do
+        if is_health_probe_log_entry "${line}"; then
+            ((actual_count += 1))
+        fi
+    done < "${root}/commands.log"
+
+    if [[ "${actual_count}" -ne "${expected_count}" ]]; then
+        fail "${description}: expected ${expected_count} health probes, got ${actual_count}"
+    fi
+}
+
 assert_no_commands_logged() {
     local root="$1"
     local message="$2"
@@ -435,7 +539,7 @@ new_harness() {
     done
 
     local command
-    for command in docker jq curl k6 rg; do
+    for command in docker jq curl k6 rg sleep; do
         ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/${command}"
     done
     : > "${TEST_ROOT}/commands.log"
@@ -527,10 +631,14 @@ run_target() {
             FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
             FAKE_CURL_REDIRECT_STATUS \
             FAKE_CURL_REDIRECT_URL \
+            FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
+            FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
+            FAKE_CURL_HEALTH_STATUS_SEQUENCE \
             FAKE_DIRNAME_OUTPUT \
             FAKE_JQ_READINESS_STATUS \
             FAKE_JQ_SERVICE_URL \
             FAKE_RG_STATUS \
+            FAKE_SLEEP_STATUS \
             RUNNER_TEMP \
             STAGING_SERVICE_HEALTH_URLS_JSON \
             STAGING_DEPLOY_WEBHOOK_URL
@@ -1305,7 +1413,7 @@ test_contract_sensitive_posts_reject_redirects() {
         "End-to-end gateway-to-identity contract passed" \
         "end-to-end smoke after an intermediate correlation header"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://gateway-management.example.test/actuator/health/readiness' \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
         "end-to-end readiness redirects remain enabled"
 
     new_harness chaos-redirect run-chaos-experiment.sh
@@ -1360,36 +1468,74 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic() {
         "staging smoke structural JSON validation"
     assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging smoke with a non-object service URL map"
 
-    new_harness staging-readiness-failure staging-smoke-test.sh
+}
+
+test_health_checks_retry_down_responses_and_fail_closed() {
+    new_harness staging-health-recovery staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
 
     run_target "${TEST_ROOT}" staging-smoke-test.sh \
         'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
         "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
-        "FAKE_JQ_READINESS_STATUS=1"
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP"
 
-    assert_nonzero_status "staging smoke readiness failure"
-    assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://staging.example.test/actuator/health/readiness' \
-        "staging smoke readiness transport"
+    assert_status 0 "staging smoke health recovery"
+    assert_health_probe_count "${TEST_ROOT}" 2 "staging smoke health recovery"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "staging smoke health recovery backoff"
+    assert_log_entry_excludes "${TEST_ROOT}" \
+        "https://staging.example.test/actuator/health/readiness" \
+        $'--retry\t' \
+        "staging smoke explicit health retry loop"
 
-    new_harness end-to-end-readiness-failure end-to-end-smoke-test.sh
+    new_harness staging-health-persistent-down staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
 
-    # The account-registration request is live-topology-only because its behavior belongs to the
-    # deployed Gateway -> Identity route. This deterministic case proves a failed prerequisite
-    # short-circuits before that request can run.
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN"
+
+    assert_status 1 "staging smoke persistent DOWN response"
+    assert_health_probe_count "${TEST_ROOT}" 6 "staging smoke persistent DOWN response"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 5 "staging smoke persistent DOWN backoff"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Staging health for example-service did not report UP after 6 attempts" \
+        "staging smoke persistent DOWN diagnostic"
+
+    new_harness end-to-end-health-recovery end-to-end-smoke-test.sh
+
     run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
         "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
         "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
         "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
-        "FAKE_JQ_READINESS_STATUS=1"
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP,UP" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
 
-    assert_nonzero_status "end-to-end smoke readiness failure"
-    assert_log_line_count "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://gateway-management.example.test/actuator/health/readiness' \
-        1 \
-        "end-to-end smoke prerequisite short circuit"
-    assert_log_excludes "${TEST_ROOT}" $'/api/v1/accounts' "end-to-end smoke after a failed prerequisite"
+    assert_status 0 "end-to-end smoke health recovery"
+    assert_health_probe_count "${TEST_ROOT}" 3 "end-to-end smoke health recovery"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "end-to-end smoke health recovery backoff"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "End-to-end gateway-to-identity contract passed" \
+        "end-to-end smoke after health recovery"
+    assert_log_entry_excludes "${TEST_ROOT}" \
+        "https://gateway.example.test/api/v1/accounts" \
+        $'--retry\t' \
+        "end-to-end smoke non-idempotent account request"
+
+    new_harness end-to-end-health-persistent-down end-to-end-smoke-test.sh
+
+    # The account-registration request is live-topology-only; a persistently DOWN prerequisite
+    # must exhaust its bounded probe budget before that non-idempotent request can run.
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN"
+
+    assert_status 1 "end-to-end smoke persistent DOWN response"
+    assert_health_probe_count "${TEST_ROOT}" 6 "end-to-end smoke persistent DOWN response"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 5 "end-to-end smoke persistent DOWN backoff"
+    assert_log_excludes "${TEST_ROOT}" $'/api/v1/accounts' "end-to-end smoke after persistent DOWN"
 }
 
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
@@ -1400,7 +1546,8 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
         "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
         "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
         "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
-        "GITHUB_RUN_ID=run-42"
+        "GITHUB_RUN_ID=run-42" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP,UP,UP"
 
     assert_status 0 "chaos experiment with successful recovery probes"
     assert_log_contains "${TEST_ROOT}" \
@@ -1416,8 +1563,10 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
     assert_log_contains "${TEST_ROOT}" \
         $'\t--header\tContent-Type: application/json\t--data\t{"mock":true}\t--output\t/dev/null\thttps://chaos.example.test/experiments' \
         "chaos experiment webhook payload"
-    assert_curl_retry_probe_count "${TEST_ROOT}" 3 \
-        "chaos experiment recovery probes"
+    assert_health_probe_count "${TEST_ROOT}" 4 \
+        "chaos experiment recovery probes after a DOWN response"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 \
+        "chaos experiment recovery backoff"
 }
 
 test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
@@ -1433,7 +1582,7 @@ test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
     assert_status 22 "chaos experiment with a non-2xx webhook response"
     assert_log_line_count "${TEST_ROOT}" $'curl\t' 1 \
         "chaos experiment after a failed webhook"
-    assert_curl_retry_probe_count "${TEST_ROOT}" 0 \
+    assert_health_probe_count "${TEST_ROOT}" 0 \
         "chaos experiment after a failed webhook"
 
     new_harness chaos-recovery-failure run-chaos-experiment.sh
@@ -1443,13 +1592,15 @@ test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
         "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
         "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
         "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
-        "FAKE_JQ_READINESS_STATUS=1"
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN"
 
     assert_status 1 "chaos experiment with a recovery probe that is not UP"
-    assert_curl_retry_probe_count "${TEST_ROOT}" 1 \
-        "chaos experiment after a failed recovery probe"
+    assert_health_probe_count "${TEST_ROOT}" 6 \
+        "chaos experiment after a persistently DOWN recovery probe"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t' 5 \
+        "chaos experiment persistent DOWN backoff"
     assert_log_excludes "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://identity-management.example.test/actuator/health/readiness' \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://identity-management.example.test/actuator/health/readiness' \
         "chaos experiment after a failed gateway recovery probe"
 }
 
@@ -1479,6 +1630,7 @@ test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
+test_health_checks_retry_down_responses_and_fail_closed
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
 test_chaos_experiment_fails_for_webhook_and_recovery_errors
 

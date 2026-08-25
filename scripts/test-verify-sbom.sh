@@ -125,6 +125,8 @@ assert_fails "a library PURL with malformed percent encoding is rejected" \
     "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
 assert_fails "a library PURL with raw square brackets is rejected" \
     "$FIXTURE_DIR/raw-square-brackets-purl.json"
+assert_fails "a library PURL with a raw backslash is rejected" \
+    "$FIXTURE_DIR/raw-backslash-purl.json"
 assert_fails "a library PURL with raw non-ASCII characters is rejected" \
     "$FIXTURE_DIR/raw-non-ascii-purl.json"
 assert_fails "a library PURL with unencoded qualifier-value separators is rejected" \

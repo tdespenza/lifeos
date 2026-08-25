@@ -5,6 +5,8 @@ readonly GATEWAY_URL="${LIFEOS_E2E_GATEWAY_BASE_URL:-}"
 readonly GATEWAY_MANAGEMENT_URL="${LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL:-}"
 readonly IDENTITY_MANAGEMENT_URL="${LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL:-}"
 readonly CORRELATION_ID="11111111-1111-4111-8111-111111111111"
+readonly HEALTH_CHECK_MAX_ATTEMPTS=6
+readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 
 if ! command -v curl >/dev/null 2>&1 \
     || ! command -v jq >/dev/null 2>&1 \
@@ -27,22 +29,58 @@ validate_url LIFEOS_E2E_GATEWAY_BASE_URL "${GATEWAY_URL}"
 validate_url LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL "${GATEWAY_MANAGEMENT_URL}"
 validate_url LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL "${IDENTITY_MANAGEMENT_URL}"
 
+health_check_delay_seconds() {
+    local attempt="$1"
+    local backoff_seconds=$((1 << (attempt - 1)))
+
+    if (( backoff_seconds > HEALTH_CHECK_MAX_BACKOFF_SECONDS )); then
+        backoff_seconds="${HEALTH_CHECK_MAX_BACKOFF_SECONDS}"
+    fi
+
+    # Full jitter avoids synchronizing retries across gateway and identity readiness probes.
+    printf '%s\n' "$((RANDOM % (backoff_seconds + 1)))"
+}
+
+wait_for_health() {
+    local service_name="$1"
+    local health_url="$2"
+    local attempt delay_seconds
+
+    # Retry the whole health assertion: curl does not retry when jq rejects a 200/DOWN payload.
+    for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
+        if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 20 \
+            "${health_url}" \
+            | jq --exit-status '.status == "UP"' >/dev/null; then
+            return 0
+        fi
+
+        if (( attempt == HEALTH_CHECK_MAX_ATTEMPTS )); then
+            break
+        fi
+
+        delay_seconds="$(health_check_delay_seconds "${attempt}")"
+        printf 'End-to-end prerequisite %s is not UP; retrying in %ss (attempt %s/%s)\n' \
+            "${service_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+        sleep "${delay_seconds}"
+    done
+
+    printf 'End-to-end prerequisite %s did not report UP after %s attempts\n' \
+        "${service_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+    return 1
+}
+
 assert_ready() {
     # Require an explicit UP readiness response before exercising the cross-service request path.
     local service_name="$1"
     local base_url="$2"
-    curl \
-        --fail \
-        --silent \
-        --show-error \
-        --location \
-        --proto '=https' \
-        --connect-timeout 10 \
-        --max-time 20 \
-        --retry 5 \
-        --retry-all-errors \
-        "${base_url%/}/actuator/health/readiness" \
-        | jq --exit-status '.status == "UP"' >/dev/null
+    wait_for_health "${service_name}" "${base_url%/}/actuator/health/readiness"
     printf '%s\n' "End-to-end prerequisite is ready: ${service_name}"
 }
 

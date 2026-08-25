@@ -4,6 +4,8 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly SERVICE_HEALTH_URLS_JSON="${STAGING_SERVICE_HEALTH_URLS_JSON:-}"
+readonly HEALTH_CHECK_MAX_ATTEMPTS=6
+readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 SERVICES=()
 
 if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
@@ -32,6 +34,54 @@ if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     exit 66
 fi
 
+health_check_delay_seconds() {
+    local attempt="$1"
+    local backoff_seconds=$((1 << (attempt - 1)))
+
+    if (( backoff_seconds > HEALTH_CHECK_MAX_BACKOFF_SECONDS )); then
+        backoff_seconds="${HEALTH_CHECK_MAX_BACKOFF_SECONDS}"
+    fi
+
+    # Full jitter avoids synchronizing retries from independently deployed services.
+    printf '%s\n' "$((RANDOM % (backoff_seconds + 1)))"
+}
+
+wait_for_health() {
+    local service="$1"
+    local health_url="$2"
+    local attempt delay_seconds
+
+    # Retry the complete probe because curl only retries transport failures; jq can reject a
+    # successfully returned health payload whose application status is still DOWN.
+    for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
+        if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 20 \
+            "${health_url}" \
+            | jq --exit-status '.status == "UP"' >/dev/null; then
+            return 0
+        fi
+
+        if (( attempt == HEALTH_CHECK_MAX_ATTEMPTS )); then
+            break
+        fi
+
+        delay_seconds="$(health_check_delay_seconds "${attempt}")"
+        printf 'Staging health for %s is not UP; retrying in %ss (attempt %s/%s)\n' \
+            "${service}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+        sleep "${delay_seconds}"
+    done
+
+    printf 'Staging health for %s did not report UP after %s attempts\n' \
+        "${service}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+    return 1
+}
+
 for service in "${SERVICES[@]}"; do
     if ! health_url="$(jq --raw-output --exit-status --arg service "${service}" \
         '.[$service] // empty' <<< "${SERVICE_HEALTH_URLS_JSON}")" || [[ -z "${health_url}" ]]; then
@@ -46,18 +96,7 @@ for service in "${SERVICES[@]}"; do
 
     # The caller supplies each service's actual management-health URL. Gateway and identity use
     # private management listeners, while Task/Goal currently exposes only /actuator/health.
-    curl \
-        --fail \
-        --silent \
-        --show-error \
-        --location \
-        --proto '=https' \
-        --connect-timeout 10 \
-        --max-time 20 \
-        --retry 5 \
-        --retry-all-errors \
-        "${health_url}" \
-        | jq --exit-status '.status == "UP"' >/dev/null
+    wait_for_health "${service}" "${health_url}"
 
     printf '%s\n' "Staging health is UP for ${service}"
 done

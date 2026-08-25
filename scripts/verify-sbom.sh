@@ -24,7 +24,7 @@ jq --exit-status --slurp '
         gsub("%[0-9A-Fa-f]{2}"; "") | contains("%") | not;
 
     def valid_purl_characters:
-        test("^[!-~]+$")
+        test("^[A-Za-z0-9._~%:/@?=&#-]+$")
         and (contains("[") | not)
         and (contains("]") | not);
 

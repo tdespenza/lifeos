@@ -14,7 +14,15 @@ readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
 readonly IMAGE_REGISTRY_HOST_PATTERN="${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN}(\.${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN})*"
 readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
 readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
+readonly IMAGE_REPOSITORY_PATH_MAX_LENGTH=255
 SERVICES=()
+
+for service_discovery_command in find basename sort; do
+    if ! command -v "${service_discovery_command}" >/dev/null 2>&1; then
+        echo "${service_discovery_command} is required to discover service Dockerfiles" >&2
+        exit 69
+    fi
+done
 
 while IFS= read -r service; do
     SERVICES+=("${service}")
@@ -26,8 +34,31 @@ readonly SERVICES
 # and Dockerfile-derived service names fail before any image build or push is attempted.
 validate_image_reference() {
     local image_reference="$1"
+    local repository_name
+    local registry_candidate
+    local repository_path
 
     if [[ ! "${image_reference}" =~ ${IMAGE_REFERENCE_PATTERN} ]]; then
+        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
+            "${image_reference}" >&2
+        return 1
+    fi
+
+    # Tags always follow the final colon in a syntactically valid reference, so this preserves a
+    # registry port. Docker's normalized-name convention treats the first component as a registry
+    # only when it is localhost or contains a dot or colon; the 255-character limit applies to
+    # the remaining repository path, not that registry component.
+    repository_name="${image_reference%:*}"
+    registry_candidate="${repository_name%%/*}"
+    repository_path="${repository_name}"
+    if [[ "${repository_name}" == */* ]] \
+        && [[ "${registry_candidate}" == "localhost" \
+            || "${registry_candidate}" == *.* \
+            || "${registry_candidate}" == *:* ]]; then
+        repository_path="${repository_name#*/}"
+    fi
+
+    if (( ${#repository_path} > IMAGE_REPOSITORY_PATH_MAX_LENGTH )); then
         printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
             "${image_reference}" >&2
         return 1

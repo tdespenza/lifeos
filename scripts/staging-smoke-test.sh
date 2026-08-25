@@ -24,6 +24,13 @@ if ! jq --exit-status 'type == "object" and all(.[]; type == "string")' \
     exit 64
 fi
 
+for service_discovery_command in find basename sort; do
+    if ! command -v "${service_discovery_command}" >/dev/null 2>&1; then
+        echo "${service_discovery_command} is required to discover service Dockerfiles" >&2
+        exit 69
+    fi
+done
+
 while IFS= read -r service; do
     SERVICES+=("${service}")
 done < <(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -name '*.Dockerfile' \

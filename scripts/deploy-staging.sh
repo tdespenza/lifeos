@@ -39,6 +39,13 @@ if [[ ! "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
     exit 64
 fi
 
+for service_discovery_command in find basename sort; do
+    if ! command -v "${service_discovery_command}" >/dev/null 2>&1; then
+        echo "${service_discovery_command} is required to discover service Dockerfiles" >&2
+        exit 69
+    fi
+done
+
 SERVICES=()
 while IFS= read -r service; do
     SERVICES+=("${service}")

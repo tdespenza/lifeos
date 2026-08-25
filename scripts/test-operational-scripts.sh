@@ -582,6 +582,19 @@ add_prerequisite_command() {
     ln -s "${command_path}" "${root}/prerequisite-bin/${command}"
 }
 
+add_service_discovery_prerequisites_except() {
+    local root="$1"
+    local missing_command="$2"
+    local command
+    shift 2
+
+    for command in bash dirname "$@" find basename sort; do
+        if [[ "${command}" != "${missing_command}" ]]; then
+            add_prerequisite_command "${root}" "${command}"
+        fi
+    done
+}
+
 run_target() {
     local root="$1"
     local script="$2"
@@ -902,6 +915,77 @@ test_container_scripts_reject_invalid_generated_image_references() {
         assert_no_commands_logged "${TEST_ROOT}" \
             "container scan with invalid reference ${expected_reference} must not invoke Docker"
     done
+}
+
+test_container_scripts_enforce_docker_repository_path_length() {
+    local overlength_component
+    local overlength_image_prefix
+    local expected_reference expected_output_reference
+    local registry_label long_registry image_prefix
+
+    printf -v overlength_component '%*s' 256 ''
+    overlength_component="${overlength_component// /a}"
+    # The registry port ensures the validator strips the final tag colon rather than the port
+    # colon before measuring Docker's repository path.
+    overlength_image_prefix="registry.example:5000/${overlength_component}"
+    expected_reference="${overlength_image_prefix}/example-service:local"
+    printf -v expected_output_reference '%q' "${expected_reference}"
+
+    new_harness build-overlength-repository-path build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "LIFEOS_IMAGE_PREFIX=${overlength_image_prefix}"
+
+    assert_status 64 "container build with an overlength repository path"
+    assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+        "container build overlength repository-path validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build with an overlength repository path must not invoke Docker"
+
+    new_harness scan-overlength-repository-path scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_IMAGE_PREFIX=${overlength_image_prefix}" \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache"
+
+    assert_status 64 "container scan with an overlength repository path"
+    assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+        "container scan overlength repository-path validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container scan with an overlength repository path must not invoke Docker"
+
+    # A Docker registry is not part of the 255-character repository-path limit. Four 60-character
+    # labels make the complete reference longer than 255 while retaining a syntactically valid,
+    # DNS-compatible registry name and a short repository path.
+    printf -v registry_label '%*s' 60 ''
+    registry_label="${registry_label// /r}"
+    long_registry="${registry_label}.${registry_label}.${registry_label}.${registry_label}"
+    image_prefix="${long_registry}/lifeos"
+
+    new_harness build-long-registry-short-repository build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "LIFEOS_IMAGE_PREFIX=${image_prefix}"
+
+    assert_status 0 "container build with a long registry and short repository path"
+    assert_log_contains "${TEST_ROOT}" $'docker\tbuild\t' \
+        "container build with a long registry and short repository path"
+
+    new_harness scan-long-registry-short-repository scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_IMAGE_PREFIX=${image_prefix}" \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache"
+
+    assert_status 0 "container scan with a long registry and short repository path"
+    assert_log_contains "${TEST_ROOT}" $'docker\tinfo' \
+        "container scan with a long registry and short repository path"
 }
 
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
@@ -1390,6 +1474,64 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
         "staging deployment webhook payload"
 }
 
+test_service_discovery_requires_its_dependencies() {
+    local missing_command image_script
+    local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    for missing_command in find basename sort; do
+        for image_script in build-container-images.sh scan-container-images.sh; do
+            new_harness "${image_script%.sh}-missing-${missing_command}" "${image_script}"
+            add_service_dockerfile "${TEST_ROOT}" example-service
+            add_service_discovery_prerequisites_except "${TEST_ROOT}" "${missing_command}"
+
+            run_target "${TEST_ROOT}" "${image_script}" \
+                "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+            assert_status 69 "${image_script} without ${missing_command}"
+            assert_file_contains "${RUN_OUTPUT}" \
+                "${missing_command} is required to discover service Dockerfiles" \
+                "${image_script} ${missing_command} prerequisite"
+            assert_no_commands_logged "${TEST_ROOT}" \
+                "${image_script} without ${missing_command} must not invoke Docker"
+        done
+
+        new_harness "deploy-staging-missing-${missing_command}" deploy-staging.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_discovery_prerequisites_except "${TEST_ROOT}" "${missing_command}"
+
+        run_target "${TEST_ROOT}" deploy-staging.sh \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+            "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
+            "GITHUB_SHA=${sha}" \
+            "GITHUB_REF_NAME=dev" \
+            "GITHUB_REPOSITORY=tdespenza/lifeos" \
+            "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+            "LIFEOS_IMAGE_TAG=build-42"
+
+        assert_status 69 "staging deployment without ${missing_command}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "${missing_command} is required to discover service Dockerfiles" \
+            "staging deployment ${missing_command} prerequisite"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "staging deployment without ${missing_command} must not construct a payload or invoke curl"
+
+        new_harness "staging-smoke-missing-${missing_command}" staging-smoke-test.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_discovery_prerequisites_except "${TEST_ROOT}" "${missing_command}" cat
+
+        run_target "${TEST_ROOT}" staging-smoke-test.sh \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+            'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}'
+
+        assert_status 69 "staging smoke test without ${missing_command}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "${missing_command} is required to discover service Dockerfiles" \
+            "staging smoke ${missing_command} prerequisite"
+        assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+            "staging smoke test without ${missing_command} must not probe services"
+    done
+}
+
 test_contract_sensitive_posts_reject_redirects() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -1743,6 +1885,7 @@ test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch
 test_container_scripts_reject_invalid_generated_image_references
+test_container_scripts_enforce_docker_repository_path_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
@@ -1759,6 +1902,7 @@ test_performance_smoke_docker_fallback_uses_read_only_repository_mount
 test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
+test_service_discovery_requires_its_dependencies
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_operational_urls_reject_userinfo_before_live_traffic

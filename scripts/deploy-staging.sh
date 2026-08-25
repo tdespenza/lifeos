@@ -17,6 +17,11 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 69
 fi
 
+if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to send the staging deployment request" >&2
+    exit 69
+fi
+
 for variable in "${required_variables[@]}"; do
     if [[ -z "${!variable:-}" ]]; then
         echo "${variable} is required for a staging deployment" >&2

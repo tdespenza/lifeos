@@ -6,8 +6,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const scenarioPath = path.join(__dirname, 'performance', 'readiness-smoke.js');
-const scenarioSource = fs.readFileSync(scenarioPath, 'utf8');
+const repositoryRoot = path.resolve(__dirname, '..');
+process.chdir(repositoryRoot);
+
+const scenarioPath = path.resolve('scripts/performance/readiness-smoke.js');
+const scenarioSource = fs.readFileSync('scripts/performance/readiness-smoke.js', 'utf8');
 const requestCalls = [];
 const checkCalls = [];
 const sleepCalls = [];

@@ -21,6 +21,10 @@ fake_log_command() {
 fake_docker() {
     fake_log_command docker "$@"
 
+    if [[ "${1:-}" == "info" ]]; then
+        return "${FAKE_DOCKER_INFO_STATUS:-0}"
+    fi
+
     if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
         return "${FAKE_DOCKER_IMAGE_INSPECT_STATUS:-0}"
     fi
@@ -63,10 +67,15 @@ fake_jq() {
     fake_log_command jq "$@"
 
     if [[ "$*" == *'type == "object" and all(.[]; type == "string")'* ]]; then
-        local validation_input
-        validation_input="$(cat)"
         # This exact staging predicate has input-dependent jq semantics, so use the system jq
         # outside the harness PATH to make malformed and structurally invalid fixtures fail alike.
+        if ! command -p -v jq >/dev/null 2>&1; then
+            printf '%s\n' 'System jq is required to validate staging smoke JSON fixtures' >&2
+            return 69
+        fi
+
+        local validation_input
+        validation_input="$(cat)"
         if ! command -p jq --exit-status 'type == "object" and all(.[]; type == "string")' \
             <<< "${validation_input}" >/dev/null 2>&1; then
             return 64
@@ -426,6 +435,7 @@ run_target() {
             LIFEOS_TRIVY_CACHE_DIR \
             LIFEOS_TRIVY_IMAGE \
             FAKE_DOCKER_COMPOSE_VERSION_STATUS \
+            FAKE_DOCKER_INFO_STATUS \
             FAKE_DOCKER_STDIN_LOG \
             FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
             FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
@@ -588,6 +598,10 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
     assert_log_contains "${TEST_ROOT}" \
         $'docker\timage\tinspect\tlifeos/example-service:scan-42' \
         "container image inspection"
+    assert_log_order "${TEST_ROOT}" \
+        $'docker\tinfo' \
+        $'docker\timage\tinspect\tlifeos/example-service:scan-42' \
+        "container scan daemon preflight ordering"
     assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' "container scan after a missing image"
 
     new_harness scan-container-arguments scan-container-images.sh
@@ -605,6 +619,25 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
     assert_log_contains "${TEST_ROOT}" \
         $'\timage\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--severity\tHIGH,CRITICAL\tlifeos/example-service:scan-42' \
         "container scan Trivy image arguments"
+}
+
+test_container_scan_requires_an_accessible_docker_daemon() {
+    new_harness scan-container-unavailable-daemon scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "FAKE_DOCKER_INFO_STATUS=1"
+
+    assert_status 69 "container scan with an unavailable Docker daemon"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Docker daemon is unavailable or inaccessible" \
+        "container scan Docker daemon preflight"
+    assert_log_contains "${TEST_ROOT}" $'docker\tinfo' "container scan Docker daemon preflight command"
+    assert_log_excludes "${TEST_ROOT}" $'docker\timage\tinspect\t' \
+        "container scan after an unavailable Docker daemon"
+    assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+        "container scan after an unavailable Docker daemon"
 }
 
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
@@ -830,6 +863,25 @@ test_performance_smoke_rejects_invalid_vus_values() {
 }
 
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
+    new_harness deploy-staging-missing-curl deploy-staging.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    disable_fake_command "${TEST_ROOT}" curl
+    mkdir -p "${TEST_ROOT}/prerequisite-bin"
+    ln -s "$(command -p -v bash)" "${TEST_ROOT}/prerequisite-bin/bash"
+    ln -s "$(command -p -v dirname)" "${TEST_ROOT}/prerequisite-bin/dirname"
+
+    # Supplying only the executable and utility required to start the script makes command -v
+    # exercise the production prerequisite check, rather than merely making the fake curl fail
+    # after the request has been constructed. This remains portable when /bin links to /usr/bin.
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "staging deployment without curl"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "curl is required to send the staging deployment request" \
+        "staging deployment curl prerequisite"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging deployment without curl"
+
     new_harness deploy-staging deploy-staging.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1035,6 +1087,7 @@ test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch
 test_container_scripts_reject_invalid_generated_image_references
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
+test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_database_provisioning_waits_before_exec_and_handles_failures
 test_database_provisioning_requires_the_compose_plugin

@@ -54,6 +54,11 @@ for service in "${SERVICES[@]}"; do
     fi
 done
 
+if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is unavailable or inaccessible; start Docker and verify access before scanning images" >&2
+    exit 69
+fi
+
 mkdir -p "${TRIVY_CACHE_DIR}"
 
 for service in "${SERVICES[@]}"; do

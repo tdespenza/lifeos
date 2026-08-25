@@ -21,6 +21,17 @@
       "type": "library",
       "name": "commons-lang3",
       "purl": "pkg:maven/org.apache.commons/commons-lang3@3.17.0?type=jar"
+    },
+    {
+      "type": "application",
+      "name": "nested-component-owner",
+      "components": [
+        {
+          "type": "library",
+          "name": "nested-library",
+          "purl": "pkg:maven/com.example/nested-library@1.0.0"
+        }
+      ]
     }
   ]
 }

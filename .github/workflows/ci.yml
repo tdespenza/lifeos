@@ -46,6 +46,9 @@ jobs:
       - name: Test operational script behavior
         run: bash scripts/test-operational-scripts.sh
 
+      - name: Test concurrent database provisioning
+        run: bash scripts/test-provision-databases-concurrency.sh
+
       - name: Verify operational script syntax
         run: bash scripts/verify-pipeline-scripts.sh
 

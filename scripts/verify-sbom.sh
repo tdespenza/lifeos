@@ -41,16 +41,18 @@ jq --exit-status '
         else (.metadata.component.name | type == "string")
         end;
 
+    def valid_component:
+        if type != "object" then false
+        elif .type == "library" and ((.purl? | valid_purl) | not) then false
+        elif (has("components") | not) then true
+        elif (.components | type) != "array" then false
+        else all(.components[]; valid_component)
+        end;
+
     def valid_components:
         if (has("components") | not) then true
         elif (.components | type) != "array" then false
-        else
-            all(
-                .components[];
-                if type != "object" then false
-                elif .type == "library" then (.purl? | valid_purl)
-                else true end
-            )
+        else all(.components[]; valid_component)
         end;
 
     if type != "object" then false

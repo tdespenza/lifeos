@@ -286,12 +286,7 @@ assert_file_contains() {
     local expected="$2"
     local description="$3"
     local contents=""
-    if [[ ! -f "${file}" ]]; then
-        fail "${description}: required file is missing: ${file}"
-    fi
-    if [[ ! -r "${file}" ]]; then
-        fail "${description}: required file is not readable: ${file}"
-    fi
+    assert_readable_file "${file}" "${description}"
     IFS= read -r -d '' contents < "${file}" || true
     if [[ "${contents}" != *"${expected}"* ]]; then
         fail "${description}: missing '${expected}'"
@@ -303,15 +298,21 @@ assert_file_excludes() {
     local unexpected="$2"
     local description="$3"
     local contents=""
+    assert_readable_file "${file}" "${description}"
+    IFS= read -r -d '' contents < "${file}" || true
+    if [[ "${contents}" == *"${unexpected}"* ]]; then
+        fail "${description}: found unexpected '${unexpected}'"
+    fi
+}
+
+assert_readable_file() {
+    local file="$1"
+    local description="$2"
     if [[ ! -f "${file}" ]]; then
         fail "${description}: required file is missing: ${file}"
     fi
     if [[ ! -r "${file}" ]]; then
         fail "${description}: required file is not readable: ${file}"
-    fi
-    IFS= read -r -d '' contents < "${file}" || true
-    if [[ "${contents}" == *"${unexpected}"* ]]; then
-        fail "${description}: found unexpected '${unexpected}'"
     fi
 }
 
@@ -351,6 +352,9 @@ assert_log_order() {
     local description="$4"
     local first_line second_line
 
+    if [[ "${first}" == *$'\n'* || "${second}" == *$'\n'* ]]; then
+        fail "${description}: assert_log_order requires single-line patterns"
+    fi
     assert_log_contains "${root}" "${first}" "${description} first command"
     assert_log_contains "${root}" "${second}" "${description} second command"
     first_line="$(grep -Fnm 1 -- "${first}" "${root}/commands.log" | cut -d: -f1)"
@@ -367,6 +371,10 @@ assert_log_line_count() {
     local description="$4"
     local actual_count
 
+    if [[ "${expected}" == *$'\n'* ]]; then
+        fail "${description}: assert_log_line_count requires a single-line pattern"
+    fi
+    assert_readable_file "${root}/commands.log" "${description}"
     actual_count="$(grep -F -c -- "${expected}" "${root}/commands.log" || true)"
     if [[ "${actual_count}" -ne "${expected_count}" ]]; then
         fail "${description}: expected ${expected_count} matching commands, got ${actual_count}"
@@ -380,6 +388,7 @@ assert_curl_retry_probe_count() {
     local line
     local actual_count=0
 
+    assert_readable_file "${root}/commands.log" "${description}"
     while IFS= read -r line; do
         if [[ "${line}" == $'curl\t'* && "${line}" == *$'\t--retry\t'* ]]; then
             ((actual_count += 1))
@@ -388,6 +397,15 @@ assert_curl_retry_probe_count() {
 
     if [[ "${actual_count}" -ne "${expected_count}" ]]; then
         fail "${description}: expected ${expected_count} curl retry probes, got ${actual_count}"
+    fi
+}
+
+assert_no_commands_logged() {
+    local root="$1"
+    local message="$2"
+
+    if [[ -s "${root}/commands.log" ]]; then
+        fail "${message}"
     fi
 }
 
@@ -570,6 +588,48 @@ test_file_assertions_fail_clearly_when_files_are_missing() {
         "file-excludes missing-file diagnostic"
 }
 
+test_log_assertions_fail_clearly_for_invalid_patterns_and_missing_logs() {
+    new_harness log-assertions
+    printf '%s\n' 'first command' 'second command' > "${TEST_ROOT}/commands.log"
+
+    RUN_OUTPUT="${TEST_ROOT}/multiline-order-output.log"
+    if (assert_log_order "${TEST_ROOT}" $'first command\nsecond command' "second command" \
+        "multiline log order") > "${RUN_OUTPUT}" 2>&1; then
+        fail "log-order assertion must reject multiline patterns"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "multiline log order: assert_log_order requires single-line patterns" \
+        "log-order multiline-pattern diagnostic"
+
+    RUN_OUTPUT="${TEST_ROOT}/multiline-count-output.log"
+    if (assert_log_line_count "${TEST_ROOT}" $'first command\nsecond command' 1 \
+        "multiline log count") > "${RUN_OUTPUT}" 2>&1; then
+        fail "log-line-count assertion must reject multiline patterns"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "multiline log count: assert_log_line_count requires a single-line pattern" \
+        "log-line-count multiline-pattern diagnostic"
+
+    rm -f -- "${TEST_ROOT}/commands.log"
+    RUN_OUTPUT="${TEST_ROOT}/missing-retry-probe-log-output.log"
+    if (assert_curl_retry_probe_count "${TEST_ROOT}" 0 "missing retry-probe log") \
+        > "${RUN_OUTPUT}" 2>&1; then
+        fail "curl retry-probe assertion must reject a missing command log"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "missing retry-probe log: required file is missing: ${TEST_ROOT}/commands.log" \
+        "curl retry-probe missing-log diagnostic"
+
+    printf '%s\n' 'docker run' > "${TEST_ROOT}/commands.log"
+    RUN_OUTPUT="${TEST_ROOT}/unexpected-command-output.log"
+    if (assert_no_commands_logged "${TEST_ROOT}" "unexpected-command diagnostic") \
+        > "${RUN_OUTPUT}" 2>&1; then
+        fail "no-commands assertion must reject a non-empty command log"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" "unexpected-command diagnostic" \
+        "no-commands assertion diagnostic"
+}
+
 test_command_double_dispatch_fails_closed() {
     new_harness command-double-dispatch
     ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/unrecognized-command"
@@ -594,9 +654,8 @@ test_build_rejects_missing_services() {
 
     assert_status 66 "container build without Dockerfiles"
     assert_file_contains "${RUN_OUTPUT}" "No service Dockerfiles found" "container build without Dockerfiles"
-    if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-        fail "container build without Dockerfiles must not invoke Docker"
-    fi
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build without Dockerfiles must not invoke Docker"
 }
 
 test_build_rejects_missing_or_ambiguous_jars() {
@@ -607,9 +666,8 @@ test_build_rejects_missing_or_ambiguous_jars() {
 
     assert_status 66 "container build without a service jar"
     assert_file_contains "${RUN_OUTPUT}" "Expected exactly one non-plain executable jar" "container build without a service jar"
-    if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-        fail "container build without a service jar must not invoke Docker"
-    fi
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build without a service jar must not invoke Docker"
 
     new_harness build-ambiguous-jar build-container-images.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -621,9 +679,8 @@ test_build_rejects_missing_or_ambiguous_jars() {
 
     assert_status 66 "container build with ambiguous jars"
     assert_file_contains "${RUN_OUTPUT}" "Expected exactly one non-plain executable jar" "container build with ambiguous jars"
-    if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-        fail "container build with ambiguous jars must not invoke Docker"
-    fi
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build with ambiguous jars must not invoke Docker"
 }
 
 test_build_passes_jar_argument_and_honors_push_switch() {
@@ -688,9 +745,8 @@ test_container_scripts_reject_invalid_generated_image_references() {
         assert_status 64 "container build with invalid generated reference ${expected_reference}"
         assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
             "container build image-reference validation ${expected_reference}"
-        if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-            fail "container build with invalid reference ${expected_reference} must not invoke Docker"
-        fi
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "container build with invalid reference ${expected_reference} must not invoke Docker"
 
         new_harness "scan-invalid-image-reference-${case_number}" scan-container-images.sh
         add_service_dockerfile "${TEST_ROOT}" example-service
@@ -704,9 +760,8 @@ test_container_scripts_reject_invalid_generated_image_references() {
         assert_status 64 "container scan with invalid generated reference ${expected_reference}"
         assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
             "container scan image-reference validation ${expected_reference}"
-        if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-            fail "container scan with invalid reference ${expected_reference} must not invoke Docker"
-        fi
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "container scan with invalid reference ${expected_reference} must not invoke Docker"
     done
 }
 
@@ -1000,9 +1055,8 @@ test_database_provisioning_rejects_unbounded_timeout() {
 
     assert_status 64 "database provisioning with an out-of-range timeout"
     assert_file_contains "${RUN_OUTPUT}" "must be between 1 and 300 seconds" "database provisioning timeout validation"
-    if [[ -s "${TEST_ROOT}/commands.log" ]]; then
-        fail "database provisioning with an invalid timeout must not invoke Docker"
-    fi
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "database provisioning with an invalid timeout must not invoke Docker"
 
     new_harness provision-maximum-timeout provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -1062,8 +1116,10 @@ test_performance_smoke_accepts_100_vus_and_prefers_k6() {
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
     new_harness performance-docker performance-smoke-test.sh performance/readiness-smoke.js
     disable_fake_command "${TEST_ROOT}" k6
+    local caller_user
+    caller_user="$(command -p id -u):$(command -p id -g)"
     local prerequisite
-    for prerequisite in bash basename dirname mkdir mktemp mv readlink rm; do
+    for prerequisite in bash basename dirname id mkdir mktemp mv readlink rm; do
         add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
     done
 
@@ -1074,8 +1130,8 @@ test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
 
     assert_status 0 "performance smoke test using Docker fallback"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--volume\t'"${TEST_ROOT}"$':/work:ro\t--volume\t' \
-        "performance Docker fallback read-only repository mount"
+        $'docker\trun\t--rm\t--user\t'"${caller_user}"$'\t--volume\t'"${TEST_ROOT}"$':/work:ro\t--volume\t' \
+        "performance Docker fallback caller identity and read-only repository mount"
     assert_log_contains "${TEST_ROOT}" \
         $'grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2\trun\t--quiet\t--summary-export\t/tmp/lifeos-k6-summary.' \
         "performance Docker fallback digest-pinned image and temporary summary"
@@ -1352,8 +1408,42 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
         "chaos experiment recovery probes"
 }
 
+test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
+    new_harness chaos-webhook-failure run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+        "FAKE_CURL_STATUS=22"
+
+    assert_status 22 "chaos experiment with a non-2xx webhook response"
+    assert_log_line_count "${TEST_ROOT}" $'curl\t' 1 \
+        "chaos experiment after a failed webhook"
+    assert_curl_retry_probe_count "${TEST_ROOT}" 0 \
+        "chaos experiment after a failed webhook"
+
+    new_harness chaos-recovery-failure run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+        "FAKE_JQ_READINESS_STATUS=1"
+
+    assert_status 1 "chaos experiment with a recovery probe that is not UP"
+    assert_curl_retry_probe_count "${TEST_ROOT}" 1 \
+        "chaos experiment after a failed recovery probe"
+    assert_log_excludes "${TEST_ROOT}" \
+        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--retry\t5\t--retry-all-errors\thttps://identity-management.example.test/actuator/health/readiness' \
+        "chaos experiment after a failed gateway recovery probe"
+}
+
 test_file_assertions_match_full_file_literals
 test_file_assertions_fail_clearly_when_files_are_missing
+test_log_assertions_fail_clearly_for_invalid_patterns_and_missing_logs
 test_command_double_dispatch_fails_closed
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
@@ -1378,5 +1468,6 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
+test_chaos_experiment_fails_for_webhook_and_recovery_errors
 
 printf '%s\n' 'Operational script behavioral tests passed'

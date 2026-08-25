@@ -132,6 +132,7 @@ elif command -v docker >/dev/null 2>&1; then
     container_summary_path="/tmp/$(basename "${temporary_summary_path}")"
 
     docker run --rm \
+        --user "$(id -u):$(id -g)" \
         --volume "${REPOSITORY_ROOT}:/work:ro" \
         --volume "${temporary_summary_path}:${container_summary_path}" \
         --workdir /work \

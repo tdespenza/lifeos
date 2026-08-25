@@ -62,6 +62,7 @@ wait_for_health() {
     # successfully returned health payload whose application status is still DOWN.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
+            --disable \
             --fail \
             --silent \
             --show-error \

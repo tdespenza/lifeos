@@ -4,7 +4,10 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly PROVISION_FILE="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
-readonly POSTGRES_IMAGE="${LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE:-postgres:17-alpine}"
+# Official PostgreSQL 17.11 Alpine multi-platform manifest from Docker Hub, reviewed 2026-08-25.
+# Update this intentionally after reviewing the replacement manifest and its supported platforms.
+readonly DEFAULT_POSTGRES_IMAGE="postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+readonly POSTGRES_IMAGE="${LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE:-${DEFAULT_POSTGRES_IMAGE}}"
 readonly POSTGRES_USER="lifeos_provision_test"
 POSTGRES_PASSWORD="${LIFEOS_PROVISION_CONCURRENCY_POSTGRES_PASSWORD:-}"
 if [[ -z "${POSTGRES_PASSWORD}" ]]; then

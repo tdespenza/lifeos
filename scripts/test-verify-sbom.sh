@@ -90,6 +90,8 @@ assert_option_like_filename_is_rejected() {
 assert_succeeds "valid library PURLs are accepted" "$FIXTURE_DIR/valid-library-purls.json"
 assert_succeeds "percent-encoded PURL special characters are accepted" \
     "$FIXTURE_DIR/valid-percent-encoded-purl-characters.json"
+assert_succeeds "valid percent-encoded UTF-8 PURL characters are accepted" \
+    "$FIXTURE_DIR/valid-percent-encoded-utf8-purl.json"
 assert_succeeds "a minimal CycloneDX 1.5 SBOM is accepted" "$FIXTURE_DIR/minimal-cyclonedx-1.5.json"
 assert_succeeds "a CycloneDX 1.6 cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.6.json"
 assert_succeeds "a later CycloneDX cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.7.json"
@@ -123,6 +125,8 @@ assert_fails "a library PURL with duplicate qualifier keys is rejected" \
     "$FIXTURE_DIR/duplicate-qualifier-purl.json"
 assert_fails "a library PURL with malformed percent encoding is rejected" \
     "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
+assert_fails "a library PURL with percent escapes that decode to invalid UTF-8 is rejected" \
+    "$FIXTURE_DIR/invalid-percent-encoded-utf8-purl.json"
 assert_fails "a library PURL with raw square brackets is rejected" \
     "$FIXTURE_DIR/raw-square-brackets-purl.json"
 assert_fails "a library PURL with a raw backslash is rejected" \

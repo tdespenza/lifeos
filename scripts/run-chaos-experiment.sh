@@ -65,6 +65,7 @@ wait_for_health() {
     # Retry the complete probe so a healthy HTTP response with status DOWN is retried as well.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
+            --disable \
             --fail \
             --silent \
             --show-error \
@@ -103,6 +104,7 @@ payload="$(jq -cn \
 # The external runner must inject and recover a pre-approved dependency failure, wait for recovery,
 # and return non-2xx if the experiment or rollback fails. Do not print its URL or response.
 curl \
+    --disable \
     --fail \
     --silent \
     --show-error \

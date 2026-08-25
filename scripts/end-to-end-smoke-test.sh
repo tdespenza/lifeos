@@ -49,6 +49,7 @@ wait_for_health() {
     # Retry the whole health assertion: curl does not retry when jq rejects a 200/DOWN payload.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
+            --disable \
             --fail \
             --silent \
             --show-error \
@@ -96,6 +97,7 @@ trap 'rm -f "${headers_file}" "${body_file}"' EXIT
 # The invalid body is deliberate: it traverses Gateway -> Identity without creating a permanent
 # test account, while asserting the public failure and correlation contracts of the live topology.
 status_code="$(curl \
+    --disable \
     --silent \
     --show-error \
     --location \

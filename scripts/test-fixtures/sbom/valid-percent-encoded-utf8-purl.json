@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "valid-percent-encoded-utf8",
+      "purl": "pkg:maven/com.example/rocket%F0%9F%9A%80@1.0.0"
+    }
+  ]
+}

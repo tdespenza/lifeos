@@ -23,6 +23,44 @@ jq --exit-status --slurp '
     def valid_percent_encoding:
         gsub("%[0-9A-Fa-f]{2}"; "") | contains("%") | not;
 
+    def hex_digit_value:
+        . as $digit
+        | "0123456789abcdef"
+        | index($digit | ascii_downcase);
+
+    def percent_encoded_byte:
+        .[1:3] as $hex
+        | (($hex[0:1] | hex_digit_value) * 16) + ($hex[1:2] | hex_digit_value);
+
+    def decoded_purl_bytes:
+        [scan("%[0-9A-Fa-f]{2}|[^%]")
+         | if startswith("%") then percent_encoded_byte else explode[] end];
+
+    # Package URLs use percent-encoded UTF-8.  Validate the decoded byte stream
+    # without relying on jq replacement-character handling for invalid bytes.
+    def valid_utf8_bytes:
+        reduce .[] as $byte (
+            {valid: true, remaining: 0, minimum: 128, maximum: 191};
+            if (.valid | not) then .
+            elif .remaining > 0 then
+                if $byte >= .minimum and $byte <= .maximum then
+                    .remaining -= 1 | .minimum = 128 | .maximum = 191
+                else .valid = false end
+            elif $byte <= 127 then .
+            elif $byte >= 194 and $byte <= 223 then .remaining = 1
+            elif $byte == 224 then .remaining = 2 | .minimum = 160
+            elif ($byte >= 225 and $byte <= 236) or ($byte >= 238 and $byte <= 239) then .remaining = 2
+            elif $byte == 237 then .remaining = 2 | .maximum = 159
+            elif $byte == 240 then .remaining = 3 | .minimum = 144
+            elif $byte >= 241 and $byte <= 243 then .remaining = 3
+            elif $byte == 244 then .remaining = 3 | .maximum = 143
+            else .valid = false end
+        )
+        | .valid and .remaining == 0;
+
+    def valid_percent_decoded_utf8:
+        decoded_purl_bytes | valid_utf8_bytes;
+
     def valid_purl_characters:
         test("^[A-Za-z0-9._~%:/@?=&#-]+$")
         and (contains("[") | not)
@@ -73,6 +111,7 @@ jq --exit-status --slurp '
         # The qualifier expression below continues to allow = and & as separators.
         elif (test("^pkg:[a-z][a-z0-9.-]+/(?:[^/?#@=&[:space:]]+/)*[^/?#@=&[:space:]]+(?:@[^/?#@=&[:space:]]+)?(?:\\?[a-z][a-z0-9._-]*=[^?=&#[:space:]]+(?:&[a-z][a-z0-9._-]*=[^?=&#[:space:]]+)*)?(?:#(?:[^/?#[:space:]]+/)*[^/?#[:space:]]+)?$") | not) then false
         elif (valid_percent_encoding | not) then false
+        elif (valid_percent_decoded_utf8 | not) then false
         else
             purl_qualifier_keys as $keys
             | ($keys | length) == ($keys | unique | length)

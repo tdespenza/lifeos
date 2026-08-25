@@ -429,9 +429,16 @@ assert_log_entry_excludes() {
     local description="$4"
     local log_file="${root}/commands.log"
 
-    assert_file_contains "${log_file}" "${entry_marker}" "${description} command"
+    if [[ -z "${entry_marker}" || "${entry_marker}" == *$'\n'* ]]; then
+        fail "${description}: assert_log_entry_excludes requires a non-empty single-line entry marker"
+    fi
+
+    assert_readable_file "${log_file}" "${description} command"
     local matching_entries
-    matching_entries="$(grep -F -- "${entry_marker}" "${log_file}")"
+    matching_entries="$(grep -F -- "${entry_marker}" "${log_file}" || true)"
+    if [[ -z "${matching_entries}" ]]; then
+        fail "${description} command: missing '${entry_marker}'"
+    fi
     if grep -Fq -- "${unexpected}" <<< "${matching_entries}"; then
         fail "${description}: found unexpected '${unexpected}'"
     fi
@@ -627,6 +634,7 @@ run_target() {
             LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL \
             LIFEOS_PERFORMANCE_SUMMARY_PATH \
             LIFEOS_PERFORMANCE_VUS \
+            LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE \
             LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6 \
             LIFEOS_PUSH_IMAGES \
             LIFEOS_TRIVY_CACHE_DIR \
@@ -761,6 +769,33 @@ test_log_assertions_fail_clearly_for_invalid_patterns_and_missing_logs() {
     assert_file_contains "${RUN_OUTPUT}" \
         "multiline log count: assert_log_line_count requires a single-line pattern" \
         "log-line-count multiline-pattern diagnostic"
+
+    RUN_OUTPUT="${TEST_ROOT}/empty-entry-marker-output.log"
+    if (assert_log_entry_excludes "${TEST_ROOT}" "" "--retry" "empty entry marker") \
+        > "${RUN_OUTPUT}" 2>&1; then
+        fail "log-entry assertion must reject an empty marker"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "empty entry marker: assert_log_entry_excludes requires a non-empty single-line entry marker" \
+        "log-entry empty-marker diagnostic"
+
+    RUN_OUTPUT="${TEST_ROOT}/multiline-entry-marker-output.log"
+    if (assert_log_entry_excludes "${TEST_ROOT}" $'first command\nsecond command' "--retry" \
+        "multiline entry marker") > "${RUN_OUTPUT}" 2>&1; then
+        fail "log-entry assertion must reject a multiline marker"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "multiline entry marker: assert_log_entry_excludes requires a non-empty single-line entry marker" \
+        "log-entry multiline-marker diagnostic"
+
+    RUN_OUTPUT="${TEST_ROOT}/missing-entry-marker-output.log"
+    if (assert_log_entry_excludes "${TEST_ROOT}" "missing command" "--retry" \
+        "missing entry marker") > "${RUN_OUTPUT}" 2>&1; then
+        fail "log-entry assertion must reject a missing marker"
+    fi
+    assert_file_contains "${RUN_OUTPUT}" \
+        "missing entry marker command: missing 'missing command'" \
+        "log-entry missing-marker diagnostic"
 
     rm -f -- "${TEST_ROOT}/commands.log"
     RUN_OUTPUT="${TEST_ROOT}/missing-retry-probe-log-output.log"
@@ -1303,6 +1338,36 @@ test_database_provisioning_sql_keeps_create_queries_open_for_gexec() {
         "task-goal database provisioning statement"
 }
 
+test_concurrent_database_provisioning_pins_its_default_image_and_honors_override() {
+    local pinned_image="postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+    local override_image="registry.example.test/lifeos-postgres:integration-test"
+
+    new_harness provision-concurrency-default-image test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    # Stop after recording docker run: the remaining test needs a real PostgreSQL server.
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh "FAKE_DOCKER_STATUS=75"
+
+    assert_status 75 "concurrent database provisioning with its default image"
+    assert_log_contains "${TEST_ROOT}" $'docker\trun\t--detach\t--rm\t--name' \
+        "concurrent database provisioning default image invocation"
+    assert_log_contains "${TEST_ROOT}" "${pinned_image}" \
+        "concurrent database provisioning default image pin"
+
+    new_harness provision-concurrency-override-image test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE=${override_image}" \
+        "FAKE_DOCKER_STATUS=75"
+
+    assert_status 75 "concurrent database provisioning with an image override"
+    assert_log_contains "${TEST_ROOT}" "${override_image}" \
+        "concurrent database provisioning image override"
+    assert_log_excludes "${TEST_ROOT}" "${pinned_image}" \
+        "concurrent database provisioning image override"
+}
+
 test_verifier_repository_root_resolution_fails_closed() {
     local verifier
     for verifier in verify-pipeline-scripts.sh verify-sbom.sh verify-architecture.sh; do
@@ -1460,7 +1525,7 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
 
     assert_status 0 "staging deployment with a valid webhook"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
         "staging deployment bounded HTTPS transport"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://deploy.example.test/hooks/staging" \
@@ -1550,7 +1615,7 @@ test_contract_sensitive_posts_reject_redirects() {
 
     assert_status 47 "staging deployment receiving a 302 redirect"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https' \
         "staging deployment redirect rejection"
     assert_file_excludes "${RUN_OUTPUT}" \
         "Staging deployment endpoint accepted" \
@@ -1572,13 +1637,13 @@ test_contract_sensitive_posts_reject_redirects() {
 
     assert_status 47 "end-to-end account request receiving a 302 redirect"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--header\tX-Correlation-ID: 11111111-1111-4111-8111-111111111111' \
+        $'curl\t--disable\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\t--header\tX-Correlation-ID: 11111111-1111-4111-8111-111111111111' \
         "end-to-end account redirect rejection"
     assert_file_excludes "${RUN_OUTPUT}" \
         "End-to-end gateway-to-identity contract passed" \
         "end-to-end smoke after an intermediate correlation header"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
         "end-to-end readiness redirects remain enabled"
 
     new_harness chaos-redirect run-chaos-experiment.sh
@@ -1593,7 +1658,7 @@ test_contract_sensitive_posts_reject_redirects() {
 
     assert_status 47 "chaos webhook receiving a 303 redirect"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
         "chaos webhook redirect rejection"
     assert_log_line_count "${TEST_ROOT}" $'curl\t' 1 \
         "chaos recovery probes after a redirected webhook"
@@ -1728,6 +1793,9 @@ test_health_checks_retry_down_responses_and_fail_closed() {
         "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP"
 
     assert_status 0 "staging smoke health recovery"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://staging.example.test/actuator/health/readiness' \
+        "staging smoke health probe disables curl configuration"
     assert_health_probe_count "${TEST_ROOT}" 2 "staging smoke health recovery"
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "staging smoke health recovery backoff"
     assert_log_entry_excludes "${TEST_ROOT}" \
@@ -1760,6 +1828,9 @@ test_health_checks_retry_down_responses_and_fail_closed() {
         "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
 
     assert_status 0 "end-to-end smoke health recovery"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "end-to-end readiness probe disables curl configuration"
     assert_health_probe_count "${TEST_ROOT}" 3 "end-to-end smoke health recovery"
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "end-to-end smoke health recovery backoff"
     assert_file_contains "${RUN_OUTPUT}" \
@@ -1799,8 +1870,11 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
 
     assert_status 0 "chaos experiment with successful recovery probes"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
         "chaos experiment bounded webhook transport"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "chaos recovery probe disables curl configuration"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://chaos.example.test/experiments" \
         $'--retry\t' \
@@ -1872,7 +1946,7 @@ test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 5 \
         "chaos experiment persistent DOWN backoff"
     assert_log_excludes "${TEST_ROOT}" \
-        $'curl\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://identity-management.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://identity-management.example.test/actuator/health/readiness' \
         "chaos experiment after a failed gateway recovery probe"
 }
 
@@ -1896,6 +1970,7 @@ test_database_provisioning_requires_the_compose_plugin
 test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
+test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount

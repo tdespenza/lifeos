@@ -160,7 +160,11 @@ jq --exit-status --slurp '
         if type != "object" then false
         elif (.name | type) != "string" then false
         elif (.type | valid_component_type($spec_version) | not) then false
+        # A PURL is optional for non-library component types, but whenever a
+        # component declares one it must be structurally valid. Libraries
+        # remain required to declare a valid PURL for dependency traceability.
         elif .type == "library" and ((.purl? | valid_purl) | not) then false
+        elif has("purl") and ((.purl | valid_purl) | not) then false
         elif (has("components") | not) then true
         elif (.components | type) != "array" then false
         elif (.components | unique_component_objects | not) then false

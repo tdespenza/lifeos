@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "lifeos",
+      "purl": "pkg:maven/com.example/lifeos@1.0.0?missingQualifierValue"
+    }
+  ]
+}

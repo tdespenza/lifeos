@@ -109,6 +109,8 @@ assert_fails "a library component without a PURL is rejected" \
     "$FIXTURE_DIR/missing-library-purl.json"
 assert_fails "a library component with a malformed PURL is rejected" \
     "$FIXTURE_DIR/malformed-library-purl.json"
+assert_fails "a non-library component with a malformed PURL is rejected" \
+    "$FIXTURE_DIR/malformed-non-library-purl.json"
 assert_fails "a nested library component without a PURL is rejected" \
     "$FIXTURE_DIR/nested-missing-library-purl.json"
 assert_fails "a nested library component with a malformed PURL is rejected" \

@@ -130,10 +130,33 @@ if ! mkdir -p "${TRIVY_CACHE_DIR}"; then
     exit 69
 fi
 
+trivy_cache_lock_is_held() {
+    [[ -d "${TRIVY_CACHE_LOCK_DIRECTORY}" && ! -L "${TRIVY_CACHE_LOCK_DIRECTORY}" ]]
+}
+
 acquire_trivy_cache_lock() {
     local deadline_seconds=$((SECONDS + TRIVY_CACHE_LOCK_TIMEOUT_SECONDS))
+    local mkdir_error
 
-    while ! mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null; do
+    while true; do
+        if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+            return 0
+        fi
+
+        # An actual lock directory is the only expected mkdir failure. A holder can release it
+        # between the failed mkdir above and this check, so retry once before reporting a
+        # malformed cache path or permission error. Do not treat a symlink as lock contention.
+        if ! trivy_cache_lock_is_held; then
+            if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+                return 0
+            fi
+            if ! trivy_cache_lock_is_held; then
+                printf 'Unable to acquire exclusive access to the Trivy cache: %s\n' \
+                    "${mkdir_error:-mkdir failed without a diagnostic}" >&2
+                return 1
+            fi
+        fi
+
         if (( SECONDS >= deadline_seconds )); then
             echo "Timed out waiting for exclusive access to the Trivy cache" >&2
             return 1

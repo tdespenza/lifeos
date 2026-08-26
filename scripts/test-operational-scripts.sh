@@ -216,9 +216,26 @@ fake_curl() {
     fi
 
     if [[ -n "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE:-}" && "${url}" == */api/v1/accounts ]]; then
+        local correlation_header_separator=' '
+        case "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR:-space}" in
+            space)
+                ;;
+            htab)
+                correlation_header_separator=$'\t'
+                ;;
+            none)
+                correlation_header_separator=''
+                ;;
+            *)
+                printf 'Unsupported fake correlation-header separator: %s\n' \
+                    "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR}" >&2
+                return 64
+                ;;
+        esac
         if [[ -n "${dump_header_file}" ]]; then
-            printf 'HTTP/1.1 %s Response\r\nX-Correlation-ID: %s\r\n\r\n' \
+            printf 'HTTP/1.1 %s Response\r\nX-Correlation-ID:%s%s\r\n\r\n' \
                 "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE}" \
+                "${correlation_header_separator}" \
                 "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID:-11111111-1111-4111-8111-111111111111}" \
                 > "${dump_header_file}"
         fi
@@ -266,6 +283,10 @@ fake_curl() {
 
 fake_rg() {
     fake_log_command rg "$@"
+    if [[ "${FAKE_RG_USE_SYSTEM:-false}" == "true" ]]; then
+        "${SYSTEM_RG}" "$@"
+        return
+    fi
     return "${FAKE_RG_STATUS:-0}"
 }
 
@@ -275,6 +296,27 @@ fake_sleep() {
         command -p sleep "${FAKE_SLEEP_REAL_DELAY}"
     fi
     return "${FAKE_SLEEP_STATUS:-0}"
+}
+
+fake_mkdir() {
+    fake_log_command mkdir "$@"
+
+    local argument
+    for argument in "$@"; do
+        if [[ -n "${FAKE_MKDIR_FAILURE_PATH:-}" && "${argument}" == "${FAKE_MKDIR_FAILURE_PATH}" ]]; then
+            if [[ -n "${FAKE_MKDIR_FAILURE_ONCE_FILE:-}" ]]; then
+                if [[ -e "${FAKE_MKDIR_FAILURE_ONCE_FILE}" ]]; then
+                    command -p mkdir "$@"
+                    return
+                fi
+                : > "${FAKE_MKDIR_FAILURE_ONCE_FILE}"
+            fi
+            printf 'fake mkdir forced failure for %s\n' "${argument}" >&2
+            return "${FAKE_MKDIR_FAILURE_STATUS:-1}"
+        fi
+    done
+
+    command -p mkdir "$@"
 }
 
 fake_dirname() {
@@ -338,6 +380,10 @@ case "${0##*/}" in
         fake_sleep "$@"
         exit
         ;;
+    mkdir)
+        fake_mkdir "$@"
+        exit
+        ;;
     dirname)
         fake_dirname "$@"
         exit
@@ -384,6 +430,12 @@ if ! SYSTEM_JQ="$(command -v jq)"; then
 fi
 readonly SYSTEM_JQ
 export SYSTEM_JQ
+
+if ! SYSTEM_RG="$(command -v rg)"; then
+    fail "System rg is required by the operational test harness"
+fi
+readonly SYSTEM_RG
+export SYSTEM_RG
 
 assert_status() {
     local expected_status="$1"
@@ -649,6 +701,12 @@ add_failing_find_double() {
     ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/find"
 }
 
+add_mkdir_double() {
+    local root="$1"
+
+    ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/mkdir"
+}
+
 execute_target() {
     local root="$1"
     local script="$2"
@@ -700,6 +758,7 @@ execute_target() {
         FAKE_CURL_REDIRECT_STATUS \
         FAKE_CURL_REDIRECT_URL \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
+        FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR \
         FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
         FAKE_CURL_HEALTH_STATUS_SEQUENCE \
         FAKE_DIRNAME_OUTPUT \
@@ -707,6 +766,10 @@ execute_target() {
         FAKE_FIND_STATUS \
         FAKE_JQ_READINESS_STATUS \
         FAKE_JQ_SERVICE_URL \
+        FAKE_MKDIR_FAILURE_PATH \
+        FAKE_MKDIR_FAILURE_ONCE_FILE \
+        FAKE_MKDIR_FAILURE_STATUS \
+        FAKE_RG_USE_SYSTEM \
         FAKE_RG_STATUS \
         FAKE_SLEEP_REAL_DELAY \
         FAKE_SLEEP_STATUS \
@@ -1300,6 +1363,105 @@ test_security_scans_serialize_shared_trivy_cache_access() {
         "source scan shared Trivy cache mount"
 }
 
+test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created() {
+    local security_scan_script
+    local cache_dir
+    local lock_directory
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-cache-lock-create-failure" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+        add_mkdir_double "${TEST_ROOT}"
+
+        cache_dir="${TEST_ROOT}/trivy-cache"
+        lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+            "FAKE_MKDIR_FAILURE_PATH=${lock_directory}" \
+            "FAKE_MKDIR_FAILURE_STATUS=13"
+
+        assert_status 69 "${security_scan_script} with an uncreatable Trivy cache lock"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "Unable to acquire exclusive access to the Trivy cache" \
+            "${security_scan_script} cache-lock creation diagnostic"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "fake mkdir forced failure for ${lock_directory}" \
+            "${security_scan_script} cache-lock creation preserves the mkdir diagnostic"
+        assert_log_line_count "${TEST_ROOT}" $'mkdir\t'"${lock_directory}" 2 \
+            "${security_scan_script} cache-lock creation attempts"
+        assert_log_excludes "${TEST_ROOT}" $'sleep\t' \
+            "${security_scan_script} must not wait after a non-lock mkdir failure"
+        assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+            "${security_scan_script} must not start Trivy after a cache-lock creation failure"
+    done
+}
+
+test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting() {
+    local security_scan_script
+    local cache_dir
+    local lock_directory
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-symlinked-cache-lock" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+
+        cache_dir="${TEST_ROOT}/trivy-cache"
+        lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+        mkdir -p "${cache_dir}"
+        ln -s "${TEST_ROOT}" "${lock_directory}"
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
+
+        assert_status 69 "${security_scan_script} with a symlinked Trivy cache lock"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "Unable to acquire exclusive access to the Trivy cache" \
+            "${security_scan_script} symlinked cache-lock diagnostic"
+        assert_log_excludes "${TEST_ROOT}" $'sleep\t' \
+            "${security_scan_script} must not wait for a symlinked cache lock"
+        assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+            "${security_scan_script} must not start Trivy with a symlinked cache lock"
+    done
+}
+
+test_security_scans_retry_after_a_trivy_cache_lock_release_race() {
+    local security_scan_script
+    local cache_dir
+    local lock_directory
+    local first_failure_file
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-cache-lock-release-race" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+        add_mkdir_double "${TEST_ROOT}"
+
+        cache_dir="${TEST_ROOT}/trivy-cache"
+        lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+        first_failure_file="${TEST_ROOT}/first-cache-lock-mkdir-failure"
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+            "FAKE_MKDIR_FAILURE_PATH=${lock_directory}" \
+            "FAKE_MKDIR_FAILURE_ONCE_FILE=${first_failure_file}"
+
+        assert_status 0 "${security_scan_script} after a Trivy cache-lock release race"
+        if [[ ! -f "${first_failure_file}" ]]; then
+            fail "${security_scan_script} must exercise its transient cache-lock acquisition retry"
+        fi
+        assert_log_line_count "${TEST_ROOT}" $'mkdir\t'"${lock_directory}" 2 \
+            "${security_scan_script} transient cache-lock acquisition attempts"
+        assert_log_excludes "${TEST_ROOT}" $'sleep\t' \
+            "${security_scan_script} must immediately reacquire a released cache lock"
+        assert_log_contains "${TEST_ROOT}" $'docker\trun\t' \
+            "${security_scan_script} after a released cache lock"
+    done
+}
+
 test_security_scans_ignore_untrusted_trivy_image_overrides() {
     local trusted_trivy_image="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
     local untrusted_trivy_image="registry.example.test/untrusted-trivy:latest"
@@ -1698,6 +1860,21 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
 
     assert_status 64 "staging deployment with a non-HTTPS webhook"
     assert_log_excludes "${TEST_ROOT}" $'curl\t' "staging deployment with a non-HTTPS webhook"
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging?signature=example#fragment" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42"
+
+    assert_status 64 "staging deployment with a fragment in the webhook URL"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "STAGING_DEPLOY_WEBHOOK_URL must use HTTPS" \
+        "staging deployment fragment validation"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging deployment with a fragment must not invoke curl"
 
     run_target "${TEST_ROOT}" deploy-staging.sh \
         "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
@@ -2126,6 +2303,27 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic() {
 
 }
 
+test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace() {
+    local separator
+
+    for separator in none htab; do
+        new_harness "end-to-end-correlation-header-${separator}" end-to-end-smoke-test.sh
+
+        run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+            "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+            "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+            "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+            "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400" \
+            "FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR=${separator}" \
+            "FAKE_RG_USE_SYSTEM=true"
+
+        assert_status 0 "end-to-end smoke with a ${separator} correlation-header separator"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "End-to-end gateway-to-identity contract passed" \
+            "end-to-end smoke with a ${separator} correlation-header separator"
+    done
+}
+
 test_operational_urls_reject_userinfo_before_live_traffic() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     local invalid_setting
@@ -2391,6 +2589,9 @@ test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_requires_an_accessible_docker_daemon
 test_security_scans_serialize_shared_trivy_cache_access
+test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created
+test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting
+test_security_scans_retry_after_a_trivy_cache_lock_release_race
 test_security_scans_ignore_untrusted_trivy_image_overrides
 test_database_provisioning_waits_before_exec_and_handles_failures
 test_database_provisioning_requires_the_compose_plugin
@@ -2414,6 +2615,7 @@ test_security_scan_scripts_require_dirname_before_resolving_repository_root
 test_retry_utilities_are_preflighted_before_operational_paths
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
+test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
 test_operational_urls_reject_userinfo_before_live_traffic
 test_health_checks_retry_down_responses_and_fail_closed
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes

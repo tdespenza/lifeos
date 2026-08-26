@@ -101,6 +101,10 @@ assert_succeeds "an SBOM without components is accepted" "$FIXTURE_DIR/without-c
 assert_succeeds "an SBOM without library components is accepted" "$FIXTURE_DIR/without-library-components.json"
 assert_succeeds "valid metadata tool components are accepted" \
     "$FIXTURE_DIR/valid-metadata-tool-components.json"
+assert_succeeds "legacy metadata tool arrays are accepted" \
+    "$FIXTURE_DIR/valid-legacy-metadata-tools.json"
+assert_succeeds "unique bom-refs across all component locations are accepted" \
+    "$FIXTURE_DIR/valid-global-bom-refs.json"
 assert_fails "a library component without a PURL is rejected" \
     "$FIXTURE_DIR/missing-library-purl.json"
 assert_fails "a library component with a malformed PURL is rejected" \
@@ -117,6 +121,22 @@ assert_fails "a metadata tool library component without a PURL is rejected" \
     "$FIXTURE_DIR/missing-purl-metadata-tool-component.json"
 assert_fails "duplicate metadata tool component objects are rejected" \
     "$FIXTURE_DIR/duplicate-metadata-tool-component-objects.json"
+assert_fails "a scalar metadata.tools value is rejected" \
+    "$FIXTURE_DIR/invalid-scalar-metadata-tools.json"
+assert_fails "a null metadata.tools value is rejected" \
+    "$FIXTURE_DIR/invalid-null-metadata-tools.json"
+assert_fails "a legacy metadata tool array with a scalar entry is rejected" \
+    "$FIXTURE_DIR/invalid-legacy-metadata-tool.json"
+assert_fails "duplicate root component bom-refs are rejected" \
+    "$FIXTURE_DIR/duplicate-root-component-bom-refs.json"
+assert_fails "duplicate nested component bom-refs are rejected" \
+    "$FIXTURE_DIR/duplicate-nested-component-bom-refs.json"
+assert_fails "duplicate metadata component bom-refs are rejected" \
+    "$FIXTURE_DIR/duplicate-metadata-component-bom-refs.json"
+assert_fails "duplicate metadata tool component bom-refs are rejected" \
+    "$FIXTURE_DIR/duplicate-metadata-tool-component-bom-refs.json"
+assert_fails "a non-string bom-ref is rejected" \
+    "$FIXTURE_DIR/non-string-bom-ref.json"
 assert_fails "a component without a name is rejected" \
     "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \

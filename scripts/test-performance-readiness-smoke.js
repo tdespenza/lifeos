@@ -44,7 +44,7 @@ const k6 = Object.freeze({
 async function executeReadinessScenario() {
     const context = vm.createContext({
         __ENV: {
-            TARGET_URL: 'https://gateway.example.test/',
+            TARGET_URL: 'https://gateway.example.test///',
             VUS: '3',
             DURATION: '5s',
         },

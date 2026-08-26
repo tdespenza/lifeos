@@ -14,7 +14,7 @@ export const options = {
 };
 
 export default function () {
-  const response = http.get(`${targetUrl.replace(/\/$/, '')}/actuator/health/readiness`, {
+  const response = http.get(`${targetUrl.replace(/\/+$/, '')}/actuator/health/readiness`, {
     tags: {operation: 'readiness-smoke'},
     timeout: '5s',
   });

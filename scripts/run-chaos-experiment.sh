@@ -5,12 +5,20 @@ readonly WEBHOOK_URL="${LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL:-}"
 readonly GATEWAY_HEALTH_URL="${LIFEOS_CHAOS_GATEWAY_HEALTH_URL:-}"
 readonly IDENTITY_HEALTH_URL="${LIFEOS_CHAOS_IDENTITY_HEALTH_URL:-}"
 readonly TASK_GOAL_HEALTH_URL="${LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL:-}"
+
+if [[ -z "${GITHUB_RUN_ID:-}" ]] && ! command -v date >/dev/null 2>&1; then
+    echo "date is required to generate the local chaos experiment run ID" >&2
+    exit 69
+fi
+
 readonly RUN_ID="${GITHUB_RUN_ID:-local-$(date +%s)}"
 readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 
-if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-    echo "curl and jq are required to run the chaos experiment" >&2
+if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v sleep >/dev/null 2>&1; then
+    echo "curl, jq, and sleep are required to run the chaos experiment" >&2
     exit 69
 fi
 

@@ -168,13 +168,22 @@ jq --exit-status --slurp '
         end;
 
     def valid_metadata_tools($spec_version):
-        # Keep accepting legacy tool declarations; validate the modern
-        # components collection when it is present.
-        if (.tools? | type) != "object" then true
-        elif (.tools | has("components") | not) then true
-        elif (.tools.components | type) != "array" then false
-        elif (.tools.components | unique_component_objects | not) then false
-        else all(.tools.components[]; valid_component($spec_version))
+        # CycloneDX 1.5 permits either the modern object declaration or the
+        # deprecated legacy array of tool objects. Keep validating modern tool
+        # components with the same component rules used elsewhere in the BOM.
+        if has("tools") | not then true
+        else
+            .tools as $tools
+            | if ($tools | type) == "object" then
+                if ($tools | has("components") | not) then true
+                elif ($tools.components | type) != "array" then false
+                elif ($tools.components | unique_component_objects | not) then false
+                else all($tools.components[]; valid_component($spec_version))
+                end
+            elif ($tools | type) == "array" then
+                all($tools[]; type == "object")
+            else false
+            end
         end;
 
     def valid_metadata($spec_version):
@@ -195,12 +204,21 @@ jq --exit-status --slurp '
         else all(.components[]; valid_component($spec_version))
         end;
 
+    # A bom-ref is a global identifier within one BOM. Recursing through the
+    # document covers root and nested components as well as metadata and tool
+    # components, without maintaining a separate traversal for each location.
+    def valid_bom_refs:
+        [.. | objects | select(has("bom-ref")) | .["bom-ref"]] as $refs
+        | all($refs[]; type == "string")
+        and (($refs | length) == ($refs | unique | length));
+
     def valid_sbom:
         if type != "object" then false
         else
             .specVersion as $spec_version
             | .bomFormat == "CycloneDX"
             and ($spec_version | type == "string")
+            and valid_bom_refs
             and valid_metadata($spec_version)
             and valid_components($spec_version)
         end;

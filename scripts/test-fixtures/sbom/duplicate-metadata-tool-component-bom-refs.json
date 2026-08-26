@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "metadata-tool-component",
+          "bom-ref": "duplicate-metadata-tool-component-ref"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "root-component",
+      "bom-ref": "duplicate-metadata-tool-component-ref"
+    }
+  ]
+}

@@ -10,8 +10,12 @@ readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 
 if ! command -v curl >/dev/null 2>&1 \
     || ! command -v jq >/dev/null 2>&1 \
-    || ! command -v rg >/dev/null 2>&1; then
-    echo "curl, jq, and rg are required to run the end-to-end smoke test" >&2
+    || ! command -v rg >/dev/null 2>&1 \
+    || ! command -v sleep >/dev/null 2>&1 \
+    || ! command -v mktemp >/dev/null 2>&1 \
+    || ! command -v tr >/dev/null 2>&1 \
+    || ! command -v rm >/dev/null 2>&1; then
+    echo "curl, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" >&2
     exit 69
 fi
 

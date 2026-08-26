@@ -13,8 +13,10 @@ readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 SERVICES=()
 
-if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-    echo "curl and jq are required to run the staging smoke test" >&2
+if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v sleep >/dev/null 2>&1; then
+    echo "curl, jq, and sleep are required to run the staging smoke test" >&2
     exit 69
 fi
 

@@ -29,6 +29,17 @@ is_health_probe_log_entry() {
 fake_docker() {
     fake_log_command docker "$@"
 
+    if [[ "${1:-}" == "run" && -n "${FAKE_DOCKER_RUN_STARTED_FILE:-}" ]]; then
+        if [[ -z "${FAKE_DOCKER_RUN_RELEASE_FILE:-}" ]]; then
+            printf '%s\n' 'FAKE_DOCKER_RUN_RELEASE_FILE is required when blocking a fake Docker run' >&2
+            return 64
+        fi
+        : > "${FAKE_DOCKER_RUN_STARTED_FILE}"
+        while [[ ! -e "${FAKE_DOCKER_RUN_RELEASE_FILE}" ]]; do
+            command -p sleep 0.05
+        done
+    fi
+
     if [[ "${1:-}" == "info" ]]; then
         return "${FAKE_DOCKER_INFO_STATUS:-0}"
     fi
@@ -260,6 +271,9 @@ fake_rg() {
 
 fake_sleep() {
     fake_log_command sleep "$@"
+    if [[ -n "${FAKE_SLEEP_REAL_DELAY:-}" ]]; then
+        command -p sleep "${FAKE_SLEEP_REAL_DELAY}"
+    fi
     return "${FAKE_SLEEP_STATUS:-0}"
 }
 
@@ -433,6 +447,20 @@ assert_log_excludes() {
     local unexpected="$2"
     local description="$3"
     assert_file_excludes "${root}/commands.log" "${unexpected}" "${description}"
+}
+
+assert_no_logged_command() {
+    local root="$1"
+    local command="$2"
+    local description="$3"
+    local line
+
+    assert_readable_file "${root}/commands.log" "${description}"
+    while IFS= read -r line; do
+        if [[ "${line}" == "${command}" || "${line}" == "${command}"$'\t'* ]]; then
+            fail "${description}: found ${command} command"
+        fi
+    done < "${root}/commands.log"
 }
 
 assert_log_entry_excludes() {
@@ -621,6 +649,82 @@ add_failing_find_double() {
     ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/find"
 }
 
+execute_target() {
+    local root="$1"
+    local script="$2"
+    shift 2
+
+    export PATH="${root}/bin:${PATH}"
+    export FAKE_COMMAND_LOG="${root}/commands.log"
+    # Normalise the shell diagnostic asserted by root-resolution regression tests.
+    export LC_ALL=C
+    unset \
+        BASH_ENV \
+        GITHUB_RUN_ID \
+        GITHUB_REF_NAME \
+        GITHUB_REPOSITORY \
+        GITHUB_SHA \
+        LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL \
+        LIFEOS_CHAOS_GATEWAY_HEALTH_URL \
+        LIFEOS_CHAOS_IDENTITY_HEALTH_URL \
+        LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL \
+        LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS \
+        LIFEOS_E2E_GATEWAY_BASE_URL \
+        LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL \
+        LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL \
+        LIFEOS_IMAGE_PREFIX \
+        LIFEOS_IMAGE_TAG \
+        LIFEOS_PERFORMANCE_DURATION \
+        LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL \
+        LIFEOS_PERFORMANCE_SUMMARY_PATH \
+        LIFEOS_PERFORMANCE_VUS \
+        LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE \
+        LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6 \
+        LIFEOS_PUSH_IMAGES \
+        LIFEOS_TRIVY_CACHE_DIR \
+        LIFEOS_TRIVY_IMAGE \
+        FAKE_DOCKER_COMPOSE_VERSION_STATUS \
+        FAKE_DOCKER_COMPOSE_VERSION_OUTPUT \
+        FAKE_DOCKER_COMPOSE_UP_MESSAGE \
+        FAKE_DOCKER_COMPOSE_UP_STATUS \
+        FAKE_DOCKER_INFO_STATUS \
+        FAKE_DOCKER_IMAGE_INSPECT_STATUS \
+        FAKE_DOCKER_RUN_RELEASE_FILE \
+        FAKE_DOCKER_RUN_STARTED_FILE \
+        FAKE_DOCKER_STDIN_LOG \
+        FAKE_DOCKER_STATUS \
+        FAKE_CURL_STATUS \
+        FAKE_CURL_STDOUT \
+        FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
+        FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
+        FAKE_CURL_REDIRECT_STATUS \
+        FAKE_CURL_REDIRECT_URL \
+        FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
+        FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
+        FAKE_CURL_HEALTH_STATUS_SEQUENCE \
+        FAKE_DIRNAME_OUTPUT \
+        FAKE_FIND_PARTIAL_OUTPUT \
+        FAKE_FIND_STATUS \
+        FAKE_JQ_READINESS_STATUS \
+        FAKE_JQ_SERVICE_URL \
+        FAKE_RG_STATUS \
+        FAKE_SLEEP_REAL_DELAY \
+        FAKE_SLEEP_STATUS \
+        RUNNER_TEMP \
+        STAGING_SERVICE_HEALTH_URLS_JSON \
+        STAGING_DEPLOY_WEBHOOK_URL
+    while [[ $# -gt 0 && "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+        declare -x "$1"
+        shift
+    done
+    if [[ "${LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6:-false}" == "true" ]]; then
+        # Keep native-k6 absence deterministic even when a developer's host PATH has k6.
+        # Each fallback test supplies only its explicit non-k6 prerequisites in this directory.
+        export PATH="${root}/bin:${root}/prerequisite-bin"
+    fi
+    bash "${root}/scripts/${script}" "$@"
+}
+
 run_target() {
     local root="$1"
     local script="$2"
@@ -628,78 +732,53 @@ run_target() {
 
     RUN_OUTPUT="${root}/output.log"
     : > "${root}/commands.log"
-    if (
-        export PATH="${root}/bin:${PATH}"
-        export FAKE_COMMAND_LOG="${root}/commands.log"
-        # Normalise the shell diagnostic asserted by root-resolution regression tests.
-        export LC_ALL=C
-        unset \
-            BASH_ENV \
-            GITHUB_RUN_ID \
-            GITHUB_REF_NAME \
-            GITHUB_REPOSITORY \
-            GITHUB_SHA \
-            LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL \
-            LIFEOS_CHAOS_GATEWAY_HEALTH_URL \
-            LIFEOS_CHAOS_IDENTITY_HEALTH_URL \
-            LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL \
-            LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS \
-            LIFEOS_E2E_GATEWAY_BASE_URL \
-            LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL \
-            LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL \
-            LIFEOS_IMAGE_PREFIX \
-            LIFEOS_IMAGE_TAG \
-            LIFEOS_PERFORMANCE_DURATION \
-            LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL \
-            LIFEOS_PERFORMANCE_SUMMARY_PATH \
-            LIFEOS_PERFORMANCE_VUS \
-            LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE \
-            LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6 \
-            LIFEOS_PUSH_IMAGES \
-            LIFEOS_TRIVY_CACHE_DIR \
-            LIFEOS_TRIVY_IMAGE \
-            FAKE_DOCKER_COMPOSE_VERSION_STATUS \
-            FAKE_DOCKER_COMPOSE_VERSION_OUTPUT \
-            FAKE_DOCKER_COMPOSE_UP_MESSAGE \
-            FAKE_DOCKER_COMPOSE_UP_STATUS \
-            FAKE_DOCKER_INFO_STATUS \
-            FAKE_DOCKER_IMAGE_INSPECT_STATUS \
-            FAKE_DOCKER_STDIN_LOG \
-            FAKE_DOCKER_STATUS \
-            FAKE_CURL_STATUS \
-            FAKE_CURL_STDOUT \
-            FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
-            FAKE_CURL_REDIRECT_INTERMEDIATE_CORRELATION_ID \
-            FAKE_CURL_REDIRECT_STATUS \
-            FAKE_CURL_REDIRECT_URL \
-            FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
-            FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
-            FAKE_CURL_HEALTH_STATUS_SEQUENCE \
-            FAKE_DIRNAME_OUTPUT \
-            FAKE_FIND_PARTIAL_OUTPUT \
-            FAKE_FIND_STATUS \
-            FAKE_JQ_READINESS_STATUS \
-            FAKE_JQ_SERVICE_URL \
-            FAKE_RG_STATUS \
-            FAKE_SLEEP_STATUS \
-            RUNNER_TEMP \
-            STAGING_SERVICE_HEALTH_URLS_JSON \
-            STAGING_DEPLOY_WEBHOOK_URL
-        while [[ $# -gt 0 && "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
-            declare -x "$1"
-            shift
-        done
-        if [[ "${LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6:-false}" == "true" ]]; then
-            # Keep native-k6 absence deterministic even when a developer's host PATH has k6.
-            # Each fallback test supplies only its explicit non-k6 prerequisites in this directory.
-            export PATH="${root}/bin:${root}/prerequisite-bin"
-        fi
-        bash "${root}/scripts/${script}" "$@"
-    ) > "${RUN_OUTPUT}" 2>&1; then
+    if (execute_target "${root}" "${script}" "$@") > "${RUN_OUTPUT}" 2>&1; then
         RUN_STATUS=0
     else
         RUN_STATUS=$?
     fi
+}
+
+start_target() {
+    local root="$1"
+    local script="$2"
+    local output="$3"
+    shift 3
+
+    (execute_target "${root}" "${script}" "$@") > "${output}" 2>&1 &
+    BACKGROUND_TARGET_PID=$!
+}
+
+wait_for_log_line_count() {
+    local root="$1"
+    local expected="$2"
+    local expected_count="$3"
+    local attempts="${4:-100}"
+    local actual_count
+    local attempt
+
+    for ((attempt = 0; attempt < attempts; attempt++)); do
+        actual_count="$(grep -F -c -- "${expected}" "${root}/commands.log" || true)"
+        if [[ "${actual_count}" -eq "${expected_count}" ]]; then
+            return 0
+        fi
+        command -p sleep 0.05
+    done
+    return 1
+}
+
+wait_for_file() {
+    local file="$1"
+    local attempts="${2:-100}"
+    local attempt
+
+    for ((attempt = 0; attempt < attempts; attempt++)); do
+        if [[ -e "${file}" ]]; then
+            return 0
+        fi
+        command -p sleep 0.05
+    done
+    return 1
 }
 
 test_run_target_exports_only_valid_environment_assignments() {
@@ -1135,6 +1214,90 @@ test_source_scan_requires_an_accessible_docker_daemon() {
         "source security scan Docker daemon preflight command"
     assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
         "source security scan after an unavailable Docker daemon"
+}
+
+test_security_scans_serialize_shared_trivy_cache_access() {
+    new_harness scan-shared-trivy-cache scan-container-images.sh scan-source-security.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    local cache_dir="${TEST_ROOT}/trivy-cache"
+    local lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+    local first_started_file="${TEST_ROOT}/container-scan-started"
+    local release_file="${TEST_ROOT}/release-container-scan"
+    local container_output="${TEST_ROOT}/container-scan-output.log"
+    local source_output="${TEST_ROOT}/source-scan-output.log"
+    local container_pid source_pid
+    local container_status source_status
+    local docker_runs_while_locked
+
+    : > "${TEST_ROOT}/commands.log"
+    start_target "${TEST_ROOT}" scan-container-images.sh "${container_output}" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+        "FAKE_DOCKER_RUN_STARTED_FILE=${first_started_file}" \
+        "FAKE_DOCKER_RUN_RELEASE_FILE=${release_file}" \
+        "FAKE_SLEEP_REAL_DELAY=0.05"
+    container_pid="${BACKGROUND_TARGET_PID}"
+
+    if ! wait_for_log_line_count "${TEST_ROOT}" $'docker\trun\t' 1; then
+        : > "${release_file}"
+        wait "${container_pid}" || true
+        fail "container scan did not reach its Trivy invocation"
+    fi
+    if ! wait_for_file "${first_started_file}" || [[ ! -d "${lock_directory}" ]]; then
+        : > "${release_file}"
+        wait "${container_pid}" || true
+        fail "container scan must hold the configured Trivy cache lock while Trivy runs"
+    fi
+
+    start_target "${TEST_ROOT}" scan-source-security.sh "${source_output}" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+        "FAKE_DOCKER_RUN_STARTED_FILE=${first_started_file}" \
+        "FAKE_DOCKER_RUN_RELEASE_FILE=${release_file}" \
+        "FAKE_SLEEP_REAL_DELAY=0.05"
+    source_pid="${BACKGROUND_TARGET_PID}"
+
+    # The source scan's retry proves it reached the shared lock while the image scan owns it. If
+    # the scripts mounted the cache without coordination, it would issue a second Docker run here.
+    if ! wait_for_log_line_count "${TEST_ROOT}" $'sleep\t' 1; then
+        : > "${release_file}"
+        wait "${container_pid}" || true
+        wait "${source_pid}" || true
+        fail "source scan did not wait for the shared Trivy cache lock"
+    fi
+    docker_runs_while_locked="$(grep -F -c -- $'docker\trun\t' "${TEST_ROOT}/commands.log" || true)"
+
+    : > "${release_file}"
+    if wait "${container_pid}"; then
+        container_status=0
+    else
+        container_status=$?
+    fi
+    if wait "${source_pid}"; then
+        source_status=0
+    else
+        source_status=$?
+    fi
+
+    if [[ "${container_status}" -ne 0 || "${source_status}" -ne 0 ]]; then
+        fail "shared Trivy cache scans must complete after the lock is released"
+    fi
+    if [[ "${docker_runs_while_locked}" -ne 1 ]]; then
+        fail "shared Trivy cache lock must permit only one concurrent Trivy invocation"
+    fi
+    if [[ -e "${lock_directory}" ]]; then
+        fail "shared Trivy cache lock must be released after both scans complete"
+    fi
+    assert_log_line_count "${TEST_ROOT}" $'docker\trun\t' 2 \
+        "shared Trivy cache scans after lock release"
+    assert_log_line_count "${TEST_ROOT}" \
+        $'--volume\t'"${cache_dir}"$':/root/.cache' 2 \
+        "shared Trivy cache mount path"
+    assert_log_contains "${TEST_ROOT}" \
+        $'--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        "container scan shared Trivy cache mount"
+    assert_log_contains "${TEST_ROOT}" \
+        $'--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro' \
+        "source scan shared Trivy cache mount"
 }
 
 test_security_scans_ignore_untrusted_trivy_image_overrides() {
@@ -1618,6 +1781,54 @@ test_service_discovery_requires_its_dependencies() {
     done
 }
 
+test_container_service_discovery_fails_closed_after_partial_output() {
+    local image_script
+
+    for image_script in build-container-images.sh scan-container-images.sh; do
+        new_harness "${image_script%.sh}-partial-discovery" "${image_script}"
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_discovery_prerequisites_except "${TEST_ROOT}" unavailable-command
+        add_failing_find_double "${TEST_ROOT}"
+
+        if [[ "${image_script}" == "build-container-images.sh" ]]; then
+            # A jar makes the prior fail-open behavior reach docker build, proving discovery
+            # failure now stops the build before any Docker action.
+            add_service_jar "${TEST_ROOT}" example-service example-service.jar
+        fi
+
+        run_target "${TEST_ROOT}" "${image_script}" \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "FAKE_FIND_PARTIAL_OUTPUT=example-service" \
+            "FAKE_FIND_STATUS=1"
+
+        assert_status 69 "${image_script} after partial service discovery"
+        assert_file_contains "${RUN_OUTPUT}" "Failed to discover service Dockerfiles" \
+            "${image_script} partial service-discovery diagnostic"
+        assert_log_contains "${TEST_ROOT}" $'find\t' \
+            "${image_script} partial service-discovery command"
+        assert_no_logged_command "${TEST_ROOT}" docker \
+            "${image_script} partial service discovery must not invoke Docker"
+    done
+}
+
+test_container_service_discovery_preserves_no_dockerfiles_behavior() {
+    local image_script
+
+    for image_script in build-container-images.sh scan-container-images.sh; do
+        new_harness "${image_script%.sh}-no-services" "${image_script}"
+
+        run_target "${TEST_ROOT}" "${image_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache"
+
+        assert_status 66 "${image_script} without Dockerfiles"
+        assert_file_contains "${RUN_OUTPUT}" "No service Dockerfiles found in infrastructure/docker" \
+            "${image_script} no-Dockerfiles diagnostic"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "${image_script} without Dockerfiles must not invoke Docker"
+    done
+}
+
 test_staging_service_discovery_fails_closed_after_partial_output() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -1722,6 +1933,94 @@ test_staging_scripts_require_dirname_before_resolving_repository_root() {
         assert_no_commands_logged "${TEST_ROOT}" \
             "${staging_script} without dirname must not invoke downstream commands"
     done
+}
+
+test_security_scan_scripts_require_dirname_before_resolving_repository_root() {
+    local security_scan_script
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-missing-dirname" "${security_scan_script}"
+        add_prerequisite_command "${TEST_ROOT}" bash
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+        assert_status 69 "${security_scan_script} without dirname"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "dirname is required to resolve the repository root" \
+            "${security_scan_script} dirname prerequisite"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "${security_scan_script} without dirname must not invoke downstream commands"
+    done
+}
+
+test_retry_utilities_are_preflighted_before_operational_paths() {
+    new_harness staging-smoke-missing-sleep staging-smoke-test.sh
+    disable_fake_command "${TEST_ROOT}" sleep
+    add_prerequisite_command "${TEST_ROOT}" bash
+    add_prerequisite_command "${TEST_ROOT}" dirname
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "staging smoke test without sleep"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "curl, jq, and sleep are required to run the staging smoke test" \
+        "staging smoke sleep prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "staging smoke test without sleep must not probe services"
+
+    local missing_command prerequisite
+    for missing_command in sleep mktemp tr rm; do
+        new_harness "end-to-end-smoke-missing-${missing_command}" end-to-end-smoke-test.sh
+        if [[ -e "${TEST_ROOT}/bin/${missing_command}" ]]; then
+            disable_fake_command "${TEST_ROOT}" "${missing_command}"
+        fi
+        add_prerequisite_command "${TEST_ROOT}" bash
+        for prerequisite in mktemp tr rm; do
+            if [[ "${prerequisite}" != "${missing_command}" ]]; then
+                add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+            fi
+        done
+
+        run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+        assert_status 69 "end-to-end smoke test without ${missing_command}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "curl, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" \
+            "end-to-end ${missing_command} prerequisite"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "end-to-end smoke test without ${missing_command} must not make requests"
+    done
+
+    new_harness chaos-experiment-missing-date run-chaos-experiment.sh
+    add_prerequisite_command "${TEST_ROOT}" bash
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "chaos experiment without date for its local run ID"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "date is required to generate the local chaos experiment run ID" \
+        "chaos experiment date prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "chaos experiment without date must not make requests"
+
+    new_harness chaos-experiment-missing-sleep run-chaos-experiment.sh
+    disable_fake_command "${TEST_ROOT}" sleep
+    add_prerequisite_command "${TEST_ROOT}" bash
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 69 "chaos experiment without sleep"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "curl, jq, and sleep are required to run the chaos experiment" \
+        "chaos experiment sleep prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "chaos experiment without sleep must not make requests"
 }
 
 test_contract_sensitive_posts_reject_redirects() {
@@ -2091,6 +2390,7 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_requires_an_accessible_docker_daemon
+test_security_scans_serialize_shared_trivy_cache_access
 test_security_scans_ignore_untrusted_trivy_image_overrides
 test_database_provisioning_waits_before_exec_and_handles_failures
 test_database_provisioning_requires_the_compose_plugin
@@ -2105,9 +2405,13 @@ test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies
+test_container_service_discovery_fails_closed_after_partial_output
+test_container_service_discovery_preserves_no_dockerfiles_behavior
 test_staging_service_discovery_fails_closed_after_partial_output
 test_staging_service_discovery_preserves_no_dockerfiles_behavior
 test_staging_scripts_require_dirname_before_resolving_repository_root
+test_security_scan_scripts_require_dirname_before_resolving_repository_root
+test_retry_utilities_are_preflighted_before_operational_paths
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_operational_urls_reject_userinfo_before_live_traffic

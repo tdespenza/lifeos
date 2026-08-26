@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v dirname >/dev/null 2>&1; then
+    echo "dirname is required to resolve the repository root" >&2
+    exit 69
+fi
+
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 # Pin the trusted scanner by digest rather than accepting an environment replacement. Update it
@@ -9,6 +14,11 @@ readonly TRIVY_IMAGE="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f6
 # Keep the scanner database outside /repo. Otherwise a repeat local scan can recursively inspect
 # its own multi-gigabyte vulnerability cache and turn a source-security gate into an I/O bottleneck.
 readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-trivy-cache}"
+# Trivy's filesystem cache uses an exclusive BoltDB lock. Coordinate every LifeOS scan that uses
+# this cache so image and source scans retain warm-cache behavior without racing the database.
+readonly TRIVY_CACHE_LOCK_DIRECTORY="${TRIVY_CACHE_DIR}/.lifeos-trivy-cache.lock"
+readonly TRIVY_CACHE_LOCK_TIMEOUT_SECONDS=300
+readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to run the Trivy source security scan" >&2
@@ -20,7 +30,38 @@ if ! docker info >/dev/null 2>&1; then
     exit 69
 fi
 
-mkdir -p "${TRIVY_CACHE_DIR}"
+for trivy_cache_command in mkdir rmdir sleep; do
+    if ! command -v "${trivy_cache_command}" >/dev/null 2>&1; then
+        echo "${trivy_cache_command} is required to coordinate access to the Trivy cache" >&2
+        exit 69
+    fi
+done
+
+if ! mkdir -p "${TRIVY_CACHE_DIR}"; then
+    echo "Unable to create the Trivy cache directory ${TRIVY_CACHE_DIR}" >&2
+    exit 69
+fi
+
+acquire_trivy_cache_lock() {
+    local deadline_seconds=$((SECONDS + TRIVY_CACHE_LOCK_TIMEOUT_SECONDS))
+
+    while ! mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null; do
+        if (( SECONDS >= deadline_seconds )); then
+            echo "Timed out waiting for exclusive access to the Trivy cache" >&2
+            return 1
+        fi
+        sleep "${TRIVY_CACHE_LOCK_POLL_SECONDS}"
+    done
+}
+
+release_trivy_cache_lock() {
+    rmdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null || true
+}
+
+if ! acquire_trivy_cache_lock; then
+    exit 69
+fi
+trap release_trivy_cache_lock EXIT
 
 docker run --rm \
     --volume "${TRIVY_CACHE_DIR}:/root/.cache" \

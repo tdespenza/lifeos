@@ -99,6 +99,8 @@ assert_succeeds "an SBOM without metadata is accepted" "$FIXTURE_DIR/without-met
 assert_succeeds "an SBOM without a metadata component is accepted" "$FIXTURE_DIR/without-metadata-component.json"
 assert_succeeds "an SBOM without components is accepted" "$FIXTURE_DIR/without-components.json"
 assert_succeeds "an SBOM without library components is accepted" "$FIXTURE_DIR/without-library-components.json"
+assert_succeeds "valid metadata tool components are accepted" \
+    "$FIXTURE_DIR/valid-metadata-tool-components.json"
 assert_fails "a library component without a PURL is rejected" \
     "$FIXTURE_DIR/missing-library-purl.json"
 assert_fails "a library component with a malformed PURL is rejected" \
@@ -107,6 +109,14 @@ assert_fails "a nested library component without a PURL is rejected" \
     "$FIXTURE_DIR/nested-missing-library-purl.json"
 assert_fails "a nested library component with a malformed PURL is rejected" \
     "$FIXTURE_DIR/nested-malformed-library-purl.json"
+assert_fails "duplicate root component objects are rejected" \
+    "$FIXTURE_DIR/duplicate-root-component-objects.json"
+assert_fails "duplicate nested component objects are rejected" \
+    "$FIXTURE_DIR/duplicate-nested-component-objects.json"
+assert_fails "a metadata tool library component without a PURL is rejected" \
+    "$FIXTURE_DIR/missing-purl-metadata-tool-component.json"
+assert_fails "duplicate metadata tool component objects are rejected" \
+    "$FIXTURE_DIR/duplicate-metadata-tool-component-objects.json"
 assert_fails "a component without a name is rejected" \
     "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \

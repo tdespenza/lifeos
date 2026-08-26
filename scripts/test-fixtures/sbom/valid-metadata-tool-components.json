@@ -1,0 +1,15 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "library",
+          "name": "cyclonedx-gradle-plugin",
+          "purl": "pkg:maven/org.cyclonedx/cyclonedx-gradle-plugin@3.3.0"
+        }
+      ]
+    }
+  }
+}

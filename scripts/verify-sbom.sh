@@ -151,6 +151,11 @@ jq --exit-status --slurp '
             | index($component_type) != null
         );
 
+    # Components are JSON objects, so exact duplicate objects are redundant and
+    # make the SBOM ambiguous for downstream inventory consumers.
+    def unique_component_objects:
+        type == "array" and (length == (unique | length));
+
     def valid_component($spec_version):
         if type != "object" then false
         elif (.name | type) != "string" then false
@@ -158,19 +163,35 @@ jq --exit-status --slurp '
         elif .type == "library" and ((.purl? | valid_purl) | not) then false
         elif (has("components") | not) then true
         elif (.components | type) != "array" then false
+        elif (.components | unique_component_objects | not) then false
         else all(.components[]; valid_component($spec_version))
+        end;
+
+    def valid_metadata_tools($spec_version):
+        # Keep accepting legacy tool declarations; validate the modern
+        # components collection when it is present.
+        if (.tools? | type) != "object" then true
+        elif (.tools | has("components") | not) then true
+        elif (.tools.components | type) != "array" then false
+        elif (.tools.components | unique_component_objects | not) then false
+        else all(.tools.components[]; valid_component($spec_version))
         end;
 
     def valid_metadata($spec_version):
         if (has("metadata") | not) then true
         elif (.metadata | type) != "object" then false
-        elif (.metadata | has("component") | not) then true
-        else (.metadata.component | valid_component($spec_version))
+        else
+            .metadata as $metadata
+            | (
+                ($metadata | if has("component") then .component | valid_component($spec_version) else true end)
+                and ($metadata | valid_metadata_tools($spec_version))
+              )
         end;
 
     def valid_components($spec_version):
         if (has("components") | not) then true
         elif (.components | type) != "array" then false
+        elif (.components | unique_component_objects | not) then false
         else all(.components[]; valid_component($spec_version))
         end;
 

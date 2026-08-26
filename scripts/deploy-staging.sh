@@ -52,10 +52,20 @@ for service_discovery_command in find basename sort; do
 done
 
 SERVICES=()
-while IFS= read -r service; do
-    SERVICES+=("${service}")
-done < <(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -name '*.Dockerfile' \
-    -exec basename {} .Dockerfile \; | sort)
+if ! discovered_services="$(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -name '*.Dockerfile' \
+    -exec basename {} .Dockerfile \; | sort)"; then
+    echo "Failed to discover service Dockerfiles" >&2
+    exit 69
+fi
+
+# Command substitution removes trailing newlines. Do not feed an empty successful discovery into
+# the loop because a here-string would otherwise create one empty service instead of preserving
+# the existing no-Dockerfiles failure below.
+if [[ -n "${discovered_services}" ]]; then
+    while IFS= read -r service; do
+        SERVICES+=("${service}")
+    done <<< "${discovered_services}"
+fi
 
 if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     echo "No service Dockerfiles found in infrastructure/docker" >&2

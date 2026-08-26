@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "duplicate-nested-component-owner",
+      "components": [
+        {
+          "type": "library",
+          "name": "duplicate-nested-library",
+          "purl": "pkg:maven/com.example/duplicate-nested-library@1.0.0"
+        },
+        {
+          "type": "library",
+          "name": "duplicate-nested-library",
+          "purl": "pkg:maven/com.example/duplicate-nested-library@1.0.0"
+        }
+      ]
+    }
+  ]
+}

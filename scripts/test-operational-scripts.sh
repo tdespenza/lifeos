@@ -268,6 +268,15 @@ fake_dirname() {
     printf '%s\n' "${FAKE_DIRNAME_OUTPUT:-/definitely-missing-lifeos-script-directory}"
 }
 
+fake_find() {
+    fake_log_command find "$@"
+
+    if [[ -n "${FAKE_FIND_PARTIAL_OUTPUT:-}" ]]; then
+        printf '%s\n' "${FAKE_FIND_PARTIAL_OUTPUT}"
+    fi
+    return "${FAKE_FIND_STATUS:-0}"
+}
+
 fake_k6() {
     fake_log_command k6 "$@"
 
@@ -317,6 +326,10 @@ case "${0##*/}" in
         ;;
     dirname)
         fake_dirname "$@"
+        exit
+        ;;
+    find)
+        fake_find "$@"
         exit
         ;;
     test-operational-scripts.sh)
@@ -602,6 +615,12 @@ add_service_discovery_prerequisites_except() {
     done
 }
 
+add_failing_find_double() {
+    local root="$1"
+
+    ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/find"
+}
+
 run_target() {
     local root="$1"
     local script="$2"
@@ -657,6 +676,8 @@ run_target() {
             FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
             FAKE_CURL_HEALTH_STATUS_SEQUENCE \
             FAKE_DIRNAME_OUTPUT \
+            FAKE_FIND_PARTIAL_OUTPUT \
+            FAKE_FIND_STATUS \
             FAKE_JQ_READINESS_STATUS \
             FAKE_JQ_SERVICE_URL \
             FAKE_RG_STATUS \
@@ -1597,6 +1618,92 @@ test_service_discovery_requires_its_dependencies() {
     done
 }
 
+test_staging_service_discovery_fails_closed_after_partial_output() {
+    local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    new_harness deploy-staging-partial-discovery deploy-staging.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_discovery_prerequisites_except "${TEST_ROOT}" unavailable-command
+    add_failing_find_double "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42" \
+        "FAKE_FIND_PARTIAL_OUTPUT=example-service" \
+        "FAKE_FIND_STATUS=1"
+
+    assert_status 69 "staging deployment after partial service discovery"
+    assert_file_contains "${RUN_OUTPUT}" "Failed to discover service Dockerfiles" \
+        "staging deployment partial service-discovery diagnostic"
+    assert_log_contains "${TEST_ROOT}" $'find\t' \
+        "staging deployment partial service-discovery command"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t' \
+        "staging deployment partial service discovery must not construct a payload"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging deployment partial service discovery must not invoke its webhook"
+
+    new_harness staging-smoke-partial-discovery staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_discovery_prerequisites_except "${TEST_ROOT}" unavailable-command cat
+    add_failing_find_double "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+        "FAKE_FIND_PARTIAL_OUTPUT=example-service" \
+        "FAKE_FIND_STATUS=1"
+
+    assert_status 69 "staging smoke test after partial service discovery"
+    assert_file_contains "${RUN_OUTPUT}" "Failed to discover service Dockerfiles" \
+        "staging smoke partial service-discovery diagnostic"
+    assert_log_contains "${TEST_ROOT}" $'find\t' \
+        "staging smoke partial service-discovery command"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t--raw-output\t' \
+        "staging smoke partial service discovery must not resolve health URLs"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging smoke partial service discovery must not probe services"
+}
+
+test_staging_service_discovery_preserves_no_dockerfiles_behavior() {
+    local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    new_harness deploy-staging-no-services deploy-staging.sh
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42"
+
+    assert_status 66 "staging deployment without Dockerfiles"
+    assert_file_contains "${RUN_OUTPUT}" "No service Dockerfiles found in infrastructure/docker" \
+        "staging deployment no-Dockerfiles diagnostic"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t' \
+        "staging deployment without Dockerfiles must not construct a payload"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging deployment without Dockerfiles must not invoke its webhook"
+
+    new_harness staging-smoke-no-services staging-smoke-test.sh
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}'
+
+    assert_status 66 "staging smoke test without Dockerfiles"
+    assert_file_contains "${RUN_OUTPUT}" "No service Dockerfiles found in infrastructure/docker" \
+        "staging smoke no-Dockerfiles diagnostic"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t--raw-output\t' \
+        "staging smoke without Dockerfiles must not resolve health URLs"
+    assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+        "staging smoke without Dockerfiles must not probe services"
+}
+
 test_staging_scripts_require_dirname_before_resolving_repository_root() {
     local staging_script
 
@@ -1998,6 +2105,8 @@ test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies
+test_staging_service_discovery_fails_closed_after_partial_output
+test_staging_service_discovery_preserves_no_dockerfiles_behavior
 test_staging_scripts_require_dirname_before_resolving_repository_root
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic

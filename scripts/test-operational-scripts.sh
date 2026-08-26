@@ -1597,6 +1597,26 @@ test_service_discovery_requires_its_dependencies() {
     done
 }
 
+test_staging_scripts_require_dirname_before_resolving_repository_root() {
+    local staging_script
+
+    for staging_script in deploy-staging.sh staging-smoke-test.sh; do
+        new_harness "${staging_script%.sh}-missing-dirname" "${staging_script}"
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_discovery_prerequisites_except "${TEST_ROOT}" dirname cat
+
+        run_target "${TEST_ROOT}" "${staging_script}" \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+        assert_status 69 "${staging_script} without dirname"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "dirname is required to resolve the repository root" \
+            "${staging_script} dirname prerequisite"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "${staging_script} without dirname must not invoke downstream commands"
+    done
+}
+
 test_contract_sensitive_posts_reject_redirects() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -1978,6 +1998,7 @@ test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies
+test_staging_scripts_require_dirname_before_resolving_repository_root
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_operational_urls_reject_userinfo_before_live_traffic

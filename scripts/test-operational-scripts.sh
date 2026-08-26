@@ -283,11 +283,47 @@ fake_curl() {
 
 fake_rg() {
     fake_log_command rg "$@"
-    if [[ "${FAKE_RG_USE_SYSTEM:-false}" == "true" ]]; then
-        "${SYSTEM_RG}" "$@"
-        return
+
+    if [[ -n "${FAKE_RG_STATUS+x}" ]]; then
+        cat >/dev/null
+        return "${FAKE_RG_STATUS}"
     fi
-    return "${FAKE_RG_STATUS:-0}"
+
+    local argument pattern=""
+    local ignore_case=false
+    for argument in "$@"; do
+        case "${argument}" in
+            --ignore-case | -i)
+                ignore_case=true
+                ;;
+            --quiet | -q | --)
+                ;;
+            -*)
+                ;;
+            *)
+                pattern="${argument}"
+                ;;
+        esac
+    done
+
+    if [[ -z "${pattern}" ]]; then
+        printf '%s\n' 'fake rg requires a pattern' >&2
+        return 64
+    fi
+
+    # Bash's regex engine expects a literal tab rather than ripgrep's \t escape sequence.
+    pattern="${pattern//\\t/$'\t'}"
+    if [[ "${ignore_case}" == "true" ]]; then
+        shopt -s nocasematch
+    fi
+
+    local line
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        if [[ "${line}" =~ ${pattern} ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 fake_sleep() {
@@ -430,12 +466,6 @@ if ! SYSTEM_JQ="$(command -v jq)"; then
 fi
 readonly SYSTEM_JQ
 export SYSTEM_JQ
-
-if ! SYSTEM_RG="$(command -v rg)"; then
-    fail "System rg is required by the operational test harness"
-fi
-readonly SYSTEM_RG
-export SYSTEM_RG
 
 assert_status() {
     local expected_status="$1"
@@ -769,7 +799,6 @@ execute_target() {
         FAKE_MKDIR_FAILURE_PATH \
         FAKE_MKDIR_FAILURE_ONCE_FILE \
         FAKE_MKDIR_FAILURE_STATUS \
-        FAKE_RG_USE_SYSTEM \
         FAKE_RG_STATUS \
         FAKE_SLEEP_REAL_DELAY \
         FAKE_SLEEP_STATUS \
@@ -2314,14 +2343,27 @@ test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace() 
             "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
             "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
             "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400" \
-            "FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR=${separator}" \
-            "FAKE_RG_USE_SYSTEM=true"
+            "FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR=${separator}"
 
         assert_status 0 "end-to-end smoke with a ${separator} correlation-header separator"
         assert_file_contains "${RUN_OUTPUT}" \
             "End-to-end gateway-to-identity contract passed" \
             "end-to-end smoke with a ${separator} correlation-header separator"
     done
+
+    new_harness end-to-end-correlation-header-mismatch end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID=not-the-canonical-correlation-id"
+
+    assert_status 65 "end-to-end smoke with a mismatched correlation header"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Gateway-to-identity flow did not preserve the canonical correlation ID" \
+        "end-to-end smoke with a mismatched correlation header"
 }
 
 test_operational_urls_reject_userinfo_before_live_traffic() {

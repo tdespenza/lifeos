@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v dirname >/dev/null 2>&1; then
+    echo "dirname is required to resolve the repository root" >&2
+    exit 69
+fi
+
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly IMAGE_PREFIX="${LIFEOS_IMAGE_PREFIX:-lifeos}"

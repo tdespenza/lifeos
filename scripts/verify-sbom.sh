@@ -213,7 +213,7 @@ jq --exit-status --slurp '
     # components, without maintaining a separate traversal for each location.
     def valid_bom_refs:
         [.. | objects | select(has("bom-ref")) | .["bom-ref"]] as $refs
-        | all($refs[]; type == "string")
+        | all($refs[]; type == "string" and length > 0)
         and (($refs | length) == ($refs | unique | length));
 
     def valid_sbom:

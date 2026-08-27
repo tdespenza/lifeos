@@ -139,6 +139,8 @@ assert_fails "duplicate metadata tool component bom-refs are rejected" \
     "$FIXTURE_DIR/duplicate-metadata-tool-component-bom-refs.json"
 assert_fails "a non-string bom-ref is rejected" \
     "$FIXTURE_DIR/non-string-bom-ref.json"
+assert_fails "an empty bom-ref is rejected" \
+    "$FIXTURE_DIR/empty-bom-ref.json"
 assert_fails "a component without a name is rejected" \
     "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \

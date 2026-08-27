@@ -2141,6 +2141,21 @@ test_staging_scripts_require_dirname_before_resolving_repository_root() {
     done
 }
 
+test_container_build_requires_dirname_before_resolving_repository_root() {
+    new_harness build-container-images-missing-dirname build-container-images.sh
+    add_prerequisite_command "${TEST_ROOT}" bash
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "container-image build without dirname"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "dirname is required to resolve the repository root" \
+        "container-image build dirname prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container-image build without dirname must not invoke downstream commands"
+}
+
 test_security_scan_scripts_require_dirname_before_resolving_repository_root() {
     local security_scan_script
 
@@ -2653,6 +2668,7 @@ test_container_service_discovery_preserves_no_dockerfiles_behavior
 test_staging_service_discovery_fails_closed_after_partial_output
 test_staging_service_discovery_preserves_no_dockerfiles_behavior
 test_staging_scripts_require_dirname_before_resolving_repository_root
+test_container_build_requires_dirname_before_resolving_repository_root
 test_security_scan_scripts_require_dirname_before_resolving_repository_root
 test_retry_utilities_are_preflighted_before_operational_paths
 test_contract_sensitive_posts_reject_redirects

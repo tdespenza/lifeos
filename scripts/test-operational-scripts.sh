@@ -118,7 +118,7 @@ fake_jq() {
             return "${FAKE_JQ_READINESS_STATUS}"
         fi
         if [[ -n "${FAKE_CURL_HEALTH_STATUS_SEQUENCE:-}" \
-            || -n "${FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES:-}" ]]; then
+            || -n "${FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES:-}" ]]; then
             if [[ -z "${SYSTEM_JQ:-}" || ! -x "${SYSTEM_JQ}" ]]; then
                 printf '%s\n' 'System jq is required to validate fake health responses' >&2
                 return 69
@@ -276,30 +276,23 @@ fake_curl() {
         return "${FAKE_CURL_STATUS:-0}"
     fi
 
-    if [[ -n "${FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES:-}" && "${url}" == *'/actuator/health'* ]]; then
+    if [[ -n "${FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES:-}" \
+        && "${url}" == *'/actuator/health'* ]]; then
         # Emit only a body, with no Content-Length metadata, to model an oversized chunked
-        # response. The production head cap must therefore prevent jq from seeing valid JSON.
-        local response_bytes="${FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES}"
-        local response_prefix='{"status":"UP","padding":"'
-        local response_suffix='"}'
-        local response_overhead=$(( ${#response_prefix} + ${#response_suffix} ))
+        # response. The first cap bytes are valid JSON plus whitespace; the final byte is garbage.
+        local response_bytes="${FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES}"
+        local response_prefix='{"status":"UP"}'
+        local response_overhead=$(( ${#response_prefix} + 1 ))
         local padding_length
-        local padding
 
         if [[ ! "${response_bytes}" =~ ^[1-9][0-9]{0,6}$ ]] \
             || (( 10#${response_bytes} <= response_overhead || 10#${response_bytes} > 1048576 )); then
-            printf '%s\n' 'FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES must be between the JSON overhead and 1048576' >&2
+            printf '%s\n' 'FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES must be between the JSON overhead and 1048576' >&2
             return 64
         fi
 
         padding_length=$((10#${response_bytes} - response_overhead))
-        # Doubling avoids a quadratic Bash 3 string replacement while retaining a small,
-        # deterministic in-memory test fixture.
-        padding=x
-        while (( ${#padding} < padding_length )); do
-            padding+="${padding}"
-        done
-        printf '%s%s%s' "${response_prefix}" "${padding:0:padding_length}" "${response_suffix}"
+        printf '%s%*sX' "${response_prefix}" "${padding_length}" ''
         return "${FAKE_CURL_STATUS:-0}"
     fi
 
@@ -818,7 +811,7 @@ execute_target() {
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR \
         FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
-        FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES \
+        FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES \
         FAKE_CURL_HEALTH_STATUS_SEQUENCE \
         FAKE_DIRNAME_OUTPUT \
         FAKE_FIND_PARTIAL_OUTPUT \
@@ -2001,7 +1994,7 @@ test_service_discovery_requires_its_dependencies() {
 
         new_harness "staging-smoke-missing-${missing_command}" staging-smoke-test.sh
         add_service_dockerfile "${TEST_ROOT}" example-service
-        add_service_discovery_prerequisites_except "${TEST_ROOT}" "${missing_command}" head cat
+        add_service_discovery_prerequisites_except "${TEST_ROOT}" "${missing_command}" head mktemp rm wc cat
 
         run_target "${TEST_ROOT}" staging-smoke-test.sh \
             "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
@@ -2095,7 +2088,7 @@ test_staging_service_discovery_fails_closed_after_partial_output() {
 
     new_harness staging-smoke-partial-discovery staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
-    add_service_discovery_prerequisites_except "${TEST_ROOT}" unavailable-command head cat
+    add_service_discovery_prerequisites_except "${TEST_ROOT}" unavailable-command head mktemp rm wc cat
     add_failing_find_double "${TEST_ROOT}"
 
     run_target "${TEST_ROOT}" staging-smoke-test.sh \
@@ -2206,35 +2199,37 @@ test_security_scan_scripts_require_dirname_before_resolving_repository_root() {
 
 test_retry_utilities_are_preflighted_before_operational_paths() {
     local missing_command prerequisite
-    for missing_command in head sleep; do
+    for missing_command in head sleep mktemp rm wc; do
         new_harness "staging-smoke-missing-${missing_command}" staging-smoke-test.sh
         if [[ -e "${TEST_ROOT}/bin/${missing_command}" ]]; then
             disable_fake_command "${TEST_ROOT}" "${missing_command}"
         fi
         add_prerequisite_command "${TEST_ROOT}" bash
         add_prerequisite_command "${TEST_ROOT}" dirname
-        if [[ "${missing_command}" != "head" ]]; then
-            add_prerequisite_command "${TEST_ROOT}" head
-        fi
+        for prerequisite in head mktemp rm wc; do
+            if [[ "${prerequisite}" != "${missing_command}" ]]; then
+                add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+            fi
+        done
 
         run_target "${TEST_ROOT}" staging-smoke-test.sh \
             "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
 
         assert_status 69 "staging smoke test without ${missing_command}"
         assert_file_contains "${RUN_OUTPUT}" \
-            "curl, head, jq, and sleep are required to run the staging smoke test" \
+            "curl, head, jq, sleep, mktemp, rm, and wc are required to run the staging smoke test" \
             "staging smoke ${missing_command} prerequisite"
         assert_no_commands_logged "${TEST_ROOT}" \
             "staging smoke test without ${missing_command} must not probe services"
     done
 
-    for missing_command in head sleep mktemp tr rm; do
+    for missing_command in head sleep mktemp tr rm wc; do
         new_harness "end-to-end-smoke-missing-${missing_command}" end-to-end-smoke-test.sh
         if [[ -e "${TEST_ROOT}/bin/${missing_command}" ]]; then
             disable_fake_command "${TEST_ROOT}" "${missing_command}"
         fi
         add_prerequisite_command "${TEST_ROOT}" bash
-        for prerequisite in head mktemp tr rm; do
+        for prerequisite in head mktemp tr rm wc; do
             if [[ "${prerequisite}" != "${missing_command}" ]]; then
                 add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
             fi
@@ -2245,7 +2240,7 @@ test_retry_utilities_are_preflighted_before_operational_paths() {
 
         assert_status 69 "end-to-end smoke test without ${missing_command}"
         assert_file_contains "${RUN_OUTPUT}" \
-            "curl, head, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" \
+            "curl, head, jq, rg, sleep, mktemp, tr, rm, and wc are required to run the end-to-end smoke test" \
             "end-to-end ${missing_command} prerequisite"
         assert_no_commands_logged "${TEST_ROOT}" \
             "end-to-end smoke test without ${missing_command} must not make requests"
@@ -2264,15 +2259,17 @@ test_retry_utilities_are_preflighted_before_operational_paths() {
     assert_no_commands_logged "${TEST_ROOT}" \
         "chaos experiment without date must not make requests"
 
-    for missing_command in head sleep; do
+    for missing_command in head sleep mktemp rm wc; do
         new_harness "chaos-experiment-missing-${missing_command}" run-chaos-experiment.sh
         if [[ -e "${TEST_ROOT}/bin/${missing_command}" ]]; then
             disable_fake_command "${TEST_ROOT}" "${missing_command}"
         fi
         add_prerequisite_command "${TEST_ROOT}" bash
-        if [[ "${missing_command}" != "head" ]]; then
-            add_prerequisite_command "${TEST_ROOT}" head
-        fi
+        for prerequisite in head mktemp rm wc; do
+            if [[ "${prerequisite}" != "${missing_command}" ]]; then
+                add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+            fi
+        done
 
         run_target "${TEST_ROOT}" run-chaos-experiment.sh \
             "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin" \
@@ -2280,7 +2277,7 @@ test_retry_utilities_are_preflighted_before_operational_paths() {
 
         assert_status 69 "chaos experiment without ${missing_command}"
         assert_file_contains "${RUN_OUTPUT}" \
-            "curl, head, jq, and sleep are required to run the chaos experiment" \
+            "curl, head, jq, sleep, mktemp, rm, and wc are required to run the chaos experiment" \
             "chaos experiment ${missing_command} prerequisite"
         assert_no_commands_logged "${TEST_ROOT}" \
             "chaos experiment without ${missing_command} must not make requests"
@@ -2585,8 +2582,9 @@ test_health_checks_retry_down_responses_and_fail_closed() {
 }
 
 test_health_checks_bound_chunked_response_bodies() {
-    # One byte beyond the 64 KiB cap remains valid JSON when uncapped. The fake curl double emits
-    # no Content-Length metadata, so each case proves jq receives only the bounded stream.
+    # The first 64 KiB are valid JSON plus whitespace; the 65,537th byte is invalid trailing data.
+    # The fake curl double emits no Content-Length metadata, so each case exercises the cap-plus-one
+    # sentinel instead of relying on curl to know the response length before the transfer.
     local oversized_response_bytes=65537
 
     new_harness staging-health-oversized-chunked staging-smoke-test.sh
@@ -2595,13 +2593,15 @@ test_health_checks_bound_chunked_response_bodies() {
     run_target "${TEST_ROOT}" staging-smoke-test.sh \
         'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
         "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
-        "FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES=${oversized_response_bytes}"
+        "FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES=${oversized_response_bytes}"
 
     assert_status 1 "staging smoke oversized chunked health response"
     assert_health_probe_count "${TEST_ROOT}" 6 "staging smoke oversized chunked health response"
     assert_file_contains "${RUN_OUTPUT}" \
         "Staging health for example-service did not report UP after 6 attempts" \
         "staging smoke oversized chunked health diagnostic"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t--exit-status\t.status == "UP"' \
+        "staging smoke must reject an oversized body before jq"
 
     new_harness end-to-end-health-oversized-chunked end-to-end-smoke-test.sh
 
@@ -2609,13 +2609,15 @@ test_health_checks_bound_chunked_response_bodies() {
         "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
         "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
         "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
-        "FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES=${oversized_response_bytes}"
+        "FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES=${oversized_response_bytes}"
 
     assert_status 1 "end-to-end smoke oversized chunked health response"
     assert_health_probe_count "${TEST_ROOT}" 6 "end-to-end smoke oversized chunked health response"
     assert_file_contains "${RUN_OUTPUT}" \
         "End-to-end prerequisite gateway did not report UP after 6 attempts" \
         "end-to-end oversized chunked health diagnostic"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t--exit-status\t.status == "UP"' \
+        "end-to-end smoke must reject an oversized body before jq"
     assert_log_excludes "${TEST_ROOT}" $'/api/v1/accounts' \
         "end-to-end smoke after an oversized chunked health response"
 
@@ -2627,13 +2629,15 @@ test_health_checks_bound_chunked_response_bodies() {
         "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
         "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
         "GITHUB_RUN_ID=run-42" \
-        "FAKE_CURL_CHUNKED_HEALTH_RESPONSE_BYTES=${oversized_response_bytes}"
+        "FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES=${oversized_response_bytes}"
 
     assert_status 1 "chaos experiment oversized chunked health response"
     assert_health_probe_count "${TEST_ROOT}" 6 "chaos experiment oversized chunked health response"
     assert_file_contains "${RUN_OUTPUT}" \
         "Chaos recovery health for gateway did not report UP after 6 attempts" \
         "chaos oversized chunked health diagnostic"
+    assert_log_excludes "${TEST_ROOT}" $'jq\t--exit-status\t.status == "UP"' \
+        "chaos experiment must reject an oversized body before jq"
 }
 
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {

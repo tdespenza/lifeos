@@ -16,8 +16,9 @@ if ! command -v curl >/dev/null 2>&1 \
     || ! command -v sleep >/dev/null 2>&1 \
     || ! command -v mktemp >/dev/null 2>&1 \
     || ! command -v tr >/dev/null 2>&1 \
-    || ! command -v rm >/dev/null 2>&1; then
-    echo "curl, head, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" >&2
+    || ! command -v rm >/dev/null 2>&1 \
+    || ! command -v wc >/dev/null 2>&1; then
+    echo "curl, head, jq, rg, sleep, mktemp, tr, rm, and wc are required to run the end-to-end smoke test" >&2
     exit 69
 fi
 
@@ -50,10 +51,15 @@ health_check_delay_seconds() {
 wait_for_health() {
     local service_name="$1"
     local health_url="$2"
-    local attempt delay_seconds
+    local attempt delay_seconds response_file response_size
 
-    # Bound the bytes forwarded to jq even for an unknown-length/chunked response. If curl sees
-    # head's early close after the cap, pipefail treats that broken-pipe result as a failed probe.
+    if ! response_file="$(mktemp)"; then
+        printf 'Unable to allocate a bounded health-response buffer for %s\n' "${service_name}" >&2
+        return 1
+    fi
+
+    # Capture one sentinel byte beyond the cap before jq parses the response. This fails closed
+    # for unknown-length/chunked bodies while bounding temporary storage and jq input.
     # Retry the whole health assertion: curl does not retry when jq rejects a 200/DOWN payload.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
@@ -66,8 +72,15 @@ wait_for_health() {
             --connect-timeout 10 \
             --max-time 20 \
             "${health_url}" \
-            | head -c "${HEALTH_RESPONSE_MAX_BYTES}" \
-            | jq --exit-status '.status == "UP"' >/dev/null; then
+            | head -c "$((HEALTH_RESPONSE_MAX_BYTES + 1))" > "${response_file}" \
+            && response_size="$(wc -c < "${response_file}")" \
+            && [[ "${response_size}" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]] \
+            && (( 10#${BASH_REMATCH[1]} <= HEALTH_RESPONSE_MAX_BYTES )) \
+            && jq --exit-status '.status == "UP"' < "${response_file}" >/dev/null; then
+            if ! rm -f "${response_file}"; then
+                printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
+                return 1
+            fi
             return 0
         fi
 
@@ -80,6 +93,11 @@ wait_for_health() {
             "${service_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
         sleep "${delay_seconds}"
     done
+
+    if ! rm -f "${response_file}"; then
+        printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
+        return 1
+    fi
 
     printf 'End-to-end prerequisite %s did not report UP after %s attempts\n' \
         "${service_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2

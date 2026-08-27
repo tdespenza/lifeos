@@ -11,12 +11,14 @@ readonly REPOSITORY_ROOT
 readonly SERVICE_HEALTH_URLS_JSON="${STAGING_SERVICE_HEALTH_URLS_JSON:-}"
 readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
+readonly HEALTH_RESPONSE_MAX_BYTES=65536
 SERVICES=()
 
 if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v head >/dev/null 2>&1 \
     || ! command -v jq >/dev/null 2>&1 \
     || ! command -v sleep >/dev/null 2>&1; then
-    echo "curl, jq, and sleep are required to run the staging smoke test" >&2
+    echo "curl, head, jq, and sleep are required to run the staging smoke test" >&2
     exit 69
 fi
 
@@ -75,6 +77,8 @@ wait_for_health() {
     local health_url="$2"
     local attempt delay_seconds
 
+    # Bound the bytes forwarded to jq even for an unknown-length/chunked response. If curl sees
+    # head's early close after the cap, pipefail treats that broken-pipe result as a failed probe.
     # Retry the complete probe because curl only retries transport failures; jq can reject a
     # successfully returned health payload whose application status is still DOWN.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
@@ -88,6 +92,7 @@ wait_for_health() {
             --connect-timeout 10 \
             --max-time 20 \
             "${health_url}" \
+            | head -c "${HEALTH_RESPONSE_MAX_BYTES}" \
             | jq --exit-status '.status == "UP"' >/dev/null; then
             return 0
         fi

@@ -7,15 +7,17 @@ readonly IDENTITY_MANAGEMENT_URL="${LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL:-}"
 readonly CORRELATION_ID="11111111-1111-4111-8111-111111111111"
 readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
+readonly HEALTH_RESPONSE_MAX_BYTES=65536
 
 if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v head >/dev/null 2>&1 \
     || ! command -v jq >/dev/null 2>&1 \
     || ! command -v rg >/dev/null 2>&1 \
     || ! command -v sleep >/dev/null 2>&1 \
     || ! command -v mktemp >/dev/null 2>&1 \
     || ! command -v tr >/dev/null 2>&1 \
     || ! command -v rm >/dev/null 2>&1; then
-    echo "curl, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" >&2
+    echo "curl, head, jq, rg, sleep, mktemp, tr, and rm are required to run the end-to-end smoke test" >&2
     exit 69
 fi
 
@@ -50,6 +52,8 @@ wait_for_health() {
     local health_url="$2"
     local attempt delay_seconds
 
+    # Bound the bytes forwarded to jq even for an unknown-length/chunked response. If curl sees
+    # head's early close after the cap, pipefail treats that broken-pipe result as a failed probe.
     # Retry the whole health assertion: curl does not retry when jq rejects a 200/DOWN payload.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
@@ -62,6 +66,7 @@ wait_for_health() {
             --connect-timeout 10 \
             --max-time 20 \
             "${health_url}" \
+            | head -c "${HEALTH_RESPONSE_MAX_BYTES}" \
             | jq --exit-status '.status == "UP"' >/dev/null; then
             return 0
         fi
@@ -95,8 +100,7 @@ assert_ready gateway "${GATEWAY_MANAGEMENT_URL}"
 assert_ready identity "${IDENTITY_MANAGEMENT_URL}"
 
 headers_file="$(mktemp)"
-body_file="$(mktemp)"
-trap 'rm -f "${headers_file}" "${body_file}"' EXIT
+trap 'rm -f "${headers_file}"' EXIT
 
 # The invalid body is deliberate: it traverses Gateway -> Identity without creating a permanent
 # test account, while asserting the public failure and correlation contracts of the live topology.
@@ -113,7 +117,7 @@ status_code="$(curl \
     --header 'Content-Type: application/json' \
     --data '{"email":"not-an-email","displayName":" "}' \
     --dump-header "${headers_file}" \
-    --output "${body_file}" \
+    --output /dev/null \
     --write-out '%{http_code}' \
     "${GATEWAY_URL%/}/api/v1/accounts")"
 

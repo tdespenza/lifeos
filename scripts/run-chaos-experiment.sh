@@ -14,11 +14,13 @@ fi
 readonly RUN_ID="${GITHUB_RUN_ID:-local-$(date +%s)}"
 readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
+readonly HEALTH_RESPONSE_MAX_BYTES=65536
 
 if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v head >/dev/null 2>&1 \
     || ! command -v jq >/dev/null 2>&1 \
     || ! command -v sleep >/dev/null 2>&1; then
-    echo "curl, jq, and sleep are required to run the chaos experiment" >&2
+    echo "curl, head, jq, and sleep are required to run the chaos experiment" >&2
     exit 69
 fi
 
@@ -67,9 +69,12 @@ health_check_delay_seconds() {
 }
 
 wait_for_health() {
-    local health_url="$1"
+    local target_name="$1"
+    local health_url="$2"
     local attempt delay_seconds
 
+    # Bound the bytes forwarded to jq even for an unknown-length/chunked response. If curl sees
+    # head's early close after the cap, pipefail treats that broken-pipe result as a failed probe.
     # Retry the complete probe so a healthy HTTP response with status DOWN is retried as well.
     for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
         if curl \
@@ -82,6 +87,7 @@ wait_for_health() {
             --connect-timeout 10 \
             --max-time 20 \
             "${health_url}" \
+            | head -c "${HEALTH_RESPONSE_MAX_BYTES}" \
             | jq --exit-status '.status == "UP"' >/dev/null; then
             return 0
         fi
@@ -91,13 +97,13 @@ wait_for_health() {
         fi
 
         delay_seconds="$(health_check_delay_seconds "${attempt}")"
-        printf 'Chaos recovery health at %s is not UP; retrying in %ss (attempt %s/%s)\n' \
-            "${health_url}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+        printf 'Chaos recovery health for %s is not UP; retrying in %ss (attempt %s/%s)\n' \
+            "${target_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
         sleep "${delay_seconds}"
     done
 
-    printf 'Chaos recovery health at %s did not report UP after %s attempts\n' \
-        "${health_url}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+    printf 'Chaos recovery health for %s did not report UP after %s attempts\n' \
+        "${target_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
     return 1
 }
 
@@ -126,8 +132,8 @@ curl \
     --output /dev/null \
     "${WEBHOOK_URL}"
 
-for target in "${GATEWAY_HEALTH_URL}" "${IDENTITY_HEALTH_URL}" "${TASK_GOAL_HEALTH_URL}"; do
-    wait_for_health "${target}"
-done
+wait_for_health gateway "${GATEWAY_HEALTH_URL}"
+wait_for_health identity "${IDENTITY_HEALTH_URL}"
+wait_for_health task-goal "${TASK_GOAL_HEALTH_URL}"
 
 printf '%s\n' "Chaos experiment completed and all services recovered"

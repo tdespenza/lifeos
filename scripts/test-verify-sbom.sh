@@ -141,6 +141,8 @@ assert_fails "a non-string bom-ref is rejected" \
     "$FIXTURE_DIR/non-string-bom-ref.json"
 assert_fails "an empty bom-ref is rejected" \
     "$FIXTURE_DIR/empty-bom-ref.json"
+assert_fails "an unknown nested component property is rejected" \
+    "$FIXTURE_DIR/unknown-nested-component-property.json"
 assert_fails "a component without a name is rejected" \
     "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \

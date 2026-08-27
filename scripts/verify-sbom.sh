@@ -151,6 +151,38 @@ jq --exit-status --slurp '
             | index($component_type) != null
         );
 
+    # The official CycloneDX 1.5, 1.6, and 1.7 JSON schemas each set
+    # component.additionalProperties to false. Keep the field contract
+    # version-specific so a BOM cannot hide arbitrary data in a component.
+    # Newer versions use the newest known contract until their schema is
+    # explicitly modelled here; unknown fields still fail closed.
+    def component_properties_1_5:
+        [
+            "author", "bom-ref", "components", "copyright", "cpe", "data",
+            "description", "evidence", "externalReferences", "group", "hashes",
+            "licenses", "mime-type", "modelCard", "modified", "name", "pedigree",
+            "properties", "publisher", "purl", "releaseNotes", "scope", "signature",
+            "supplier", "swid", "type", "version"
+        ];
+
+    def component_properties_1_6:
+        component_properties_1_5
+        + ["authors", "cryptoProperties", "manufacturer", "omniborId", "swhid", "tags"];
+
+    def component_properties_1_7:
+        component_properties_1_6 + ["isExternal", "patentAssertions", "versionRange"];
+
+    def allowed_component_properties($spec_version):
+        if $spec_version == "1.5" then component_properties_1_5
+        elif $spec_version == "1.6" then component_properties_1_6
+        else component_properties_1_7
+        end;
+
+    def valid_component_properties($spec_version):
+        . as $component
+        | allowed_component_properties($spec_version) as $allowed
+        | (($component | keys) - $allowed | length) == 0;
+
     # Components are JSON objects, so exact duplicate objects are redundant and
     # make the SBOM ambiguous for downstream inventory consumers.
     def unique_component_objects:
@@ -158,6 +190,7 @@ jq --exit-status --slurp '
 
     def valid_component($spec_version):
         if type != "object" then false
+        elif (valid_component_properties($spec_version) | not) then false
         elif (.name | type) != "string" then false
         elif (.type | valid_component_type($spec_version) | not) then false
         # A PURL is optional for non-library component types, but whenever a

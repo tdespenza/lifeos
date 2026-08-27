@@ -188,9 +188,22 @@ jq --exit-status --slurp '
     def unique_component_objects:
         type == "array" and (length == (unique | length));
 
+    # CycloneDX 1.7 models concrete component versions and accepted version
+    # range as mutually exclusive. A range describes an externally provided
+    # runtime component, so it is only meaningful when isExternal is true.
+    # Keep this constraint scoped to 1.7: earlier schemas reject these fields
+    # through their property contracts, and later schemas may evolve them.
+    def valid_component_version_fields($spec_version):
+        if $spec_version != "1.7" then true
+        elif has("version") and has("versionRange") then false
+        elif has("versionRange") and (.isExternal? != true) then false
+        else true
+        end;
+
     def valid_component($spec_version):
         if type != "object" then false
         elif (valid_component_properties($spec_version) | not) then false
+        elif (valid_component_version_fields($spec_version) | not) then false
         elif (.name | type) != "string" then false
         elif (.type | valid_component_type($spec_version) | not) then false
         # A PURL is optional for non-library component types, but whenever a
@@ -203,6 +216,16 @@ jq --exit-status --slurp '
         elif (.components | unique_component_objects | not) then false
         else all(.components[]; valid_component($spec_version))
         end;
+
+    def valid_metadata_component($spec_version):
+        . as $component
+        | ($component | valid_component($spec_version))
+        and (
+            if $spec_version == "1.7" then
+                ($component.isExternal? != true)
+            else true
+            end
+        );
 
     def valid_metadata_tools($spec_version):
         # CycloneDX 1.5 permits either the modern object declaration or the
@@ -229,7 +252,7 @@ jq --exit-status --slurp '
         else
             .metadata as $metadata
             | (
-                ($metadata | if has("component") then .component | valid_component($spec_version) else true end)
+                ($metadata | if has("component") then .component | valid_metadata_component($spec_version) else true end)
                 and ($metadata | valid_metadata_tools($spec_version))
               )
         end;

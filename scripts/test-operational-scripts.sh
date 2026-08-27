@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # This file also acts as the deterministic command double used by the tests below. Each harness
-# places symlinks named docker, jq, curl, k6, rg, and sleep in PATH, so the operational scripts
+# places symlinks named docker, timeout, jq, curl, k6, rg, and sleep in PATH, so the operational scripts
 # are exercised exactly as they are invoked in CI without requiring Docker, a network connection,
 # or a k6 binary.
 fake_log_command() {
@@ -83,6 +83,47 @@ fake_docker() {
     fi
 
     return "${FAKE_DOCKER_STATUS:-0}"
+}
+
+fake_timeout() {
+    local argument
+    local docker_argument_index=0
+    local docker_subcommand=""
+    local argument_index
+    local next_argument_index
+    local docker_command_start_index
+    for ((argument_index = 1; argument_index <= $#; argument_index += 1)); do
+        argument="${!argument_index}"
+        if [[ "${argument}" == "docker" ]]; then
+            docker_argument_index="${argument_index}"
+            if (( argument_index < $# )); then
+                next_argument_index=$((argument_index + 1))
+                docker_subcommand="${!next_argument_index}"
+            fi
+            break
+        fi
+    done
+
+    if (( docker_argument_index == 0 || docker_argument_index == $# )); then
+        printf '%s\n' 'fake timeout requires a docker command' >&2
+        return 64
+    fi
+
+    # Record the wrapper's nested command as one field. Deliberately omit its remaining Docker
+    # arguments: the delegated fake Docker call records those, and duplicating them would make
+    # command-count assertions mistake the wrapper for a second Trivy invocation.
+    fake_log_command "${0##*/}" \
+        "${@:1:$((docker_argument_index - 1))}" \
+        "docker ${docker_subcommand}"
+
+    if [[ -n "${FAKE_TIMEOUT_STATUS+x}" \
+        && ( -z "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND:-}" \
+            || "${docker_subcommand}" == "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND}" ) ]]; then
+        return "${FAKE_TIMEOUT_STATUS}"
+    fi
+
+    docker_command_start_index=$((docker_argument_index + 1))
+    docker "${@:docker_command_start_index}"
 }
 
 fake_jq() {
@@ -417,6 +458,14 @@ case "${0##*/}" in
         fake_docker "$@"
         exit
         ;;
+    timeout)
+        fake_timeout "$@"
+        exit
+        ;;
+    gtimeout)
+        fake_timeout "$@"
+        exit
+        ;;
     jq)
         fake_jq "$@"
         exit
@@ -566,6 +615,20 @@ assert_no_logged_command() {
     done < "${root}/commands.log"
 }
 
+assert_no_logged_docker_subcommand() {
+    local root="$1"
+    local subcommand="$2"
+    local description="$3"
+    local line
+
+    assert_readable_file "${root}/commands.log" "${description}"
+    while IFS= read -r line; do
+        if [[ "${line}" == $'docker\t'"${subcommand}"$'\t'* ]]; then
+            fail "${description}: found docker ${subcommand} command"
+        fi
+    done < "${root}/commands.log"
+}
+
 assert_log_entry_excludes() {
     local root="$1"
     local entry_marker="$2"
@@ -691,7 +754,7 @@ new_harness() {
     done
 
     local command
-    for command in docker jq curl k6 rg sleep; do
+    for command in docker timeout gtimeout jq curl k6 rg sleep; do
         ln -s "${TEST_SCRIPT_PATH}" "${TEST_ROOT}/bin/${command}"
     done
     : > "${TEST_ROOT}/commands.log"
@@ -778,6 +841,7 @@ execute_target() {
         LIFEOS_CHAOS_IDENTITY_HEALTH_URL \
         LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL \
         LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS \
+        LIFEOS_DOCKER_TIMEOUT_SECONDS \
         LIFEOS_E2E_GATEWAY_BASE_URL \
         LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL \
         LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL \
@@ -802,6 +866,8 @@ execute_target() {
         FAKE_DOCKER_RUN_STARTED_FILE \
         FAKE_DOCKER_STDIN_LOG \
         FAKE_DOCKER_STATUS \
+        FAKE_TIMEOUT_DOCKER_SUBCOMMAND \
+        FAKE_TIMEOUT_STATUS \
         FAKE_CURL_STATUS \
         FAKE_CURL_STDOUT \
         FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
@@ -1328,6 +1394,145 @@ test_source_scan_requires_an_accessible_docker_daemon() {
         "source security scan Docker daemon preflight command"
     assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
         "source security scan after an unavailable Docker daemon"
+}
+
+test_security_scans_validate_and_bound_docker_operations() {
+    local security_scan_script
+    local invalid_timeout
+    local cache_dir
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        for invalid_timeout in 0 901 nonnumeric; do
+            new_harness "${security_scan_script%.sh}-invalid-docker-timeout-${invalid_timeout}" "${security_scan_script}"
+            if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+                add_service_dockerfile "${TEST_ROOT}" example-service
+            fi
+
+            run_target "${TEST_ROOT}" "${security_scan_script}" \
+                "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+                "LIFEOS_DOCKER_TIMEOUT_SECONDS=${invalid_timeout}"
+
+            assert_status 64 "${security_scan_script} with invalid Docker timeout ${invalid_timeout}"
+            assert_file_contains "${RUN_OUTPUT}" \
+                "LIFEOS_DOCKER_TIMEOUT_SECONDS must be between 1 and 900 seconds" \
+                "${security_scan_script} invalid Docker-timeout diagnostic"
+            assert_no_commands_logged "${TEST_ROOT}" \
+                "${security_scan_script} with invalid Docker timeout must not invoke Docker"
+        done
+
+        new_harness "${security_scan_script%.sh}-docker-info-timeout" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+            "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=info" \
+            "FAKE_TIMEOUT_STATUS=124"
+
+        assert_status 69 "${security_scan_script} with a timed out Docker daemon check"
+        assert_file_contains "${RUN_OUTPUT}" "Docker daemon check timed out after 1s" \
+            "${security_scan_script} Docker daemon timeout diagnostic"
+        assert_log_contains "${TEST_ROOT}" \
+            $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker info' \
+            "${security_scan_script} Docker daemon timeout wrapper"
+        assert_no_logged_command "${TEST_ROOT}" docker \
+            "${security_scan_script} must not invoke Docker after its timeout wrapper expires"
+
+        new_harness "${security_scan_script%.sh}-trivy-run-timeout" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+        cache_dir="${TEST_ROOT}/trivy-cache"
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+            "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+            "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=run" \
+            "FAKE_TIMEOUT_STATUS=124"
+
+        assert_status 69 "${security_scan_script} with a timed out Trivy invocation"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            assert_file_contains "${RUN_OUTPUT}" \
+                "Trivy image scan for lifeos/example-service:local timed out after 1s" \
+                "container scan Trivy timeout diagnostic"
+        else
+            assert_file_contains "${RUN_OUTPUT}" "Trivy source security scan timed out after 1s" \
+                "source scan Trivy timeout diagnostic"
+        fi
+        assert_log_contains "${TEST_ROOT}" \
+            $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker run' \
+            "${security_scan_script} Trivy timeout wrapper"
+        assert_no_logged_docker_subcommand "${TEST_ROOT}" run \
+            "${security_scan_script} must not invoke Trivy after its timeout wrapper expires"
+    done
+
+    new_harness scan-container-image-inspect-timeout scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=image" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "container scan with a timed out image inspection"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Container image availability check for lifeos/example-service:local timed out after 1s" \
+        "container scan image-inspection timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker image' \
+        "container scan image-inspection timeout wrapper"
+    assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+        "container scan must not start Trivy after a timed out image inspection"
+}
+
+test_security_scans_select_portable_timeout_commands() {
+    local security_scan_script
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-gtimeout-fallback" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+        disable_fake_command "${TEST_ROOT}" timeout
+        add_prerequisite_command "${TEST_ROOT}" bash
+        add_prerequisite_command "${TEST_ROOT}" dirname
+        add_prerequisite_command "${TEST_ROOT}" mkdir
+        add_prerequisite_command "${TEST_ROOT}" rmdir
+        add_prerequisite_command "${TEST_ROOT}" sleep
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_prerequisite_command "${TEST_ROOT}" find
+            add_prerequisite_command "${TEST_ROOT}" basename
+            add_prerequisite_command "${TEST_ROOT}" sort
+        fi
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+        assert_status 0 "${security_scan_script} with the macOS gtimeout fallback"
+        assert_log_contains "${TEST_ROOT}" \
+            $'gtimeout\t--signal=TERM\t--kill-after=10s\t300s\tdocker info' \
+            "${security_scan_script} gtimeout fallback"
+    done
+
+    new_harness scan-source-missing-timeout scan-source-security.sh
+    disable_fake_command "${TEST_ROOT}" timeout
+    disable_fake_command "${TEST_ROOT}" gtimeout
+    add_prerequisite_command "${TEST_ROOT}" bash
+    add_prerequisite_command "${TEST_ROOT}" dirname
+
+    run_target "${TEST_ROOT}" scan-source-security.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "source security scan without a timeout utility"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "timeout (or gtimeout on macOS) is required to bound Docker operations" \
+        "source scan timeout utility prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "source security scan without a timeout utility must not invoke Docker"
 }
 
 test_security_scans_serialize_shared_trivy_cache_access() {
@@ -2330,8 +2535,8 @@ test_contract_sensitive_posts_reject_redirects() {
         "End-to-end gateway-to-identity contract passed" \
         "end-to-end smoke after an intermediate correlation header"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
-        "end-to-end readiness redirects remain enabled"
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "end-to-end readiness redirect rejection"
 
     new_harness chaos-redirect run-chaos-experiment.sh
 
@@ -2515,7 +2720,7 @@ test_health_checks_retry_down_responses_and_fail_closed() {
 
     assert_status 0 "staging smoke health recovery"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://staging.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://staging.example.test/actuator/health/readiness' \
         "staging smoke health probe disables curl configuration"
     assert_health_probe_count "${TEST_ROOT}" 2 "staging smoke health recovery"
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "staging smoke health recovery backoff"
@@ -2550,7 +2755,7 @@ test_health_checks_retry_down_responses_and_fail_closed() {
 
     assert_status 0 "end-to-end smoke health recovery"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
         "end-to-end readiness probe disables curl configuration"
     assert_health_probe_count "${TEST_ROOT}" 3 "end-to-end smoke health recovery"
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 1 "end-to-end smoke health recovery backoff"
@@ -2579,6 +2784,63 @@ test_health_checks_retry_down_responses_and_fail_closed() {
     assert_health_probe_count "${TEST_ROOT}" 6 "end-to-end smoke persistent DOWN response"
     assert_log_line_count "${TEST_ROOT}" $'sleep\t' 5 "end-to-end smoke persistent DOWN backoff"
     assert_log_excludes "${TEST_ROOT}" $'/api/v1/accounts' "end-to-end smoke after persistent DOWN"
+}
+
+test_health_checks_reject_redirects() {
+    new_harness staging-health-redirect staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
+        "FAKE_CURL_REDIRECT_URL=https://staging.example.test/actuator/health/readiness" \
+        "FAKE_CURL_REDIRECT_STATUS=302"
+
+    assert_status 1 "staging smoke health probe receiving a redirect"
+    assert_health_probe_count "${TEST_ROOT}" 6 "staging smoke redirect rejection"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://staging.example.test/actuator/health/readiness' \
+        "staging smoke health redirect bounds"
+    assert_file_excludes "${RUN_OUTPUT}" "Staging health is UP for example-service" \
+        "staging smoke must not report UP after a redirect"
+
+    new_harness end-to-end-health-redirect end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_REDIRECT_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "FAKE_CURL_REDIRECT_STATUS=302"
+
+    assert_status 1 "end-to-end readiness probe receiving a redirect"
+    assert_health_probe_count "${TEST_ROOT}" 6 "end-to-end readiness redirect rejection"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "end-to-end readiness redirect bounds"
+    assert_file_excludes "${RUN_OUTPUT}" "End-to-end prerequisite is ready: gateway" \
+        "end-to-end smoke must not report a redirecting prerequisite as ready"
+    assert_file_excludes "${RUN_OUTPUT}" "End-to-end gateway-to-identity contract passed" \
+        "end-to-end smoke must not execute its contract after a readiness redirect"
+
+    new_harness chaos-health-redirect run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+        "GITHUB_RUN_ID=run-42" \
+        "FAKE_CURL_REDIRECT_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "FAKE_CURL_REDIRECT_STATUS=302"
+
+    assert_status 1 "chaos recovery probe receiving a redirect"
+    assert_health_probe_count "${TEST_ROOT}" 6 "chaos recovery redirect rejection"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        "chaos recovery redirect bounds"
+    assert_file_excludes "${RUN_OUTPUT}" "Chaos experiment completed and all services recovered" \
+        "chaos experiment must not report recovery after a redirect"
 }
 
 test_health_checks_bound_chunked_response_bodies() {
@@ -2656,7 +2918,7 @@ test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes() {
         $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t300' \
         "chaos experiment bounded webhook transport"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://gateway-management.example.test/actuator/health/readiness' \
         "chaos recovery probe disables curl configuration"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://chaos.example.test/experiments" \
@@ -2734,7 +2996,7 @@ test_chaos_experiment_fails_for_webhook_and_recovery_errors() {
     assert_file_excludes "${RUN_OUTPUT}" "private-capability" \
         "chaos recovery failure must not expose a configured health path"
     assert_log_excludes "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://identity-management.example.test/actuator/health/readiness' \
+        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t20\thttps://identity-management.example.test/actuator/health/readiness' \
         "chaos experiment after a failed gateway recovery probe"
 }
 
@@ -2752,6 +3014,8 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_requires_an_accessible_docker_daemon
+test_security_scans_validate_and_bound_docker_operations
+test_security_scans_select_portable_timeout_commands
 test_security_scans_serialize_shared_trivy_cache_access
 test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting
@@ -2783,6 +3047,7 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
 test_operational_urls_reject_userinfo_before_live_traffic
 test_health_checks_retry_down_responses_and_fail_closed
+test_health_checks_reject_redirects
 test_health_checks_bound_chunked_response_bodies
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
 test_chaos_experiment_rejects_userinfo_before_payload_or_probes

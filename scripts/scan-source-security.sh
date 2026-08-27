@@ -19,13 +19,47 @@ readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-
 readonly TRIVY_CACHE_LOCK_DIRECTORY="${TRIVY_CACHE_DIR}/.lifeos-trivy-cache.lock"
 readonly TRIVY_CACHE_LOCK_TIMEOUT_SECONDS=300
 readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
+# Docker can hang while connecting to its daemon, pulling the scanner image, or streaming a
+# scan. Keep every invocation within a single, deliberately bounded operator-configurable
+# deadline so a broken Docker dependency cannot consume the enclosing CI-job timeout.
+readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
+readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+
+if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
+    || (( 10#${DOCKER_OPERATION_TIMEOUT_SECONDS} > 900 )); then
+    echo "LIFEOS_DOCKER_TIMEOUT_SECONDS must be between 1 and 900 seconds" >&2
+    exit 64
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to run the Trivy source security scan" >&2
     exit 69
 fi
 
-if ! docker info >/dev/null 2>&1; then
+if command -v timeout >/dev/null 2>&1; then
+    DOCKER_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    # macOS ships no timeout utility; Homebrew's coreutils exposes the GNU-compatible command
+    # as gtimeout. Prefer timeout on CI/Linux while retaining a clear local development path.
+    DOCKER_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound Docker operations during the Trivy source security scan" >&2
+    exit 69
+fi
+readonly DOCKER_TIMEOUT_COMMAND
+
+run_docker_operation() {
+    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
+}
+
+if run_docker_operation info >/dev/null 2>&1; then
+    :
+else
+    docker_status=$?
+    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        echo "Docker daemon check timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
     echo "Docker daemon is unavailable or inaccessible; start Docker and verify access before running the Trivy source security scan" >&2
     exit 69
 fi
@@ -86,7 +120,7 @@ if ! acquire_trivy_cache_lock; then
 fi
 trap release_trivy_cache_lock EXIT
 
-docker run --rm \
+if run_docker_operation run --rm \
     --volume "${TRIVY_CACHE_DIR}:/root/.cache" \
     --volume "${REPOSITORY_ROOT}:/repo:ro" \
     --workdir /repo \
@@ -99,4 +133,13 @@ docker run --rm \
     --severity HIGH,CRITICAL \
     --skip-dirs .git \
     --skip-dirs .gradle \
-    .
+    .; then
+    :
+else
+    docker_status=$?
+    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        echo "Trivy source security scan timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
+    exit "${docker_status}"
+fi

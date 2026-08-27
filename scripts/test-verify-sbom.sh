@@ -95,6 +95,8 @@ assert_succeeds "valid percent-encoded UTF-8 PURL characters are accepted" \
 assert_succeeds "a minimal CycloneDX 1.5 SBOM is accepted" "$FIXTURE_DIR/minimal-cyclonedx-1.5.json"
 assert_succeeds "a CycloneDX 1.6 cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.6.json"
 assert_succeeds "a later CycloneDX cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.7.json"
+assert_succeeds "a CycloneDX 1.7 external component version range is accepted" \
+    "$FIXTURE_DIR/valid-1.7-external-version-range.json"
 assert_succeeds "an SBOM without metadata is accepted" "$FIXTURE_DIR/without-metadata.json"
 assert_succeeds "an SBOM without a metadata component is accepted" "$FIXTURE_DIR/without-metadata-component.json"
 assert_succeeds "an SBOM without components is accepted" "$FIXTURE_DIR/without-components.json"
@@ -141,6 +143,14 @@ assert_fails "a non-string bom-ref is rejected" \
     "$FIXTURE_DIR/non-string-bom-ref.json"
 assert_fails "an empty bom-ref is rejected" \
     "$FIXTURE_DIR/empty-bom-ref.json"
+assert_fails "a CycloneDX 1.7 component cannot declare both version forms" \
+    "$FIXTURE_DIR/invalid-1.7-component-version-and-version-range.json"
+assert_fails "a CycloneDX 1.7 component version range requires isExternal true" \
+    "$FIXTURE_DIR/invalid-1.7-version-range-without-external.json"
+assert_fails "a nested CycloneDX 1.7 component version range requires isExternal true" \
+    "$FIXTURE_DIR/invalid-1.7-nested-version-range-with-external-false.json"
+assert_fails "a CycloneDX 1.7 metadata component cannot be external" \
+    "$FIXTURE_DIR/invalid-1.7-metadata-component-external.json"
 assert_fails "an unknown nested component property is rejected" \
     "$FIXTURE_DIR/unknown-nested-component-property.json"
 assert_fails "a component without a name is rejected" \

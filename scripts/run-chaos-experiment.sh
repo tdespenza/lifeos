@@ -91,6 +91,7 @@ wait_for_health() {
             --silent \
             --show-error \
             --location \
+            --max-redirs 0 \
             --proto '=https' \
             --connect-timeout 10 \
             --max-time 20 \

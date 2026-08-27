@@ -20,6 +20,11 @@ readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-
 readonly TRIVY_CACHE_LOCK_DIRECTORY="${TRIVY_CACHE_DIR}/.lifeos-trivy-cache.lock"
 readonly TRIVY_CACHE_LOCK_TIMEOUT_SECONDS=300
 readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
+# Docker can hang while connecting to its daemon, pulling the scanner image, or streaming a
+# scan. Keep every invocation within a single, deliberately bounded operator-configurable
+# deadline so a broken Docker dependency cannot consume the enclosing CI-job timeout.
+readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
+readonly DOCKER_TIMEOUT_EXIT_STATUS=124
 readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
 readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
 # Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
@@ -30,6 +35,12 @@ readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
 readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
 readonly IMAGE_REPOSITORY_PATH_MAX_LENGTH=255
 SERVICES=()
+
+if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
+    || (( 10#${DOCKER_OPERATION_TIMEOUT_SECONDS} > 900 )); then
+    echo "LIFEOS_DOCKER_TIMEOUT_SECONDS must be between 1 and 900 seconds" >&2
+    exit 64
+fi
 
 for service_discovery_command in find basename sort; do
     if ! command -v "${service_discovery_command}" >/dev/null 2>&1; then
@@ -94,6 +105,18 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 69
 fi
 
+if command -v timeout >/dev/null 2>&1; then
+    DOCKER_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    # macOS ships no timeout utility; Homebrew's coreutils exposes the GNU-compatible command
+    # as gtimeout. Prefer timeout on CI/Linux while retaining a clear local development path.
+    DOCKER_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound Docker operations during the Trivy container scan" >&2
+    exit 69
+fi
+readonly DOCKER_TIMEOUT_COMMAND
+
 if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     echo "No service Dockerfiles found in infrastructure/docker" >&2
     exit 66
@@ -105,17 +128,35 @@ for service in "${SERVICES[@]}"; do
     fi
 done
 
-if ! docker info >/dev/null 2>&1; then
+run_docker_operation() {
+    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
+}
+
+if run_docker_operation info >/dev/null 2>&1; then
+    :
+else
+    docker_status=$?
+    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        echo "Docker daemon check timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
     echo "Docker daemon is unavailable or inaccessible; start Docker and verify access before scanning images" >&2
     exit 69
 fi
 
 for service in "${SERVICES[@]}"; do
     image="${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"
-    if ! docker image inspect "${image}" >/dev/null 2>&1; then
-        echo "Container image ${image} is missing; run scripts/build-container-images.sh first" >&2
-        exit 66
+    if run_docker_operation image inspect "${image}" >/dev/null 2>&1; then
+        continue
+    else
+        docker_status=$?
     fi
+    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        echo "Container image availability check for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
+    echo "Container image ${image} is missing; run scripts/build-container-images.sh first" >&2
+    exit 66
 done
 
 for trivy_cache_command in mkdir rmdir sleep; do
@@ -176,7 +217,7 @@ trap release_trivy_cache_lock EXIT
 
 for service in "${SERVICES[@]}"; do
     image="${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"
-    docker run --rm \
+    if run_docker_operation run --rm \
         --volume "${TRIVY_CACHE_DIR}:/root/.cache" \
         --volume /var/run/docker.sock:/var/run/docker.sock \
         "${TRIVY_IMAGE}" \
@@ -185,5 +226,14 @@ for service in "${SERVICES[@]}"; do
         --exit-code 1 \
         --ignore-unfixed \
         --severity HIGH,CRITICAL \
-        "${image}"
+        "${image}"; then
+        continue
+    else
+        docker_status=$?
+    fi
+    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        echo "Trivy image scan for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
+    exit "${docker_status}"
 done

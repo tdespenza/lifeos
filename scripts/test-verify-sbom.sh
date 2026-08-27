@@ -44,6 +44,23 @@ assert_fails() {
     fi
 }
 
+assert_schema_fails() {
+    local description="$1"
+    local fixture="$2"
+    local output
+
+    assert_json_object_fixture "$fixture"
+    if output="$(bash "$VERIFY_SBOM" "$fixture" 2>&1)"; then
+        echo "FAIL: $description (command unexpectedly succeeded)" >&2
+        exit 1
+    fi
+
+    if [[ "$output" != *"schema validation failed"* ]]; then
+        echo "FAIL: $description (schema validator did not reject the fixture)" >&2
+        exit 1
+    fi
+}
+
 assert_multiple_documents_are_rejected() {
     local fixture="$1"
     local output
@@ -97,6 +114,10 @@ assert_succeeds "a CycloneDX 1.6 cryptographic asset is accepted" "$FIXTURE_DIR/
 assert_succeeds "a later CycloneDX cryptographic asset is accepted" "$FIXTURE_DIR/valid-cryptographic-asset-1.7.json"
 assert_succeeds "a CycloneDX 1.7 external component version range is accepted" \
     "$FIXTURE_DIR/valid-1.7-external-version-range.json"
+assert_succeeds "CycloneDX 1.6-specific root and metadata fields are accepted" \
+    "$FIXTURE_DIR/valid-versioned-schema-fields-1.6.json"
+assert_succeeds "CycloneDX 1.7-specific root and metadata fields are accepted" \
+    "$FIXTURE_DIR/valid-versioned-schema-fields-1.7.json"
 assert_succeeds "an SBOM without metadata is accepted" "$FIXTURE_DIR/without-metadata.json"
 assert_succeeds "an SBOM without a metadata component is accepted" "$FIXTURE_DIR/without-metadata-component.json"
 assert_succeeds "an SBOM without components is accepted" "$FIXTURE_DIR/without-components.json"
@@ -153,6 +174,16 @@ assert_fails "a CycloneDX 1.7 metadata component cannot be external" \
     "$FIXTURE_DIR/invalid-1.7-metadata-component-external.json"
 assert_fails "an unknown nested component property is rejected" \
     "$FIXTURE_DIR/unknown-nested-component-property.json"
+assert_schema_fails "an unknown root property is rejected by the declared schema" \
+    "$FIXTURE_DIR/invalid-unknown-root-property.json"
+assert_schema_fails "an unknown metadata property is rejected by the declared schema" \
+    "$FIXTURE_DIR/invalid-unknown-metadata-property.json"
+assert_schema_fails "CycloneDX 1.5 rejects fields introduced in 1.6" \
+    "$FIXTURE_DIR/invalid-1.5-1.6-schema-fields.json"
+assert_schema_fails "CycloneDX 1.6 rejects fields introduced in 1.7" \
+    "$FIXTURE_DIR/invalid-1.6-1.7-schema-fields.json"
+assert_fails "an unsupported CycloneDX schema version is rejected" \
+    "$FIXTURE_DIR/unsupported-cyclonedx-version.json"
 assert_fails "a component without a name is rejected" \
     "$FIXTURE_DIR/missing-component-name.json"
 assert_fails "a component with a non-string name is rejected" \

@@ -27,5 +27,6 @@ for script in "${PIPELINE_SCRIPTS[@]}"; do
 done
 
 node --check "${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
+node --check "${REPOSITORY_ROOT}/scripts/validate-cyclonedx-schema.js"
 
 printf '%s\n' "Validated ${#PIPELINE_SCRIPTS[@]} CI/CD and operational shell scripts"

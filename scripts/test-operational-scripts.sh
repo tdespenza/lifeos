@@ -1185,6 +1185,108 @@ test_build_passes_jar_argument_and_honors_push_switch() {
     assert_log_excludes "${TEST_ROOT}" $'docker\tpush\t' "disabled container image push"
 }
 
+test_container_build_validates_and_bounds_docker_operations() {
+    local invalid_timeout
+
+    for invalid_timeout in 0 901 nonnumeric; do
+        new_harness "build-invalid-docker-timeout-${invalid_timeout}" build-container-images.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+        add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+        run_target "${TEST_ROOT}" build-container-images.sh \
+            "LIFEOS_DOCKER_TIMEOUT_SECONDS=${invalid_timeout}"
+
+        assert_status 64 "container build with invalid Docker timeout ${invalid_timeout}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "LIFEOS_DOCKER_TIMEOUT_SECONDS must be between 1 and 900 seconds" \
+            "container build invalid Docker-timeout diagnostic"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "container build with invalid Docker timeout must not invoke Docker"
+    done
+
+    new_harness build-operation-timeout build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=build" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "container build with a timed out Docker build"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Container image build for lifeos/example-service:local timed out after 1s" \
+        "container build timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker build' \
+        "container build timeout wrapper"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" build \
+        "container build must not invoke Docker after its timeout wrapper expires"
+
+    new_harness build-push-timeout build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "LIFEOS_PUSH_IMAGES=true" \
+        "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=push" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "container build with a timed out Docker push"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Container image push for lifeos/example-service:local timed out after 1s" \
+        "container image push timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" $'docker\tbuild\t' \
+        "container image push timeout must occur after a successful build"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker push' \
+        "container image push timeout wrapper"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" push \
+        "container image push must not invoke Docker after its timeout wrapper expires"
+}
+
+test_container_build_selects_portable_timeout_commands() {
+    new_harness build-gtimeout-fallback build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+    disable_fake_command "${TEST_ROOT}" timeout
+    add_prerequisite_command "${TEST_ROOT}" bash
+    add_prerequisite_command "${TEST_ROOT}" dirname
+    add_prerequisite_command "${TEST_ROOT}" find
+    add_prerequisite_command "${TEST_ROOT}" basename
+    add_prerequisite_command "${TEST_ROOT}" sort
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 0 "container build with the macOS gtimeout fallback"
+    assert_log_contains "${TEST_ROOT}" \
+        $'gtimeout\t--signal=TERM\t--kill-after=10s\t300s\tdocker build' \
+        "container build gtimeout fallback"
+
+    new_harness build-missing-timeout build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+    disable_fake_command "${TEST_ROOT}" timeout
+    disable_fake_command "${TEST_ROOT}" gtimeout
+    add_prerequisite_command "${TEST_ROOT}" bash
+    add_prerequisite_command "${TEST_ROOT}" dirname
+    add_prerequisite_command "${TEST_ROOT}" find
+    add_prerequisite_command "${TEST_ROOT}" basename
+    add_prerequisite_command "${TEST_ROOT}" sort
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "container build without a timeout utility"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "timeout (or gtimeout on macOS) is required to bound Docker operations" \
+        "container build timeout utility prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build without a timeout utility must not invoke Docker"
+}
+
 test_container_scripts_reject_invalid_generated_image_references() {
     local case_number=0
     local image_prefix image_tag expected_reference expected_output_reference
@@ -2066,6 +2168,48 @@ test_performance_smoke_rejects_escaped_summary_paths() {
     if [[ -e "${outside_root}/k6-summary.json" ]]; then
         fail "performance smoke test must not write through a lexically escaped summary path"
     fi
+}
+
+test_performance_smoke_bounds_summary_path_input() {
+    # Keep the accepted input lexically long while resolving it to the short normal report path.
+    # This exercises the boundary without relying on the host filesystem's PATH_MAX.
+    local maximum_length=4096
+    local summary_suffix="build/reports/performance/k6-summary.json"
+    local accepted_summary_path=""
+    local padding_length=$((maximum_length - ${#summary_suffix}))
+
+    while (( ${#accepted_summary_path} + 2 <= padding_length )); do
+        accepted_summary_path+="./"
+    done
+    if (( ${#accepted_summary_path} < padding_length )); then
+        accepted_summary_path+="/"
+    fi
+    accepted_summary_path+="${summary_suffix}"
+    if (( ${#accepted_summary_path} != maximum_length )); then
+        fail "performance summary path boundary fixture must be exactly ${maximum_length} characters"
+    fi
+
+    new_harness performance-summary-path-maximum performance-smoke-test.sh performance/readiness-smoke.js
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH=${accepted_summary_path}"
+
+    assert_status 0 "performance smoke test with the maximum summary-path input length"
+    if [[ ! -s "${TEST_ROOT}/build/reports/performance/k6-summary.json" ]]; then
+        fail "performance smoke test must accept the maximum summary-path input length"
+    fi
+
+    new_harness performance-summary-path-over-maximum performance-smoke-test.sh performance/readiness-smoke.js
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH=${accepted_summary_path}x"
+
+    assert_status 64 "performance smoke test with a summary-path input one character over the maximum"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH must not exceed ${maximum_length} characters" \
+        "performance summary-path input maximum validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "performance smoke test must reject an oversized summary-path input before invoking k6 or Docker"
 }
 
 test_performance_smoke_rejects_invalid_vus_values() {
@@ -3008,6 +3152,8 @@ test_run_target_exports_only_valid_environment_assignments
 test_build_rejects_missing_services
 test_build_rejects_missing_or_ambiguous_jars
 test_build_passes_jar_argument_and_honors_push_switch
+test_container_build_validates_and_bounds_docker_operations
+test_container_build_selects_portable_timeout_commands
 test_container_scripts_reject_invalid_generated_image_references
 test_container_scripts_enforce_docker_repository_path_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
@@ -3031,6 +3177,7 @@ test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
 test_performance_smoke_rejects_escaped_summary_paths
+test_performance_smoke_bounds_summary_path_input
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies

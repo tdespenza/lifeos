@@ -8,6 +8,8 @@ readonly VUS="${LIFEOS_PERFORMANCE_VUS:-10}"
 readonly DURATION="${LIFEOS_PERFORMANCE_DURATION:-15s}"
 readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
 readonly K6_IMAGE="grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2"
+# This bounds the user-controlled input processed by canonicalize_path; it is not an OS PATH_MAX.
+readonly PERFORMANCE_SUMMARY_PATH_MAX_LENGTH=4096
 
 temporary_summary_path=""
 
@@ -21,14 +23,21 @@ cleanup_temporary_summary() {
 trap cleanup_temporary_summary EXIT
 
 canonicalize_path() {
-    # Resolve lexical path components and symlinks without creating any output directories first.
-    # A hop limit makes malformed circular links an input error rather than an unbounded loop.
+    # Resolve lexical path components and symlinks without creating output directories first.
+    # Input is capped at 4,096 characters before splitting. For N components, the queue shifts and
+    # prefix rebuilds make the worst case O(N^2) time and O(N) space; the cap keeps that bounded.
+    # Symlink expansion is separately capped at 40 hops. An unbounded caller should instead use an
+    # indexed component scan with an incremental stack to make canonicalization linear.
     local input_path="$1"
     local candidate_path component link_target resolved_component
     local symlink_hops=0
     local -a pending_components=()
     local -a resolved_components=()
     local -a link_components=()
+
+    if (( ${#input_path} > PERFORMANCE_SUMMARY_PATH_MAX_LENGTH )); then
+        return 1
+    fi
 
     if [[ "${input_path}" == /* ]]; then
         candidate_path="${input_path}"
@@ -85,10 +94,15 @@ canonicalize_path() {
     printf '%s\n' "${candidate_path}"
 }
 
-SUMMARY_PATH="$(canonicalize_path "${LIFEOS_PERFORMANCE_SUMMARY_PATH:-${REPOSITORY_ROOT}/build/reports/performance/k6-summary.json}")" || {
-    echo "LIFEOS_PERFORMANCE_SUMMARY_PATH must resolve to a valid path" >&2
+readonly SUMMARY_PATH_INPUT="${LIFEOS_PERFORMANCE_SUMMARY_PATH:-${REPOSITORY_ROOT}/build/reports/performance/k6-summary.json}"
+if ! SUMMARY_PATH="$(canonicalize_path "${SUMMARY_PATH_INPUT}")"; then
+    if (( ${#SUMMARY_PATH_INPUT} > PERFORMANCE_SUMMARY_PATH_MAX_LENGTH )); then
+        echo "LIFEOS_PERFORMANCE_SUMMARY_PATH must not exceed ${PERFORMANCE_SUMMARY_PATH_MAX_LENGTH} characters" >&2
+    else
+        echo "LIFEOS_PERFORMANCE_SUMMARY_PATH must resolve to a valid path" >&2
+    fi
     exit 64
-}
+fi
 readonly SUMMARY_PATH
 
 if [[ ! "${TARGET_URL}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]]; then

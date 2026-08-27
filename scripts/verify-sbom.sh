@@ -4,9 +4,15 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly SBOM_PATH="${1:-${REPOSITORY_ROOT}/build/reports/cyclonedx/bom.json}"
+readonly SCHEMA_VALIDATOR="${REPOSITORY_ROOT}/scripts/validate-cyclonedx-schema.js"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required to validate the CycloneDX SBOM" >&2
+    exit 69
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "node is required to validate the CycloneDX SBOM schema" >&2
     exit 69
 fi
 
@@ -289,5 +295,7 @@ jq --exit-status --slurp '
         .[0] | valid_sbom
     end
 ' -- "${SBOM_PATH}" >/dev/null
+
+node "${SCHEMA_VALIDATOR}" "${SBOM_PATH}"
 
 printf '%s\n' "Validated CycloneDX SBOM: ${SBOM_PATH}"

@@ -12,6 +12,12 @@ readonly SERVICE_HEALTH_URLS_JSON="${STAGING_SERVICE_HEALTH_URLS_JSON:-}"
 readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 readonly HEALTH_RESPONSE_MAX_BYTES=65536
+# Keep the path policy separate from the authority policy so endpoint-specific validation can
+# retain its existing path contract while rejecting invalid hosts and ports before curl runs.
+readonly HTTPS_URL_STRUCTURE_PATTERN='^https://([^/?#]*)(/[^?#]*)?$'
+readonly HTTPS_BRACKETED_AUTHORITY_PATTERN='^\[([^][]+)\](:([0-9]+))?$'
+readonly HTTPS_UNBRACKETED_AUTHORITY_PATTERN='^([^:]+)(:([0-9]+))?$'
+readonly HTTPS_DNS_HOST_PATTERN='^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$'
 SERVICES=()
 HEALTH_RESPONSE_FILE=""
 
@@ -87,6 +93,149 @@ health_check_delay_seconds() {
     printf '%s\n' "$((RANDOM % (backoff_seconds + 1)))"
 }
 
+is_valid_ipv4_literal() {
+    local value="$1"
+    local octet
+    local index
+
+    if [[ ! "${value}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        return 1
+    fi
+
+    for ((index = 1; index <= 4; index++)); do
+        octet="${BASH_REMATCH[${index}]}"
+        if (( ${#octet} > 3 )) \
+            || [[ "${octet}" != "0" && "${octet}" == 0* ]] \
+            || (( 10#${octet} > 255 )); then
+            return 1
+        fi
+    done
+}
+
+count_ipv6_section_hextets() {
+    local section="$1"
+    local group
+    local index
+    local -a groups
+
+    IPV6_SECTION_HEXTET_COUNT=0
+    if [[ -z "${section}" ]]; then
+        return 0
+    fi
+    if [[ "${section}" == :* || "${section}" == *: ]]; then
+        return 1
+    fi
+
+    local IFS=':'
+    read -r -a groups <<< "${section}"
+    for ((index = 0; index < ${#groups[@]}; index++)); do
+        group="${groups[${index}]}"
+        if [[ "${group}" == *.* ]]; then
+            if (( index != ${#groups[@]} - 1 )) || ! is_valid_ipv4_literal "${group}"; then
+                return 1
+            fi
+            IPV6_SECTION_HEXTET_COUNT=$((IPV6_SECTION_HEXTET_COUNT + 2))
+        elif [[ "${group}" =~ ^[0-9A-Fa-f]{1,4}$ ]]; then
+            IPV6_SECTION_HEXTET_COUNT=$((IPV6_SECTION_HEXTET_COUNT + 1))
+        else
+            return 1
+        fi
+    done
+}
+
+is_valid_ipv6_literal() {
+    local literal="$1"
+    local compressed_literal
+    local left_section right_section
+    local left_hextets right_hextets
+
+    if [[ ! "${literal}" =~ ^[0-9A-Fa-f:.]+$ ]]; then
+        return 1
+    fi
+
+    if [[ "${literal}" == *"::"* ]]; then
+        compressed_literal="${literal/::/@}"
+        if [[ "${compressed_literal}" == *"::"* ]]; then
+            return 1
+        fi
+        left_section="${compressed_literal%%@*}"
+        right_section="${compressed_literal#*@}"
+        if ! count_ipv6_section_hextets "${left_section}"; then
+            return 1
+        fi
+        left_hextets="${IPV6_SECTION_HEXTET_COUNT}"
+        if ! count_ipv6_section_hextets "${right_section}"; then
+            return 1
+        fi
+        right_hextets="${IPV6_SECTION_HEXTET_COUNT}"
+
+        # A double colon must replace at least one otherwise omitted hextet.
+        (( left_hextets + right_hextets < 8 ))
+        return
+    fi
+
+    if ! count_ipv6_section_hextets "${literal}"; then
+        return 1
+    fi
+    (( IPV6_SECTION_HEXTET_COUNT == 8 ))
+}
+
+is_valid_dns_or_ipv4_host() {
+    local host="$1"
+
+    # Deployment endpoints use canonical ASCII DNS names or IPv4 literals. This rejects
+    # whitespace, userinfo-like delimiters, empty labels, and non-canonical numeric literals
+    # before curl can treat a configuration error as a retryable transport failure.
+    if (( ${#host} > 253 )); then
+        return 1
+    fi
+    if [[ "${host}" == *.* && "${host}" =~ ^[0-9.]+$ ]]; then
+        is_valid_ipv4_literal "${host}"
+        return
+    fi
+    [[ "${host}" =~ ${HTTPS_DNS_HOST_PATTERN} ]]
+}
+
+has_valid_https_authority() {
+    local value="$1"
+    local authority host port
+
+    if [[ ! "${value}" =~ ${HTTPS_URL_STRUCTURE_PATTERN} ]]; then
+        return 1
+    fi
+    authority="${BASH_REMATCH[1]}"
+
+    if [[ "${authority}" == \[* ]]; then
+        if [[ ! "${authority}" =~ ${HTTPS_BRACKETED_AUTHORITY_PATTERN} ]]; then
+            return 1
+        fi
+        host="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[3]:-}"
+        if ! is_valid_ipv6_literal "${host}"; then
+            return 1
+        fi
+    else
+        if [[ ! "${authority}" =~ ${HTTPS_UNBRACKETED_AUTHORITY_PATTERN} ]]; then
+            return 1
+        fi
+        host="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[3]:-}"
+        if ! is_valid_dns_or_ipv4_host "${host}"; then
+            return 1
+        fi
+    fi
+
+    if [[ -z "${port}" ]]; then
+        return 0
+    fi
+    # A URL port is decimal TCP port 1 through 65535. Check its length before arithmetic so a
+    # malformed, arbitrarily long environment value cannot overflow Bash's integer conversion.
+    if (( ${#port} > 5 )); then
+        return 1
+    fi
+    (( 10#${port} >= 1 && 10#${port} <= 65535 ))
+}
+
 wait_for_health() {
     local service="$1"
     local health_url="$2"
@@ -155,7 +304,8 @@ for service in "${SERVICES[@]}"; do
         exit 64
     fi
 
-    if [[ ! "${health_url}" =~ ^https://[^/@?#]+(/[^?#]*)?/actuator/health(/(readiness|liveness))?$ ]]; then
+    if [[ ! "${health_url}" =~ ^https://[^/@?#]+(/[^?#]*)?/actuator/health(/(readiness|liveness))?$ ]] \
+        || ! has_valid_https_authority "${health_url}"; then
         echo "Staging health URL for ${service} must be a canonical HTTPS actuator health endpoint" >&2
         exit 64
     fi

@@ -1549,7 +1549,7 @@ test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
 
     assert_status 0 "source security scan"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro\t--workdir\t/repo' \
+        $'docker\trun\t--rm\t--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${TEST_ROOT}"$'",target=/repo,readonly\t--workdir\t/repo' \
         "source security scan mounts"
     assert_log_contains "${TEST_ROOT}" \
         $'\tfs\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--scanners\tvuln,secret,misconfig\t--severity\tHIGH,CRITICAL\t--skip-dirs\t.git\t--skip-dirs\t.gradle\t.' \
@@ -1558,6 +1558,55 @@ test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
         $'docker\tinfo' \
         $'docker\trun\t' \
         "source security scan daemon preflight ordering"
+}
+
+test_source_scan_uses_an_unambiguous_read_only_mount_for_colon_repository_paths() {
+    new_harness scan-source-colon-path scan-source-security.sh
+
+    local colon_repository_root="${TEST_ROOT}/repository:source"
+    local cache_dir="${colon_repository_root}/trivy-cache"
+    mkdir -p "${colon_repository_root}/scripts"
+    cp "${TEST_ROOT}/scripts/scan-source-security.sh" \
+        "${colon_repository_root}/scripts/scan-source-security.sh"
+
+    # Keep command doubles on a colon-free PATH entry while passing an executable path whose
+    # computed repository root contains a colon. Docker's long --mount form keeps this source as
+    # one explicit field rather than applying legacy --volume colon splitting.
+    run_target "${TEST_ROOT}" "../repository:source/scripts/scan-source-security.sh" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
+
+    assert_status 0 "source security scan from a colon-containing repository path"
+    assert_log_contains "${TEST_ROOT}" \
+        $'docker\trun\t--rm\t--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${colon_repository_root}"$'",target=/repo,readonly\t--workdir\t/repo' \
+        "source security scan colon-path repository mount"
+    assert_log_entry_excludes "${TEST_ROOT}" \
+        $'docker\trun\t' \
+        $'--volume\t' \
+        "source security scan must not use ambiguous volume syntax for a colon-containing repository path"
+}
+
+test_source_scan_uses_a_csv_quoted_mount_for_comma_repository_paths() {
+    new_harness scan-source-comma-path scan-source-security.sh
+
+    local comma_repository_root="${TEST_ROOT}/repository,source"
+    local cache_dir="${TEST_ROOT}/trivy-cache"
+    mkdir -p "${comma_repository_root}/scripts"
+    cp "${TEST_ROOT}/scripts/scan-source-security.sh" \
+        "${comma_repository_root}/scripts/scan-source-security.sh"
+
+    # Docker parses --mount parameters as CSV. Keep the cache path comma-free so this assertion
+    # proves the computed repository root is encoded as one source= field rather than an option.
+    run_target "${TEST_ROOT}" "../repository,source/scripts/scan-source-security.sh" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
+
+    assert_status 0 "source security scan from a comma-containing repository path"
+    assert_log_contains "${TEST_ROOT}" \
+        $'docker\trun\t--rm\t--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${comma_repository_root}"$'",target=/repo,readonly\t--workdir\t/repo' \
+        "source security scan comma-path repository mount"
+    assert_log_entry_excludes "${TEST_ROOT}" \
+        $'docker\trun\t' \
+        $'--volume\t' \
+        "source security scan must retain long mount syntax for a comma-containing repository path"
 }
 
 test_source_scan_requires_an_accessible_docker_daemon() {
@@ -1811,13 +1860,16 @@ test_security_scans_serialize_shared_trivy_cache_access() {
     assert_log_line_count "${TEST_ROOT}" $'docker\trun\t' 2 \
         "shared Trivy cache scans after lock release"
     assert_log_line_count "${TEST_ROOT}" \
-        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache' 2 \
-        "shared Trivy cache mount path"
+        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache' 1 \
+        "container scan shared Trivy cache mount path"
+    assert_log_line_count "${TEST_ROOT}" \
+        $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache' 1 \
+        "source scan shared Trivy cache mount path"
     assert_log_contains "${TEST_ROOT}" \
         $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
         "container scan shared Trivy cache mount"
     assert_log_contains "${TEST_ROOT}" \
-        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro' \
+        $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${TEST_ROOT}"$'",target=/repo,readonly' \
         "source scan shared Trivy cache mount"
 }
 
@@ -3054,6 +3106,167 @@ test_operational_urls_reject_userinfo_before_live_traffic() {
         "staging deployment preserves signed webhook queries"
 }
 
+test_operational_urls_reject_malformed_authorities_before_live_traffic() {
+    local invalid_health_url
+    local case_number=0
+
+    # Staging resolves each health URL from JSON, so exercise a missing host, an empty host before
+    # a port, and malformed/out-of-range ports before the first health curl can be reached.
+    for invalid_health_url in \
+        "https:///actuator/health/readiness" \
+        "https://:443/actuator/health/readiness" \
+        "https://staging.example.test:not-a-port/actuator/health/readiness" \
+        "https://staging.example.test:/actuator/health/readiness" \
+        "https://staging.example.test:0/actuator/health/readiness" \
+        "https://staging.example.test:65536/actuator/health/readiness" \
+        "https://exa mple/actuator/health/readiness" \
+        "https://[::::]/actuator/health/readiness"; do
+        ((case_number += 1))
+        new_harness "staging-malformed-authority-${case_number}" staging-smoke-test.sh
+        add_service_dockerfile "${TEST_ROOT}" example-service
+
+        run_target "${TEST_ROOT}" staging-smoke-test.sh \
+            "STAGING_SERVICE_HEALTH_URLS_JSON={\"example-service\":\"${invalid_health_url}\"}" \
+            "FAKE_JQ_SERVICE_URL=${invalid_health_url}"
+
+        assert_status 64 "staging smoke test with malformed authority ${case_number}"
+        assert_log_excludes "${TEST_ROOT}" $'curl\t' \
+            "staging smoke test with malformed authority ${case_number} must not probe services"
+    done
+
+    # Each end-to-end base URL passes through the same authority validation before readiness or
+    # registration traffic. Use a distinct malformed authority for every input boundary.
+    case_number=0
+    local invalid_setting
+    for invalid_setting in \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test:not-a-port" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test:" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://:443" \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://exa mple" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://[::::]"; do
+        ((case_number += 1))
+        new_harness "end-to-end-malformed-authority-${case_number}" end-to-end-smoke-test.sh
+
+        run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+            "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+            "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+            "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+            "${invalid_setting}"
+
+        assert_status 64 "end-to-end smoke test with malformed authority ${case_number}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "end-to-end smoke test with malformed authority ${case_number} must not invoke dependencies"
+    done
+
+    # Validate every chaos input before payload construction: the webhook, both readiness URLs,
+    # and the Task/Goal health URL must all fail closed rather than starting curl retries.
+    case_number=0
+    for invalid_setting in \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test:not-a-port/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test:/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://:443/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test:65536/actuator/health" \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://exa mple/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://[::::]/actuator/health/readiness"; do
+        ((case_number += 1))
+        new_harness "chaos-malformed-authority-${case_number}" run-chaos-experiment.sh
+
+        run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+            "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+            "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+            "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+            "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+            "GITHUB_RUN_ID=run-42" \
+            "${invalid_setting}"
+
+        assert_status 64 "chaos experiment with malformed authority ${case_number}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "chaos experiment with malformed authority ${case_number} must not invoke dependencies"
+    done
+}
+
+test_operational_urls_accept_explicit_valid_ports_and_paths() {
+    new_harness staging-explicit-port staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test:8443/private@management/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://staging.example.test:8443/private@management/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with an explicit valid port and management path"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://staging.example.test:8443/private@management/actuator/health/readiness" \
+        "staging smoke test preserves an explicit valid port and path"
+
+    new_harness end-to-end-explicit-port end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test:8443/public@edge" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test:8444/private@management" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test:8445/private@management" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
+
+    assert_status 0 "end-to-end smoke test with explicit valid ports and paths"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://gateway.example.test:8443/public@edge/api/v1/accounts" \
+        "end-to-end smoke test preserves an explicit gateway port and path"
+
+    new_harness chaos-explicit-port run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test:8443/experiments@v1" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test:8444/private@management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test:8445/private@management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test:8446/private@management/actuator/health" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 0 "chaos experiment with explicit valid ports and paths"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://chaos.example.test:8443/experiments@v1" \
+        "chaos experiment preserves an explicit webhook port and path"
+}
+
+test_operational_urls_accept_valid_bracketed_ipv6_authorities() {
+    new_harness staging-ipv6-authority staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://[2001:db8::1]:8443/private/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://[2001:db8::1]:8443/private/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with a valid bracketed IPv6 authority"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[2001:db8::1]:8443/private/actuator/health/readiness" \
+        "staging smoke test preserves a valid bracketed IPv6 authority"
+
+    new_harness end-to-end-ipv6-authority end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://[2001:db8::1]:8443/public" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://[2001:db8::2]:8444/management" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://[2001:db8::3]:8445/management" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
+
+    assert_status 0 "end-to-end smoke test with valid bracketed IPv6 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[2001:db8::1]:8443/public/api/v1/accounts" \
+        "end-to-end smoke test preserves a valid bracketed IPv6 gateway authority"
+
+    new_harness chaos-ipv6-authority run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://[2001:db8::1]:8443/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://[2001:db8::2]:8444/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://[2001:db8::3]:8445/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://[2001:db8::4]:8446/management/actuator/health" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 0 "chaos experiment with valid bracketed IPv6 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[2001:db8::1]:8443/experiments" \
+        "chaos experiment preserves a valid bracketed IPv6 webhook authority"
+}
+
 test_health_checks_retry_down_responses_and_fail_closed() {
     new_harness staging-health-recovery staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -3422,6 +3635,8 @@ test_container_scripts_enforce_docker_repository_name_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
+test_source_scan_uses_an_unambiguous_read_only_mount_for_colon_repository_paths
+test_source_scan_uses_a_csv_quoted_mount_for_comma_repository_paths
 test_source_scan_requires_an_accessible_docker_daemon
 test_security_scans_require_an_absolute_trivy_cache_directory
 test_security_scans_validate_and_bound_docker_operations
@@ -3459,6 +3674,9 @@ test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
 test_end_to_end_smoke_reports_header_buffer_allocation_failures
 test_operational_urls_reject_userinfo_before_live_traffic
+test_operational_urls_reject_malformed_authorities_before_live_traffic
+test_operational_urls_accept_explicit_valid_ports_and_paths
+test_operational_urls_accept_valid_bracketed_ipv6_authorities
 test_health_checks_retry_down_responses_and_fail_closed
 test_health_checks_reject_redirects
 test_health_response_files_are_cleaned_on_interruption

@@ -59,6 +59,15 @@ run_docker_operation() {
     "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
 }
 
+docker_mount_source() {
+    local source="$1"
+
+    # Docker parses --mount parameters as CSV. Quote the complete source= field so a repository
+    # directory containing a comma remains one field; CSV represents a literal quote as "".
+    source="${source//\"/\"\"}"
+    printf '"source=%s"' "${source}"
+}
+
 if run_docker_operation info >/dev/null 2>&1; then
     :
 else
@@ -128,8 +137,8 @@ fi
 trap release_trivy_cache_lock EXIT
 
 if run_docker_operation run --rm \
-    --mount "type=bind,source=${TRIVY_CACHE_DIR},target=/root/.cache" \
-    --volume "${REPOSITORY_ROOT}:/repo:ro" \
+    --mount "type=bind,$(docker_mount_source "${TRIVY_CACHE_DIR}"),target=/root/.cache" \
+    --mount "type=bind,$(docker_mount_source "${REPOSITORY_ROOT}"),target=/repo,readonly" \
     --workdir /repo \
     "${TRIVY_IMAGE}" \
     fs \

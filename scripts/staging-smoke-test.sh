@@ -13,6 +13,18 @@ readonly HEALTH_CHECK_MAX_ATTEMPTS=6
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
 readonly HEALTH_RESPONSE_MAX_BYTES=65536
 SERVICES=()
+HEALTH_RESPONSE_FILE=""
+
+cleanup_health_response_file() {
+    local exit_status=$?
+
+    trap - EXIT
+    if [[ -n "${HEALTH_RESPONSE_FILE}" ]]; then
+        rm -f -- "${HEALTH_RESPONSE_FILE}" || true
+    fi
+    exit "${exit_status}"
+}
+trap cleanup_health_response_file EXIT
 
 if ! command -v curl >/dev/null 2>&1 \
     || ! command -v head >/dev/null 2>&1 \
@@ -80,10 +92,11 @@ wait_for_health() {
     local health_url="$2"
     local attempt delay_seconds response_file response_size
 
-    if ! response_file="$(mktemp)"; then
+    if ! HEALTH_RESPONSE_FILE="$(mktemp)"; then
         printf 'Unable to allocate a bounded health-response buffer for %s\n' "${service}" >&2
         return 1
     fi
+    response_file="${HEALTH_RESPONSE_FILE}"
 
     # Capture one sentinel byte beyond the cap before jq parses the response. This fails closed
     # for unknown-length/chunked bodies while bounding temporary storage and jq input.
@@ -110,6 +123,7 @@ wait_for_health() {
                 printf 'Unable to remove the bounded health-response buffer for %s\n' "${service}" >&2
                 return 1
             fi
+            HEALTH_RESPONSE_FILE=""
             return 0
         fi
 
@@ -127,6 +141,7 @@ wait_for_health() {
         printf 'Unable to remove the bounded health-response buffer for %s\n' "${service}" >&2
         return 1
     fi
+    HEALTH_RESPONSE_FILE=""
 
     printf 'Staging health for %s did not report UP after %s attempts\n' \
         "${service}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2

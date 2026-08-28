@@ -138,6 +138,12 @@ assert_fails "a nested library component without a PURL is rejected" \
     "$FIXTURE_DIR/nested-missing-library-purl.json"
 assert_fails "a nested library component with a malformed PURL is rejected" \
     "$FIXTURE_DIR/nested-malformed-library-purl.json"
+assert_fails "a pedigree ancestor library component without a PURL is rejected" \
+    "$FIXTURE_DIR/pedigree-ancestor-missing-library-purl.json"
+assert_fails "a pedigree descendant library component with a malformed PURL is rejected" \
+    "$FIXTURE_DIR/pedigree-descendant-malformed-library-purl.json"
+assert_fails "a pedigree variant library component without a PURL is rejected" \
+    "$FIXTURE_DIR/pedigree-variant-missing-library-purl.json"
 assert_fails "duplicate root component objects are rejected" \
     "$FIXTURE_DIR/duplicate-root-component-objects.json"
 assert_fails "duplicate nested component objects are rejected" \
@@ -204,6 +210,8 @@ assert_fails "a library PURL with malformed percent encoding is rejected" \
     "$FIXTURE_DIR/malformed-percent-encoding-purl.json"
 assert_fails "a library PURL with percent escapes that decode to invalid UTF-8 is rejected" \
     "$FIXTURE_DIR/invalid-percent-encoded-utf8-purl.json"
+assert_fails "a library PURL qualifier with percent escapes that decode to invalid UTF-8 is rejected" \
+    "$FIXTURE_DIR/invalid-percent-encoded-utf8-qualifier-purl.json"
 assert_fails "a library PURL with raw square brackets is rejected" \
     "$FIXTURE_DIR/raw-square-brackets-purl.json"
 assert_fails "a library PURL with a raw backslash is rejected" \

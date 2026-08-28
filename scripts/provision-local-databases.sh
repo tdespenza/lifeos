@@ -9,7 +9,13 @@ readonly STARTUP_TIMEOUT_SECONDS="${LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS:-6
 readonly MINIMUM_COMPOSE_VERSION_MAJOR=2
 readonly MINIMUM_COMPOSE_VERSION_MINOR=17
 readonly MINIMUM_COMPOSE_VERSION_PATCH=0
-readonly SEMVER_PATTERN='^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+# Docker Desktop and distribution packages append non-SemVer suffixes to the upstream
+# Compose version. Keep the upstream numeric triple strict, then classify the suffix so a
+# Docker Desktop build is not mistaken for an upstream prerelease such as -rc.1.
+readonly COMPOSE_VERSION_PATTERN='^v?([0-9]+)\.([0-9]+)\.([0-9]+)(.*)$'
+readonly COMPOSE_VENDOR_BUILD_SUFFIX_PATTERN='^\+([0-9A-Za-z.~_-]+)$'
+readonly COMPOSE_DESKTOP_SUFFIX_PATTERN='^-desktop(\.[0-9A-Za-z-]+)*(\+([0-9A-Za-z.~_-]+))?$'
+readonly COMPOSE_PRERELEASE_SUFFIX_PATTERN='^-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)(\+([0-9A-Za-z.~_-]+))?$'
 
 is_valid_semver_numeric_identifier() {
     local identifier="$1"
@@ -107,14 +113,30 @@ fi
 
 # Compose added the bounded --wait-timeout startup flag in 2.17.0. Check the installed plugin
 # before issuing `up`, so an older CLI cannot silently ignore or reject the provisioning bound.
-if [[ ! "${compose_version}" =~ ${SEMVER_PATTERN} ]]; then
+if [[ ! "${compose_version}" =~ ${COMPOSE_VERSION_PATTERN} ]]; then
     echo "docker Compose must report a semantic version (for example 2.17.0) to use --wait-timeout" >&2
     exit 69
 fi
 compose_major="${BASH_REMATCH[1]}"
 compose_minor="${BASH_REMATCH[2]}"
 compose_patch="${BASH_REMATCH[3]}"
-compose_prerelease="${BASH_REMATCH[5]:-}"
+compose_suffix="${BASH_REMATCH[4]:-}"
+compose_prerelease=""
+
+# `+ds1-0ubuntu1~24.04.1` identifies a distro package and `-desktop.1` identifies a
+# Docker Desktop build. Neither changes the upstream release's feature set. Other `-...`
+# suffixes remain SemVer prereleases and retain their lower precedence at the minimum version.
+if [[ -n "${compose_suffix}" ]]; then
+    if [[ "${compose_suffix}" =~ ${COMPOSE_VENDOR_BUILD_SUFFIX_PATTERN} ]] \
+        || [[ "${compose_suffix}" =~ ${COMPOSE_DESKTOP_SUFFIX_PATTERN} ]]; then
+        :
+    elif [[ "${compose_suffix}" =~ ${COMPOSE_PRERELEASE_SUFFIX_PATTERN} ]]; then
+        compose_prerelease="${BASH_REMATCH[1]}"
+    else
+        echo "docker Compose must report a semantic version (for example 2.17.0) to use --wait-timeout" >&2
+        exit 69
+    fi
+fi
 
 if ! is_valid_semver_numeric_identifier "${compose_major}" \
     || ! is_valid_semver_numeric_identifier "${compose_minor}" \

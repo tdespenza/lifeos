@@ -290,6 +290,18 @@ fake_curl() {
         return "${FAKE_CURL_STATUS:-0}"
     fi
 
+    if [[ -n "${FAKE_CURL_HEALTH_BLOCK_STARTED_FILE:-}" && "${url}" == *'/actuator/health'* ]]; then
+        if [[ -z "${FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE:-}" ]]; then
+            printf '%s\n' 'FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE is required when blocking a fake health request' >&2
+            return 64
+        fi
+
+        : > "${FAKE_CURL_HEALTH_BLOCK_STARTED_FILE}"
+        while [[ ! -e "${FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE}" ]]; do
+            command -p sleep 0.05
+        done
+    fi
+
     if [[ -n "${FAKE_CURL_HEALTH_STATUS_SEQUENCE:-}" && "${url}" == *'/actuator/health'* ]]; then
         local health_status_index=0
         local health_request_count=0
@@ -734,6 +746,20 @@ assert_no_commands_logged() {
     fi
 }
 
+assert_directory_empty() {
+    local directory="$1"
+    local description="$2"
+    local entry
+
+    if [[ ! -d "${directory}" ]]; then
+        fail "${description}: required directory is missing: ${directory}"
+    fi
+    entry="$(command -p find "${directory}" -mindepth 1 -print -quit)"
+    if [[ -n "${entry}" ]]; then
+        fail "${description}: found unexpected temporary file: ${entry}"
+    fi
+}
+
 new_harness() {
     local name="$1"
     shift
@@ -877,6 +903,8 @@ execute_target() {
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR \
         FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
+        FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE \
+        FAKE_CURL_HEALTH_BLOCK_STARTED_FILE \
         FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES \
         FAKE_CURL_HEALTH_STATUS_SEQUENCE \
         FAKE_DIRNAME_OUTPUT \
@@ -902,7 +930,10 @@ execute_target() {
         # Each fallback test supplies only its explicit non-k6 prerequisites in this directory.
         export PATH="${root}/bin:${root}/prerequisite-bin"
     fi
-    bash "${root}/scripts/${script}" "$@"
+    # Both callers run this helper in a subshell. Replacing that subshell makes the background
+    # PID used by interruption regressions the actual script process, so termination exercises
+    # the production EXIT cleanup rather than only killing a harness wrapper.
+    exec bash "${root}/scripts/${script}" "$@"
 }
 
 run_target() {
@@ -1334,7 +1365,7 @@ test_container_scripts_reject_invalid_generated_image_references() {
     done
 }
 
-test_container_scripts_enforce_docker_repository_path_length() {
+test_container_scripts_enforce_docker_repository_name_length() {
     local overlength_component
     local overlength_image_prefix
     local expected_reference expected_output_reference
@@ -1374,35 +1405,41 @@ test_container_scripts_enforce_docker_repository_path_length() {
     assert_no_commands_logged "${TEST_ROOT}" \
         "container scan with an overlength repository path must not invoke Docker"
 
-    # A Docker registry is not part of the 255-character repository-path limit. Four 60-character
-    # labels make the complete reference longer than 255 while retaining a syntactically valid,
-    # DNS-compatible registry name and a short repository path.
+    # Four 60-character labels make the complete repository name exceed 255 characters while
+    # retaining a syntactically valid DNS-style registry and a short service name. The tag is
+    # deliberately excluded from the 255-character repository-name limit.
     printf -v registry_label '%*s' 60 ''
     registry_label="${registry_label// /r}"
     long_registry="${registry_label}.${registry_label}.${registry_label}.${registry_label}"
     image_prefix="${long_registry}/lifeos"
+    expected_reference="${image_prefix}/example-service:local"
+    printf -v expected_output_reference '%q' "${expected_reference}"
 
-    new_harness build-long-registry-short-repository build-container-images.sh
+    new_harness build-overlength-registry build-container-images.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
     add_service_jar "${TEST_ROOT}" example-service example-service.jar
 
     run_target "${TEST_ROOT}" build-container-images.sh \
         "LIFEOS_IMAGE_PREFIX=${image_prefix}"
 
-    assert_status 0 "container build with a long registry and short repository path"
-    assert_log_contains "${TEST_ROOT}" $'docker\tbuild\t' \
-        "container build with a long registry and short repository path"
+    assert_status 64 "container build with an overlength registry"
+    assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+        "container build overlength-registry validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container build with an overlength registry must not invoke Docker"
 
-    new_harness scan-long-registry-short-repository scan-container-images.sh
+    new_harness scan-overlength-registry scan-container-images.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
 
     run_target "${TEST_ROOT}" scan-container-images.sh \
         "LIFEOS_IMAGE_PREFIX=${image_prefix}" \
         "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache"
 
-    assert_status 0 "container scan with a long registry and short repository path"
-    assert_log_contains "${TEST_ROOT}" $'docker\tinfo' \
-        "container scan with a long registry and short repository path"
+    assert_status 64 "container scan with an overlength registry"
+    assert_file_contains "${RUN_OUTPUT}" "Invalid container image reference ${expected_output_reference}" \
+        "container scan overlength-registry validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "container scan with an overlength registry must not invoke Docker"
 }
 
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
@@ -1436,7 +1473,7 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
 
     assert_status 0 "container scan with an available image"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        $'docker\trun\t--rm\t--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
         "container scan mounts"
     assert_log_contains "${TEST_ROOT}" \
         $'\timage\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--severity\tHIGH,CRITICAL\tlifeos/example-service:scan-42' \
@@ -1470,7 +1507,7 @@ test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
 
     assert_status 0 "source security scan"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro\t--workdir\t/repo' \
+        $'docker\trun\t--rm\t--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro\t--workdir\t/repo' \
         "source security scan mounts"
     assert_log_contains "${TEST_ROOT}" \
         $'\tfs\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--scanners\tvuln,secret,misconfig\t--severity\tHIGH,CRITICAL\t--skip-dirs\t.git\t--skip-dirs\t.gradle\t.' \
@@ -1496,6 +1533,27 @@ test_source_scan_requires_an_accessible_docker_daemon() {
         "source security scan Docker daemon preflight command"
     assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
         "source security scan after an unavailable Docker daemon"
+}
+
+test_security_scans_require_an_absolute_trivy_cache_directory() {
+    local security_scan_script
+
+    for security_scan_script in scan-container-images.sh scan-source-security.sh; do
+        new_harness "${security_scan_script%.sh}-relative-trivy-cache" "${security_scan_script}"
+        if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
+            add_service_dockerfile "${TEST_ROOT}" example-service
+        fi
+
+        run_target "${TEST_ROOT}" "${security_scan_script}" \
+            "LIFEOS_TRIVY_CACHE_DIR=relative-trivy-cache"
+
+        assert_status 64 "${security_scan_script} with a relative Trivy cache directory"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "LIFEOS_TRIVY_CACHE_DIR must be an absolute path" \
+            "${security_scan_script} relative Trivy cache diagnostic"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "${security_scan_script} with a relative Trivy cache directory must not invoke Docker"
+    done
 }
 
 test_security_scans_validate_and_bound_docker_operations() {
@@ -1711,13 +1769,13 @@ test_security_scans_serialize_shared_trivy_cache_access() {
     assert_log_line_count "${TEST_ROOT}" $'docker\trun\t' 2 \
         "shared Trivy cache scans after lock release"
     assert_log_line_count "${TEST_ROOT}" \
-        $'--volume\t'"${cache_dir}"$':/root/.cache' 2 \
+        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache' 2 \
         "shared Trivy cache mount path"
     assert_log_contains "${TEST_ROOT}" \
-        $'--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
         "container scan shared Trivy cache mount"
     assert_log_contains "${TEST_ROOT}" \
-        $'--volume\t'"${cache_dir}"$':/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro' \
+        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t'"${TEST_ROOT}"$':/repo:ro' \
         "source scan shared Trivy cache mount"
 }
 
@@ -1952,6 +2010,26 @@ test_database_provisioning_requires_a_supported_compose_version() {
     assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
         "database provisioning supported Compose health wait"
 
+    new_harness provision-ubuntu-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=2.20.2+ds1-0ubuntu1~24.04.1"
+
+    assert_status 0 "database provisioning with a supported Ubuntu Compose package version"
+    assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
+        "database provisioning Ubuntu Compose package health wait"
+
+    new_harness provision-desktop-compose provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "FAKE_DOCKER_COMPOSE_VERSION_OUTPUT=2.17.0-desktop.1"
+
+    assert_status 0 "database provisioning with the minimum Docker Desktop Compose version"
+    assert_log_contains "${TEST_ROOT}" $'\tup\t--detach\t--wait\t--wait-timeout\t60\tpostgres' \
+        "database provisioning Docker Desktop Compose health wait"
+
     new_harness provision-newer-prerelease-compose provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
 
@@ -2070,6 +2148,27 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
         "concurrent database provisioning image override"
     assert_log_excludes "${TEST_ROOT}" "${pinned_image}" \
         "concurrent database provisioning image override"
+}
+
+test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly() {
+    new_harness provision-concurrency-invalid-advisory-lock test-provision-databases-concurrency.sh
+
+    printf '%s\n' \
+        'SELECT pg_advisory_xact_lock(1);' \
+        '\gexec' \
+        '\gexec' \
+        > "${TEST_ROOT}/infrastructure/docker-compose/provision-databases.sql"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh
+
+    assert_status 65 "concurrent database provisioning with a transaction-scoped advisory lock"
+    assert_file_contains "${RUN_OUTPUT}" \
+        'Invalid database provisioning advisory-lock structure: transaction-scoped advisory locks are not valid for separate \gexec transactions (line 1)' \
+        "concurrent database provisioning advisory-lock validation diagnostic"
+    assert_file_excludes "${RUN_OUTPUT}" '\n' \
+        "concurrent database provisioning advisory-lock validation uses real newlines"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "concurrent database provisioning advisory-lock validation must fail before Docker"
 }
 
 test_verifier_repository_root_resolution_fails_closed() {
@@ -2987,6 +3086,68 @@ test_health_checks_reject_redirects() {
         "chaos experiment must not report recovery after a redirect"
 }
 
+test_health_response_files_are_cleaned_on_interruption() {
+    local script temporary_directory started_file release_file
+    local case_name
+
+    for script in staging-smoke-test.sh end-to-end-smoke-test.sh run-chaos-experiment.sh; do
+        case_name="${script%.sh}-interrupted-health"
+        new_harness "${case_name}" "${script}"
+        temporary_directory="${TEST_ROOT}/health-response-tmp"
+        started_file="${TEST_ROOT}/health-request-started"
+        release_file="${TEST_ROOT}/health-request-release"
+        mkdir -p "${temporary_directory}"
+
+        case "${script}" in
+            staging-smoke-test.sh)
+                add_service_dockerfile "${TEST_ROOT}" example-service
+                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                    "TMPDIR=${temporary_directory}" \
+                    'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+                    "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
+                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
+                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                ;;
+            end-to-end-smoke-test.sh)
+                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                    "TMPDIR=${temporary_directory}" \
+                    "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+                    "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+                    "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
+                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                ;;
+            run-chaos-experiment.sh)
+                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                    "TMPDIR=${temporary_directory}" \
+                    "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+                    "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+                    "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+                    "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+                    "GITHUB_RUN_ID=run-42" \
+                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
+                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                ;;
+        esac
+
+        if ! wait_for_file "${started_file}"; then
+            fail "${script} must allocate and begin a health request before interruption"
+        fi
+        if [[ -z "$(command -p find "${temporary_directory}" -mindepth 1 -print -quit)" ]]; then
+            fail "${script} must allocate a bounded health-response file before interruption"
+        fi
+
+        kill -TERM "${BACKGROUND_TARGET_PID}"
+        : > "${release_file}"
+        if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+            fail "${script} must stop after a termination signal"
+        fi
+
+        assert_directory_empty "${temporary_directory}" \
+            "${script} interruption cleanup"
+    done
+}
+
 test_health_checks_bound_chunked_response_bodies() {
     # The first 64 KiB are valid JSON plus whitespace; the 65,537th byte is invalid trailing data.
     # The fake curl double emits no Content-Length metadata, so each case exercises the cap-plus-one
@@ -3155,11 +3316,12 @@ test_build_passes_jar_argument_and_honors_push_switch
 test_container_build_validates_and_bounds_docker_operations
 test_container_build_selects_portable_timeout_commands
 test_container_scripts_reject_invalid_generated_image_references
-test_container_scripts_enforce_docker_repository_path_length
+test_container_scripts_enforce_docker_repository_name_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_requires_an_accessible_docker_daemon
+test_security_scans_require_an_absolute_trivy_cache_directory
 test_security_scans_validate_and_bound_docker_operations
 test_security_scans_select_portable_timeout_commands
 test_security_scans_serialize_shared_trivy_cache_access
@@ -3173,6 +3335,7 @@ test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
+test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
@@ -3195,6 +3358,7 @@ test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
 test_operational_urls_reject_userinfo_before_live_traffic
 test_health_checks_retry_down_responses_and_fail_closed
 test_health_checks_reject_redirects
+test_health_response_files_are_cleaned_on_interruption
 test_health_checks_bound_chunked_response_bodies
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
 test_chaos_experiment_rejects_userinfo_before_payload_or_probes

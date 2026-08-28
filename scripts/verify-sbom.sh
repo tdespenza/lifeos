@@ -22,110 +22,6 @@ if [[ ! -s "${SBOM_PATH}" ]]; then
 fi
 
 jq --exit-status --slurp '
-    def purl_qualifier_keys:
-        ((split("?")[1] // "") | (split("#")[0] // ""))
-        | if . == "" then [] else split("&") | map(split("=")[0]) end;
-
-    def valid_percent_encoding:
-        gsub("%[0-9A-Fa-f]{2}"; "") | contains("%") | not;
-
-    def hex_digit_value:
-        . as $digit
-        | "0123456789abcdef"
-        | index($digit | ascii_downcase);
-
-    def percent_encoded_byte:
-        .[1:3] as $hex
-        | (($hex[0:1] | hex_digit_value) * 16) + ($hex[1:2] | hex_digit_value);
-
-    def decoded_purl_bytes:
-        [scan("%[0-9A-Fa-f]{2}|[^%]")
-         | if startswith("%") then percent_encoded_byte else explode[] end];
-
-    # Package URLs use percent-encoded UTF-8.  Validate the decoded byte stream
-    # without relying on jq replacement-character handling for invalid bytes.
-    def valid_utf8_bytes:
-        reduce .[] as $byte (
-            {valid: true, remaining: 0, minimum: 128, maximum: 191};
-            if (.valid | not) then .
-            elif .remaining > 0 then
-                if $byte >= .minimum and $byte <= .maximum then
-                    .remaining -= 1 | .minimum = 128 | .maximum = 191
-                else .valid = false end
-            elif $byte <= 127 then .
-            elif $byte >= 194 and $byte <= 223 then .remaining = 1
-            elif $byte == 224 then .remaining = 2 | .minimum = 160
-            elif ($byte >= 225 and $byte <= 236) or ($byte >= 238 and $byte <= 239) then .remaining = 2
-            elif $byte == 237 then .remaining = 2 | .maximum = 159
-            elif $byte == 240 then .remaining = 3 | .minimum = 144
-            elif $byte >= 241 and $byte <= 243 then .remaining = 3
-            elif $byte == 244 then .remaining = 3 | .maximum = 143
-            else .valid = false end
-        )
-        | .valid and .remaining == 0;
-
-    def valid_percent_decoded_utf8:
-        decoded_purl_bytes | valid_utf8_bytes;
-
-    def valid_purl_characters:
-        test("^[A-Za-z0-9._~%:/@?=&#-]+$")
-        and (contains("[") | not)
-        and (contains("]") | not);
-
-    # Only encoded separators and dot characters can change these structural checks.
-    def decode_purl_path_safety_characters:
-        gsub("%2[fF]"; "/")
-        | gsub("%2[eE]"; ".");
-
-    def purl_namespace_segments:
-        split("?")[0]
-        | split("#")[0]
-        | sub("^pkg:[^/]+/"; "")
-        | split("/")
-        | .[0:-1];
-
-    def purl_name_segment:
-        split("?")[0]
-        | split("#")[0]
-        | sub("^pkg:[^/]+/"; "")
-        | split("/")
-        | last
-        | split("@")[0];
-
-    def purl_subpath_segments:
-        split("#") as $parts
-        | if ($parts | length) == 2 then $parts[1] | split("/") else [] end;
-
-    def valid_namespace_segment:
-        decode_purl_path_safety_characters
-        | contains("/") | not;
-
-    def valid_name_segment:
-        decode_purl_path_safety_characters
-        | contains("/") | not;
-
-    def valid_subpath_segment:
-        decode_purl_path_safety_characters as $segment
-        | ($segment | contains("/") | not)
-        and $segment != "."
-        and $segment != "..";
-
-    def valid_purl:
-        if type != "string" then false
-        elif (valid_purl_characters | not) then false
-        # Raw @, =, and & are structural delimiters, not path or version data.
-        # The qualifier expression below continues to allow = and & as separators.
-        elif (test("^pkg:[a-z][a-z0-9.-]+/(?:[^/?#@=&[:space:]]+/)*[^/?#@=&[:space:]]+(?:@[^/?#@=&[:space:]]+)?(?:\\?[a-z][a-z0-9._-]*=[^?=&#[:space:]]+(?:&[a-z][a-z0-9._-]*=[^?=&#[:space:]]+)*)?(?:#(?:[^/?#[:space:]]+/)*[^/?#[:space:]]+)?$") | not) then false
-        elif (valid_percent_encoding | not) then false
-        elif (valid_percent_decoded_utf8 | not) then false
-        else
-            purl_qualifier_keys as $keys
-            | ($keys | length) == ($keys | unique | length)
-            and (purl_namespace_segments | all(.[]; valid_namespace_segment))
-            and (purl_name_segment | valid_name_segment)
-            and (purl_subpath_segments | all(.[]; valid_subpath_segment))
-        end;
-
     def supports_cryptographic_assets($spec_version):
         if ($spec_version | type) != "string" then false
         elif ($spec_version | test("^[0-9]+\\.[0-9]+$") | not) then false
@@ -212,11 +108,9 @@ jq --exit-status --slurp '
         elif (valid_component_version_fields($spec_version) | not) then false
         elif (.name | type) != "string" then false
         elif (.type | valid_component_type($spec_version) | not) then false
-        # A PURL is optional for non-library component types, but whenever a
-        # component declares one it must be structurally valid. Libraries
-        # remain required to declare a valid PURL for dependency traceability.
-        elif .type == "library" and ((.purl? | valid_purl) | not) then false
-        elif has("purl") and ((.purl | valid_purl) | not) then false
+        # PURLs are parsed by the direct packageurl-js dependency in the Node
+        # validator so package URL rules are not reimplemented in jq. That
+        # step also requires PURLs for library components.
         elif (has("components") | not) then true
         elif (.components | type) != "array" then false
         elif (.components | unique_component_objects | not) then false

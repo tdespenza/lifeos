@@ -8,6 +8,7 @@
     "@cyclonedx/cyclonedx-library": "10.2.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "ajv-formats-draft2019": "1.6.1"
+    "ajv-formats-draft2019": "1.6.1",
+    "packageurl-js": "2.0.1"
   }
 }

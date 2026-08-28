@@ -84,11 +84,11 @@ verify_session_lock_structure() {
         }
         END {
             if (transaction_lock_line > 0) {
-                printf "transaction-scoped advisory locks are not valid for separate \\gexec transactions (line %d)\\n", transaction_lock_line
+                printf "transaction-scoped advisory locks are not valid for separate \\gexec transactions (line %d)\n", transaction_lock_line
                 exit 1
             }
             if (gexec_count != 2) {
-                printf "expected exactly two \\gexec operations, found %d\\n", gexec_count
+                printf "expected exactly two \\gexec operations, found %d\n", gexec_count
                 exit 1
             }
             if (session_lock_line == 0) {
@@ -96,7 +96,7 @@ verify_session_lock_structure() {
                 exit 1
             }
             if (session_lock_line >= first_gexec_line) {
-                printf "pg_advisory_lock must precede the first \\gexec (lock line %d, first \\gexec line %d)\\n", session_lock_line, first_gexec_line
+                printf "pg_advisory_lock must precede the first \\gexec (lock line %d, first \\gexec line %d)\n", session_lock_line, first_gexec_line
                 exit 1
             }
             if (session_unlock_line == 0) {
@@ -104,7 +104,7 @@ verify_session_lock_structure() {
                 exit 1
             }
             if (session_unlock_line <= second_gexec_line) {
-                printf "pg_advisory_unlock must follow the second \\gexec (unlock line %d, second \\gexec line %d)\\n", session_unlock_line, second_gexec_line
+                printf "pg_advisory_unlock must follow the second \\gexec (unlock line %d, second \\gexec line %d)\n", session_unlock_line, second_gexec_line
                 exit 1
             }
         }

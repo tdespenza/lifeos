@@ -31,6 +31,13 @@ if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
     exit 64
 fi
 
+# A relative source can be interpreted as a Docker-managed named volume instead of the directory
+# protected by this process's cache lock. Keep the lock and the scanner on one explicit host path.
+if [[ "${TRIVY_CACHE_DIR}" != /* ]]; then
+    echo "LIFEOS_TRIVY_CACHE_DIR must be an absolute path" >&2
+    exit 64
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to run the Trivy source security scan" >&2
     exit 69
@@ -121,7 +128,7 @@ fi
 trap release_trivy_cache_lock EXIT
 
 if run_docker_operation run --rm \
-    --volume "${TRIVY_CACHE_DIR}:/root/.cache" \
+    --mount "type=bind,source=${TRIVY_CACHE_DIR},target=/root/.cache" \
     --volume "${REPOSITORY_ROOT}:/repo:ro" \
     --workdir /repo \
     "${TRIVY_IMAGE}" \

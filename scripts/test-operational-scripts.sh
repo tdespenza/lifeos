@@ -429,6 +429,35 @@ fake_mkdir() {
     command -p mkdir "$@"
 }
 
+fake_mktemp() {
+    fake_log_command mktemp "$@"
+
+    if [[ -n "${FAKE_MKTEMP_FAIL_ON_CALL:-}" ]]; then
+        if [[ -z "${FAKE_MKTEMP_CALL_COUNT_FILE:-}" ]]; then
+            printf '%s\n' 'FAKE_MKTEMP_CALL_COUNT_FILE is required when forcing a fake mktemp failure' >&2
+            return 64
+        fi
+
+        local call_count=0
+        if [[ -e "${FAKE_MKTEMP_CALL_COUNT_FILE}" ]]; then
+            if ! IFS= read -r call_count < "${FAKE_MKTEMP_CALL_COUNT_FILE}" \
+                || [[ ! "${call_count}" =~ ^[0-9]+$ ]]; then
+                printf '%s\n' 'FAKE_MKTEMP_CALL_COUNT_FILE must contain a non-negative integer' >&2
+                return 64
+            fi
+        fi
+
+        ((call_count += 1))
+        printf '%s\n' "${call_count}" > "${FAKE_MKTEMP_CALL_COUNT_FILE}"
+        if [[ "${call_count}" == "${FAKE_MKTEMP_FAIL_ON_CALL}" ]]; then
+            printf 'fake mktemp forced failure on call %s\n' "${call_count}" >&2
+            return "${FAKE_MKTEMP_FAILURE_STATUS:-1}"
+        fi
+    fi
+
+    command -p mktemp "$@"
+}
+
 fake_dirname() {
     fake_log_command dirname "$@"
     printf '%s\n' "${FAKE_DIRNAME_OUTPUT:-/definitely-missing-lifeos-script-directory}"
@@ -500,6 +529,10 @@ case "${0##*/}" in
         ;;
     mkdir)
         fake_mkdir "$@"
+        exit
+        ;;
+    mktemp)
+        fake_mktemp "$@"
         exit
         ;;
     dirname)
@@ -847,6 +880,12 @@ add_mkdir_double() {
     ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/mkdir"
 }
 
+add_mktemp_double() {
+    local root="$1"
+
+    ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/mktemp"
+}
+
 execute_target() {
     local root="$1"
     local script="$2"
@@ -915,6 +954,9 @@ execute_target() {
         FAKE_MKDIR_FAILURE_PATH \
         FAKE_MKDIR_FAILURE_ONCE_FILE \
         FAKE_MKDIR_FAILURE_STATUS \
+        FAKE_MKTEMP_CALL_COUNT_FILE \
+        FAKE_MKTEMP_FAIL_ON_CALL \
+        FAKE_MKTEMP_FAILURE_STATUS \
         FAKE_RG_STATUS \
         FAKE_SLEEP_REAL_DELAY \
         FAKE_SLEEP_STATUS \
@@ -2896,6 +2938,39 @@ test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace() 
         "end-to-end smoke with a mismatched correlation header"
 }
 
+test_end_to_end_smoke_reports_header_buffer_allocation_failures() {
+    new_harness end-to-end-header-buffer-allocation-failure end-to-end-smoke-test.sh
+    add_mktemp_double "${TEST_ROOT}"
+    local mktemp_call_count_file="${TEST_ROOT}/mktemp-call-count"
+    local temporary_file_directory="${TEST_ROOT}/temporary-files"
+    mkdir -p "${temporary_file_directory}"
+
+    # The first two allocations are the gateway and identity readiness buffers. Failing exactly
+    # the third allocation therefore exercises only the response-header buffer for registration.
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "TMPDIR=${temporary_file_directory}" \
+        "FAKE_MKTEMP_CALL_COUNT_FILE=${mktemp_call_count_file}" \
+        "FAKE_MKTEMP_FAIL_ON_CALL=3"
+
+    assert_status 1 "end-to-end smoke with an unallocatable response-header buffer"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Unable to allocate a temporary response-header buffer for the gateway-to-identity contract" \
+        "end-to-end response-header allocation diagnostic"
+    assert_file_contains "${mktemp_call_count_file}" "3" \
+        "end-to-end response-header allocation call count"
+    assert_log_line_count "${TEST_ROOT}" "mktemp" 3 \
+        "end-to-end response-header allocation count"
+    assert_health_probe_count "${TEST_ROOT}" 2 \
+        "end-to-end response-header allocation prerequisites"
+    assert_log_excludes "${TEST_ROOT}" "/api/v1/accounts" \
+        "end-to-end response-header allocation must not invoke registration curl"
+    assert_directory_empty "${temporary_file_directory}" \
+        "end-to-end response-header allocation must clean readiness buffers"
+}
+
 test_operational_urls_reject_userinfo_before_live_traffic() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     local invalid_setting
@@ -3382,6 +3457,7 @@ test_retry_utilities_are_preflighted_before_operational_paths
 test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
+test_end_to_end_smoke_reports_header_buffer_allocation_failures
 test_operational_urls_reject_userinfo_before_live_traffic
 test_health_checks_retry_down_responses_and_fail_closed
 test_health_checks_reject_redirects

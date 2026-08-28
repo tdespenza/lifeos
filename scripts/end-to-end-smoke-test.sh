@@ -137,7 +137,10 @@ assert_ready() {
 assert_ready gateway "${GATEWAY_MANAGEMENT_URL}"
 assert_ready identity "${IDENTITY_MANAGEMENT_URL}"
 
-headers_file="$(mktemp)"
+if ! headers_file="$(mktemp)"; then
+    printf '%s\n' 'Unable to allocate a temporary response-header buffer for the gateway-to-identity contract' >&2
+    exit 1
+fi
 
 # The invalid body is deliberate: it traverses Gateway -> Identity without creating a permanent
 # test account, while asserting the public failure and correlation contracts of the live topology.

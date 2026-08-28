@@ -16,6 +16,17 @@ required_variables=(
     LIFEOS_IMAGE_PREFIX
     LIFEOS_IMAGE_TAG
 )
+readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
+readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
+# Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
+# "[aaaa]". Until that parser is available, accept only DNS-style registry hosts rather than
+# allowing invalid image metadata to reach the staging deployment endpoint.
+readonly IMAGE_REGISTRY_HOST_PATTERN="${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN}(\.${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN})*"
+readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
+readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
+# The Distribution reference parser limits the complete repository name (including an optional
+# registry and port, but excluding the tag) to 255 characters.
+readonly IMAGE_REPOSITORY_NAME_MAX_LENGTH=255
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required to construct the staging deployment payload" >&2
@@ -71,6 +82,37 @@ if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     echo "No service Dockerfiles found in infrastructure/docker" >&2
     exit 66
 fi
+
+# Validate every image that the deployment endpoint will consume before assembling its payload.
+# This keeps malformed registry paths, tags, and Dockerfile-derived service names out of the
+# request boundary rather than delegating configuration errors to the staging deployment service.
+validate_image_reference() {
+    local image_reference="$1"
+    local repository_name
+
+    if [[ ! "${image_reference}" =~ ${IMAGE_REFERENCE_PATTERN} ]]; then
+        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
+            "${image_reference}" >&2
+        return 1
+    fi
+
+    # Tags always follow the final colon in a syntactically valid reference, so this preserves a
+    # registry port. Docker's reference parser limits this entire name, including any registry,
+    # rather than only its slash-separated path.
+    repository_name="${image_reference%:*}"
+
+    if (( ${#repository_name} > IMAGE_REPOSITORY_NAME_MAX_LENGTH )); then
+        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
+            "${image_reference}" >&2
+        return 1
+    fi
+}
+
+for service in "${SERVICES[@]}"; do
+    if ! validate_image_reference "${LIFEOS_IMAGE_PREFIX}/${service}:${LIFEOS_IMAGE_TAG}"; then
+        exit 64
+    fi
+done
 
 services_json="$(printf '%s\n' "${SERVICES[@]}" | jq --raw-input . | jq --slurp .)"
 

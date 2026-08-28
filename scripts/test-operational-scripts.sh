@@ -2327,6 +2327,13 @@ test_performance_smoke_rejects_invalid_vus_values() {
 }
 
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
+    local image_prefix image_tag expected_reference expected_output_reference
+    local -a invalid_image_cases=(
+        "team//api|build-42|team//api/example-service:build-42"
+        "registry.example/lifeos|invalid/tag|registry.example/lifeos/example-service:invalid/tag"
+    )
+    local invalid_image_case
+
     new_harness deploy-staging-missing-curl deploy-staging.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
     disable_fake_command "${TEST_ROOT}" curl
@@ -2374,6 +2381,26 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
         "staging deployment fragment validation"
     assert_log_excludes "${TEST_ROOT}" $'curl\t' \
         "staging deployment with a fragment must not invoke curl"
+
+    for invalid_image_case in "${invalid_image_cases[@]}"; do
+        IFS='|' read -r image_prefix image_tag expected_reference <<< "${invalid_image_case}"
+        printf -v expected_output_reference '%q' "${expected_reference}"
+
+        run_target "${TEST_ROOT}" deploy-staging.sh \
+            "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \
+            "GITHUB_SHA=${sha}" \
+            "GITHUB_REF_NAME=dev" \
+            "GITHUB_REPOSITORY=tdespenza/lifeos" \
+            "LIFEOS_IMAGE_PREFIX=${image_prefix}" \
+            "LIFEOS_IMAGE_TAG=${image_tag}"
+
+        assert_status 64 "staging deployment with invalid image reference ${expected_reference}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "Invalid container image reference ${expected_output_reference}" \
+            "staging deployment image-reference validation ${expected_reference}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "staging deployment with invalid image reference ${expected_reference} must not construct a payload or invoke curl"
+    done
 
     run_target "${TEST_ROOT}" deploy-staging.sh \
         "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/staging" \

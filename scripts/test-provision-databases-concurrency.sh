@@ -20,8 +20,14 @@ readonly CONTAINER_NAME
 readonly LOCK_NAME="lifeos.provision-databases"
 readonly LOCK_HOLDER_APPLICATION_NAME="lifeos-provision-lock-holder"
 readonly WORKER_APPLICATION_NAME="lifeos-provision-concurrency-worker"
-readonly MAXIMUM_POLL_ATTEMPTS=300
+# Keep the lock observation below the provisioning SQL's 45-second lock timeout, even when
+# individual Docker/psql probes are delayed by a loaded runner.
+readonly MAXIMUM_OBSERVATION_SECONDS=30
 readonly POLL_INTERVAL_SECONDS=0.1
+readonly OBSERVATION_TIMEOUT_EXIT_STATUS=124
+# Preserve bounded failure diagnostics and container cleanup without consuming the provisioning
+# SQL's remaining 15-second lock-timeout headroom after a 30-second observation window.
+readonly FAILURE_RECOVERY_TIMEOUT_SECONDS=3
 
 TEST_DIRECTORY=""
 container_started=false
@@ -40,7 +46,9 @@ cleanup() {
     done
 
     if [[ "${container_started}" == true ]]; then
-        docker rm --force "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        local cleanup_deadline_seconds=$(( SECONDS + FAILURE_RECOVERY_TIMEOUT_SECONDS ))
+        run_docker_with_deadline "${cleanup_deadline_seconds}" rm --force "${CONTAINER_NAME}" \
+            >/dev/null 2>&1 || true
     fi
 
     if [[ -n "${TEST_DIRECTORY}" ]]; then
@@ -130,6 +138,18 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 69
 fi
 
+if command -v timeout >/dev/null 2>&1; then
+    OBSERVATION_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    # macOS ships no timeout utility; Homebrew's coreutils exposes the GNU-compatible command
+    # as gtimeout. Prefer timeout on CI/Linux while retaining a clear local development path.
+    OBSERVATION_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound PostgreSQL readiness observations" >&2
+    exit 69
+fi
+readonly OBSERVATION_TIMEOUT_COMMAND
+
 if ! docker info >/dev/null 2>&1; then
     echo "a running Docker daemon is required to run the concurrent database provisioning regression test" >&2
     exit 69
@@ -145,6 +165,43 @@ postgres_query() {
     docker exec "${CONTAINER_NAME}" \
         psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_STOP=1 \
         --tuples-only --no-align --quiet --command "$1"
+}
+
+remaining_observation_timeout_seconds() {
+    local deadline_seconds="$1"
+    local remaining_seconds=$(( deadline_seconds - SECONDS ))
+
+    # SECONDS has whole-second granularity. Reserve a full second before each external probe so
+    # timeout's duration, command-start overhead, and a hard kill cannot cross the overall
+    # observation deadline.
+    if (( remaining_seconds <= 1 )); then
+        return 1
+    fi
+
+    printf '%s\n' "$(( remaining_seconds - 1 ))"
+}
+
+run_docker_with_deadline() {
+    local deadline_seconds="$1"
+    local timeout_seconds
+
+    shift
+    if ! timeout_seconds="$(remaining_observation_timeout_seconds "${deadline_seconds}")"; then
+        return "${OBSERVATION_TIMEOUT_EXIT_STATUS}"
+    fi
+
+    # KILL avoids a grace-period overrun after a probe consumes its remaining budget. The
+    # disposable container is removed by cleanup, so a killed Docker client cannot leak it.
+    "${OBSERVATION_TIMEOUT_COMMAND}" --signal=KILL "${timeout_seconds}s" docker "$@"
+}
+
+postgres_query_before_deadline() {
+    local deadline_seconds="$1"
+    local query="$2"
+
+    run_docker_with_deadline "${deadline_seconds}" exec "${CONTAINER_NAME}" \
+        psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_STOP=1 \
+        --tuples-only --no-align --quiet --command "${query}"
 }
 
 record_command_status() {
@@ -206,28 +263,36 @@ print_background_log() {
 }
 
 print_container_diagnostics() {
+    local diagnostic_deadline_seconds=$(( SECONDS + FAILURE_RECOVERY_TIMEOUT_SECONDS ))
+
     if [[ "${container_started}" != true ]]; then
         return 0
     fi
 
     echo "PostgreSQL container state:" >&2
-    docker inspect --format 'status={{.State.Status}} exit-code={{.State.ExitCode}}' \
-        "${CONTAINER_NAME}" >&2 || true
+    if ! run_docker_with_deadline "${diagnostic_deadline_seconds}" inspect \
+        --format 'status={{.State.Status}} exit-code={{.State.ExitCode}}' "${CONTAINER_NAME}" >&2; then
+        echo "(container state unavailable within bounded diagnostic budget)" >&2
+    fi
     echo "PostgreSQL container logs:" >&2
-    docker logs --tail 160 "${CONTAINER_NAME}" >&2 || true
+    if ! run_docker_with_deadline "${diagnostic_deadline_seconds}" logs --tail 160 "${CONTAINER_NAME}" >&2; then
+        echo "(container logs unavailable within bounded diagnostic budget)" >&2
+    fi
 }
 
 final_postgres_is_ready() {
+    local deadline_seconds="$1"
     local result
 
     # The official image briefly runs a bootstrap postmaster while initdb completes, then replaces
     # it with the long-lived PID 1 server. A successful query alone can hit that transient server.
-    if ! docker exec "${CONTAINER_NAME}" sh -ec \
+    # shellcheck disable=SC2016 # The container shell, not this script, expands process_name.
+    if ! run_docker_with_deadline "${deadline_seconds}" exec "${CONTAINER_NAME}" sh -ec \
         'read -r process_name < /proc/1/comm; test "${process_name}" = postgres' >/dev/null 2>&1; then
         return 1
     fi
 
-    if result="$(postgres_query "SELECT 1;" 2>/dev/null)" \
+    if result="$(postgres_query_before_deadline "${deadline_seconds}" "SELECT 1;" 2>/dev/null)" \
         && [[ "${result//[[:space:]]/}" == "1" ]]; then
         return 0
     fi
@@ -236,10 +301,10 @@ final_postgres_is_ready() {
 }
 
 wait_for_final_postgres() {
-    local attempt
+    local deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
 
-    for ((attempt = 1; attempt <= MAXIMUM_POLL_ATTEMPTS; attempt++)); do
-        if final_postgres_is_ready; then
+    while (( SECONDS < deadline_seconds )); do
+        if final_postgres_is_ready "${deadline_seconds}"; then
             return 0
         fi
         sleep "${POLL_INTERVAL_SECONDS}"
@@ -281,14 +346,15 @@ wait_for_background_query_result() {
     local query="$2"
     local expected_result="$3"
     local result
-    local attempt
+    local deadline_seconds
 
     shift 3
     if (( $# == 0 || $# % 4 != 0 )); then
         fail "background query wait for ${description} requires process, status, log, and description details"
     fi
 
-    for ((attempt = 1; attempt <= MAXIMUM_POLL_ATTEMPTS; attempt++)); do
+    deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
+    while (( SECONDS < deadline_seconds )); do
         local details=("$@")
         local index
         for ((index = 0; index < ${#details[@]}; index += 4)); do
@@ -296,7 +362,7 @@ wait_for_background_query_result() {
                 "${details[index]}" "${details[index + 1]}" "${details[index + 2]}" "${details[index + 3]}"
         done
 
-        if result="$(postgres_query "${query}" 2>/dev/null)" \
+        if result="$(postgres_query_before_deadline "${deadline_seconds}" "${query}" 2>/dev/null)" \
             && [[ "${result//[[:space:]]/}" == "${expected_result}" ]]; then
             return 0
         fi

@@ -290,6 +290,18 @@ fake_curl() {
         return "${FAKE_CURL_STATUS:-0}"
     fi
 
+    if [[ -n "${FAKE_CURL_ACCOUNT_BLOCK_STARTED_FILE:-}" && "${url}" == */api/v1/accounts ]]; then
+        if [[ -z "${FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE:-}" ]]; then
+            printf '%s\n' 'FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE is required when blocking a fake account request' >&2
+            return 64
+        fi
+
+        : > "${FAKE_CURL_ACCOUNT_BLOCK_STARTED_FILE}"
+        while [[ ! -e "${FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE}" ]]; do
+            command -p sleep 0.05
+        done
+    fi
+
     if [[ -n "${FAKE_CURL_HEALTH_BLOCK_STARTED_FILE:-}" && "${url}" == *'/actuator/health'* ]]; then
         if [[ -z "${FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE:-}" ]]; then
             printf '%s\n' 'FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE is required when blocking a fake health request' >&2
@@ -805,8 +817,10 @@ new_harness() {
         "${TEST_ROOT}/infrastructure/docker" \
         "${TEST_ROOT}/infrastructure/docker-compose" \
         "${TEST_ROOT}/scripts"
+    cp "${REPOSITORY_ROOT}/scripts/https-authority-validation.sh" \
+        "${TEST_ROOT}/scripts/https-authority-validation.sh"
 
-    local script
+    local script signal_reset_runner
     for script in "$@"; do
         mkdir -p "${TEST_ROOT}/scripts/$(dirname "${script}")"
         cp "${REPOSITORY_ROOT}/scripts/${script}" "${TEST_ROOT}/scripts/${script}"
@@ -942,6 +956,8 @@ execute_target() {
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR \
         FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
+        FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE \
+        FAKE_CURL_ACCOUNT_BLOCK_STARTED_FILE \
         FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE \
         FAKE_CURL_HEALTH_BLOCK_STARTED_FILE \
         FAKE_CURL_CHUNKED_HEALTH_VALID_PREFIX_RESPONSE_BYTES \
@@ -958,8 +974,10 @@ execute_target() {
         FAKE_MKTEMP_FAIL_ON_CALL \
         FAKE_MKTEMP_FAILURE_STATUS \
         FAKE_RG_STATUS \
+        FAKE_RESET_SIGNAL_DISPOSITIONS \
         FAKE_SLEEP_REAL_DELAY \
         FAKE_SLEEP_STATUS \
+        FAKE_BASH_RANDOM_SEED \
         RUNNER_TEMP \
         STAGING_SERVICE_HEALTH_URLS_JSON \
         STAGING_DEPLOY_WEBHOOK_URL
@@ -975,6 +993,22 @@ execute_target() {
     # Both callers run this helper in a subshell. Replacing that subshell makes the background
     # PID used by interruption regressions the actual script process, so termination exercises
     # the production EXIT cleanup rather than only killing a harness wrapper.
+    if [[ "${FAKE_RESET_SIGNAL_DISPOSITIONS:-false}" == "true" ]]; then
+        if ! signal_reset_runner="$(command -p -v perl)"; then
+            printf '%s\n' 'Perl is required to run signal-handling regressions' >&2
+            exit 69
+        fi
+        # Background Bash jobs inherit ignored INT/HUP dispositions. Reset the three signals in
+        # this test-only exec trampoline so the target script's own traps receive each signal.
+        # shellcheck disable=SC2016 # Perl must receive its signal and argument variables literally.
+        exec "${signal_reset_runner}" -e \
+            '$SIG{HUP} = "DEFAULT"; $SIG{INT} = "DEFAULT"; $SIG{TERM} = "DEFAULT"; exec @ARGV or die "exec failed: $!\\n";' \
+            bash "${root}/scripts/${script}" "$@"
+    fi
+    if [[ -n "${FAKE_BASH_RANDOM_SEED:-}" ]]; then
+        exec bash -c 'RANDOM="$1"; source "$2"' bash \
+            "${FAKE_BASH_RANDOM_SEED}" "${root}/scripts/${script}"
+    fi
     exec bash "${root}/scripts/${script}" "$@"
 }
 
@@ -1515,11 +1549,25 @@ test_container_scan_rejects_missing_images_and_passes_trivy_arguments() {
 
     assert_status 0 "container scan with an available image"
     assert_log_contains "${TEST_ROOT}" \
-        $'docker\trun\t--rm\t--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        $'docker\trun\t--rm\t--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
         "container scan mounts"
     assert_log_contains "${TEST_ROOT}" \
         $'\timage\t--no-progress\t--exit-code\t1\t--ignore-unfixed\t--severity\tHIGH,CRITICAL\tlifeos/example-service:scan-42' \
         "container scan Trivy image arguments"
+}
+
+test_container_scan_uses_a_csv_quoted_mount_for_comma_cache_paths() {
+    new_harness scan-container-comma-cache scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    local cache_dir="${TEST_ROOT}/trivy,cache"
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
+
+    assert_status 0 "container scan with a comma-containing Trivy cache path"
+    assert_log_contains "${TEST_ROOT}" \
+        $'docker\trun\t--rm\t--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        "container scan comma-path cache mount"
 }
 
 test_container_scan_requires_an_accessible_docker_daemon() {
@@ -1860,13 +1908,10 @@ test_security_scans_serialize_shared_trivy_cache_access() {
     assert_log_line_count "${TEST_ROOT}" $'docker\trun\t' 2 \
         "shared Trivy cache scans after lock release"
     assert_log_line_count "${TEST_ROOT}" \
-        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache' 1 \
-        "container scan shared Trivy cache mount path"
-    assert_log_line_count "${TEST_ROOT}" \
-        $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache' 1 \
-        "source scan shared Trivy cache mount path"
+        $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache' 2 \
+        "shared Trivy cache mount paths"
     assert_log_contains "${TEST_ROOT}" \
-        $'--mount\ttype=bind,source='"${cache_dir}"$',target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
+        $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--volume\t/var/run/docker.sock:/var/run/docker.sock' \
         "container scan shared Trivy cache mount"
     assert_log_contains "${TEST_ROOT}" \
         $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${TEST_ROOT}"$'",target=/repo,readonly' \
@@ -2217,6 +2262,7 @@ test_database_provisioning_sql_keeps_create_queries_open_for_gexec() {
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override() {
     local pinned_image="postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
     local override_image="registry.example.test/lifeos-postgres:integration-test"
+    local concurrency_script="${REPOSITORY_ROOT}/scripts/test-provision-databases-concurrency.sh"
 
     new_harness provision-concurrency-default-image test-provision-databases-concurrency.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -2242,6 +2288,47 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
         "concurrent database provisioning image override"
     assert_log_excludes "${TEST_ROOT}" "${pinned_image}" \
         "concurrent database provisioning image override"
+
+    assert_file_contains "${concurrency_script}" \
+        'readonly MAXIMUM_OBSERVATION_SECONDS=30' \
+        "concurrent database provisioning wall-clock observation bound"
+    assert_file_contains "${concurrency_script}" \
+        'while (( SECONDS < deadline_seconds )); do' \
+        "concurrent database provisioning deadline polling"
+    # shellcheck disable=SC2016 # Assert the exact literal wrapper invocation in the target.
+    assert_file_contains "${concurrency_script}" \
+        '"${OBSERVATION_TIMEOUT_COMMAND}" --signal=KILL "${timeout_seconds}s" docker "$@"' \
+        "concurrent database provisioning bounded Docker observation"
+    assert_file_contains "${concurrency_script}" \
+        "run_docker_with_deadline \"\${diagnostic_deadline_seconds}\" inspect" \
+        "concurrent database provisioning bounded failure diagnostics"
+    assert_file_contains "${concurrency_script}" \
+        "run_docker_with_deadline \"\${cleanup_deadline_seconds}\" rm --force" \
+        "concurrent database provisioning bounded container cleanup"
+    assert_file_excludes "${concurrency_script}" "MAXIMUM_POLL_ATTEMPTS" \
+        "concurrent database provisioning legacy attempt bound"
+}
+
+test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
+    new_harness provision-concurrency-missing-timeout test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+    disable_fake_command "${TEST_ROOT}" timeout
+    disable_fake_command "${TEST_ROOT}" gtimeout
+
+    local prerequisite
+    for prerequisite in bash dirname date od tr awk; do
+        add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+    done
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "concurrent database provisioning without a bounded observation timeout"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "timeout (or gtimeout on macOS) is required to bound PostgreSQL readiness observations" \
+        "concurrent database provisioning timeout prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "concurrent database provisioning without a timeout must fail before Docker"
 }
 
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly() {
@@ -3023,6 +3110,40 @@ test_end_to_end_smoke_reports_header_buffer_allocation_failures() {
         "end-to-end response-header allocation must clean readiness buffers"
 }
 
+test_operational_scripts_share_https_authority_and_health_helpers() {
+    local shared_validation_script="${REPOSITORY_ROOT}/scripts/https-authority-validation.sh"
+    local shared_source_invocation="source \"\${HTTPS_AUTHORITY_VALIDATION_SCRIPT}\""
+    local script
+
+    assert_readable_file "${shared_validation_script}" "shared HTTPS authority validation library"
+    assert_file_contains "${shared_validation_script}" "has_valid_https_authority()" \
+        "shared HTTPS authority validation library authority function"
+    assert_file_contains "${shared_validation_script}" "is_legacy_ipv4_component_sequence()" \
+        "shared HTTPS authority validation library legacy IPv4 function"
+    assert_file_contains "${shared_validation_script}" "health_check_delay_seconds()" \
+        "shared health-check retry helper"
+    assert_file_contains "${shared_validation_script}" "readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16" \
+        "shared health-check retry backoff cap"
+
+    for script in staging-smoke-test.sh end-to-end-smoke-test.sh run-chaos-experiment.sh; do
+        assert_file_contains "${REPOSITORY_ROOT}/scripts/${script}" \
+            "${shared_source_invocation}" \
+            "${script} shared HTTPS authority validation source"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "is_valid_ipv4_literal()" \
+            "${script} must not duplicate the shared IPv4 validator"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "has_valid_https_authority()" \
+            "${script} must not duplicate the shared HTTPS authority validator"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "health_check_delay_seconds()" \
+            "${script} must not duplicate the shared health-check retry helper"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "HEALTH_CHECK_MAX_BACKOFF_SECONDS" \
+            "${script} must not duplicate the shared health-check retry backoff cap"
+    done
+
+    new_harness shared-https-authority-validation end-to-end-smoke-test.sh
+    assert_readable_file "${TEST_ROOT}/scripts/https-authority-validation.sh" \
+        "operational harness shared HTTPS authority validation library"
+}
+
 test_operational_urls_reject_userinfo_before_live_traffic() {
     local sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     local invalid_setting
@@ -3120,7 +3241,15 @@ test_operational_urls_reject_malformed_authorities_before_live_traffic() {
         "https://staging.example.test:0/actuator/health/readiness" \
         "https://staging.example.test:65536/actuator/health/readiness" \
         "https://exa mple/actuator/health/readiness" \
-        "https://[::::]/actuator/health/readiness"; do
+        "https://[::::]/actuator/health/readiness" \
+        "https://2130706433/actuator/health/readiness" \
+        "https://0x7f000001/actuator/health/readiness" \
+        "https://0x7f.0.0.1/actuator/health/readiness" \
+        "https://4294967296/actuator/health/readiness" \
+        "https://9999999999/actuator/health/readiness" \
+        "https://0x100000000/actuator/health/readiness" \
+        "https://040000000001/actuator/health/readiness" \
+        "https://[192.0.2.1::1]/actuator/health/readiness"; do
         ((case_number += 1))
         new_harness "staging-malformed-authority-${case_number}" staging-smoke-test.sh
         add_service_dockerfile "${TEST_ROOT}" example-service
@@ -3143,7 +3272,15 @@ test_operational_urls_reject_malformed_authorities_before_live_traffic() {
         "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test:" \
         "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://:443" \
         "LIFEOS_E2E_GATEWAY_BASE_URL=https://exa mple" \
-        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://[::::]"; do
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://[::::]" \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://2130706433" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://0x7f000001" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://0x7f.0.0.1" \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://4294967296" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://9999999999" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://0x100000000" \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://040000000001" \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://[192.0.2.1::1]"; do
         ((case_number += 1))
         new_harness "end-to-end-malformed-authority-${case_number}" end-to-end-smoke-test.sh
 
@@ -3167,7 +3304,15 @@ test_operational_urls_reject_malformed_authorities_before_live_traffic() {
         "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://:443/actuator/health/readiness" \
         "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test:65536/actuator/health" \
         "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://exa mple/experiments" \
-        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://[::::]/actuator/health/readiness"; do
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://[::::]/actuator/health/readiness" \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://2130706433/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://0x7f000001/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://0x7f.0.0.1/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://4294967296/actuator/health" \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://9999999999/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://0x100000000/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://040000000001/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://[192.0.2.1::1]/actuator/health"; do
         ((case_number += 1))
         new_harness "chaos-malformed-authority-${case_number}" run-chaos-experiment.sh
 
@@ -3265,6 +3410,129 @@ test_operational_urls_accept_valid_bracketed_ipv6_authorities() {
     assert_log_contains "${TEST_ROOT}" \
         "https://[2001:db8::1]:8443/experiments" \
         "chaos experiment preserves a valid bracketed IPv6 webhook authority"
+}
+
+test_operational_urls_accept_canonical_dotted_ipv4_authorities() {
+    new_harness staging-ipv4-authority staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://192.0.2.1:8443/private/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://192.0.2.1:8443/private/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with a canonical dotted IPv4 authority"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://192.0.2.1:8443/private/actuator/health/readiness" \
+        "staging smoke test preserves a canonical dotted IPv4 authority"
+
+    new_harness end-to-end-ipv4-authority end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://198.51.100.1:8443/public" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://198.51.100.2:8444/management" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://198.51.100.3:8445/management" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
+
+    assert_status 0 "end-to-end smoke test with canonical dotted IPv4 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://198.51.100.1:8443/public/api/v1/accounts" \
+        "end-to-end smoke test preserves a canonical dotted IPv4 gateway authority"
+
+    new_harness chaos-ipv4-authority run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://203.0.113.1:8443/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://203.0.113.2:8444/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://203.0.113.3:8445/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://203.0.113.4:8446/management/actuator/health" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 0 "chaos experiment with canonical dotted IPv4 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://203.0.113.1:8443/experiments" \
+        "chaos experiment preserves a canonical dotted IPv4 webhook authority"
+}
+
+test_operational_urls_accept_dns_authorities_with_numeric_labels() {
+    new_harness staging-dns-numeric-label staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://4294967296.example.test:8443/private/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://4294967296.example.test:8443/private/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with a DNS authority containing a numeric label"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://4294967296.example.test:8443/private/actuator/health/readiness" \
+        "staging smoke test preserves a DNS authority containing a numeric label"
+
+    new_harness end-to-end-dns-numeric-label end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://0x100000000.example.test:8443/public" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test:8444/management" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test:8445/management" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
+
+    assert_status 0 "end-to-end smoke test with a DNS authority containing a numeric label"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://0x100000000.example.test:8443/public/api/v1/accounts" \
+        "end-to-end smoke test preserves a DNS authority containing a numeric label"
+
+    new_harness chaos-dns-numeric-label run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://040000000001.example.test:8443/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test:8444/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test:8445/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test:8446/management/actuator/health" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 0 "chaos experiment with a DNS authority containing a numeric label"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://040000000001.example.test:8443/experiments" \
+        "chaos experiment preserves a DNS authority containing a numeric label"
+}
+
+test_operational_urls_accept_valid_ipv4_embedded_ipv6_authorities() {
+    new_harness staging-ipv4-embedded-ipv6-authority staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://[::ffff:192.0.2.1]:8443/private/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://[::ffff:192.0.2.1]:8443/private/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with a valid IPv4-embedded IPv6 authority"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[::ffff:192.0.2.1]:8443/private/actuator/health/readiness" \
+        "staging smoke test preserves a valid IPv4-embedded IPv6 authority"
+
+    new_harness end-to-end-ipv4-embedded-ipv6-authority end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://[::ffff:192.0.2.1]:8443/public" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://[::ffff:192.0.2.2]:8444/management" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://[::ffff:192.0.2.3]:8445/management" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
+
+    assert_status 0 "end-to-end smoke test with valid IPv4-embedded IPv6 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[::ffff:192.0.2.1]:8443/public/api/v1/accounts" \
+        "end-to-end smoke test preserves an IPv4-embedded IPv6 gateway authority"
+
+    new_harness chaos-ipv4-embedded-ipv6-authority run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://[::ffff:192.0.2.1]:8443/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://[::ffff:192.0.2.2]:8444/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://[::ffff:192.0.2.3]:8445/management/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://[::ffff:192.0.2.4]:8446/management/actuator/health" \
+        "GITHUB_RUN_ID=run-42"
+
+    assert_status 0 "chaos experiment with valid IPv4-embedded IPv6 authorities"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[::ffff:192.0.2.1]:8443/experiments" \
+        "chaos experiment preserves an IPv4-embedded IPv6 webhook authority"
 }
 
 test_health_checks_retry_down_responses_and_fail_closed() {
@@ -3401,66 +3669,182 @@ test_health_checks_reject_redirects() {
         "chaos experiment must not report recovery after a redirect"
 }
 
-test_health_response_files_are_cleaned_on_interruption() {
+test_temporary_files_are_cleaned_on_normal_exit_and_signals() {
     local script temporary_directory started_file release_file
-    local case_name
+    local signal_name signal_slug expected_status case_name
 
+    if ! command -p -v perl >/dev/null 2>&1; then
+        fail "Perl is required to reset inherited signal dispositions in interruption regressions"
+    fi
+
+    # A normal successful exit proves the EXIT trap removes end-to-end's response-header buffer,
+    # which is intentionally kept until the contract assertion completes.
     for script in staging-smoke-test.sh end-to-end-smoke-test.sh run-chaos-experiment.sh; do
-        case_name="${script%.sh}-interrupted-health"
+        case_name="${script%.sh}-normal-temporary-file-cleanup"
         new_harness "${case_name}" "${script}"
-        temporary_directory="${TEST_ROOT}/health-response-tmp"
-        started_file="${TEST_ROOT}/health-request-started"
-        release_file="${TEST_ROOT}/health-request-release"
+        temporary_directory="${TEST_ROOT}/temporary-files"
         mkdir -p "${temporary_directory}"
 
         case "${script}" in
             staging-smoke-test.sh)
                 add_service_dockerfile "${TEST_ROOT}" example-service
-                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                run_target "${TEST_ROOT}" "${script}" \
                     "TMPDIR=${temporary_directory}" \
                     'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
-                    "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
-                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
-                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                    "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness"
                 ;;
             end-to-end-smoke-test.sh)
-                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                run_target "${TEST_ROOT}" "${script}" \
                     "TMPDIR=${temporary_directory}" \
                     "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
                     "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
                     "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
-                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
-                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                    "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400"
                 ;;
             run-chaos-experiment.sh)
-                start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                run_target "${TEST_ROOT}" "${script}" \
                     "TMPDIR=${temporary_directory}" \
                     "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
                     "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
                     "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
                     "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
-                    "GITHUB_RUN_ID=run-42" \
-                    "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
-                    "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                    "GITHUB_RUN_ID=run-42"
                 ;;
         esac
 
-        if ! wait_for_file "${started_file}"; then
-            fail "${script} must allocate and begin a health request before interruption"
-        fi
-        if [[ -z "$(command -p find "${temporary_directory}" -mindepth 1 -print -quit)" ]]; then
-            fail "${script} must allocate a bounded health-response file before interruption"
-        fi
-
-        kill -TERM "${BACKGROUND_TARGET_PID}"
-        : > "${release_file}"
-        if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
-            fail "${script} must stop after a termination signal"
-        fi
-
+        assert_status 0 "${script} normal temporary-file cleanup"
         assert_directory_empty "${temporary_directory}" \
-            "${script} interruption cleanup"
+            "${script} normal temporary-file cleanup"
     done
+
+    # Run target scripts in the foreground while a helper sends each signal. Backgrounded Bash
+    # children inherit an ignored SIGINT disposition, so this structure exercises the scripts'
+    # actual INT handlers rather than a shell-specific background-job behavior.
+    for signal_name in HUP INT TERM; do
+        case "${signal_name}" in
+            HUP)
+                expected_status=129
+                signal_slug=hup
+                ;;
+            INT)
+                expected_status=130
+                signal_slug=int
+                ;;
+            TERM)
+                expected_status=143
+                signal_slug=term
+                ;;
+        esac
+
+        for script in staging-smoke-test.sh end-to-end-smoke-test.sh run-chaos-experiment.sh; do
+            case_name="${script%.sh}-${signal_slug}-temporary-file-cleanup"
+            new_harness "${case_name}" "${script}"
+            temporary_directory="${TEST_ROOT}/temporary-files"
+            started_file="${TEST_ROOT}/request-started"
+            release_file="${TEST_ROOT}/request-release"
+            mkdir -p "${temporary_directory}"
+
+            case "${script}" in
+                staging-smoke-test.sh)
+                    add_service_dockerfile "${TEST_ROOT}" example-service
+                    start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+                        "TMPDIR=${temporary_directory}" \
+                        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+                        "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
+                        "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
+                        "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                    ;;
+                end-to-end-smoke-test.sh)
+                    # Block after the health probes so the signal trap must clean the response
+                    # header file rather than only a per-probe health buffer.
+                    start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+                        "TMPDIR=${temporary_directory}" \
+                        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+                        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+                        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+                        "FAKE_CURL_ACCOUNT_BLOCK_STARTED_FILE=${started_file}" \
+                        "FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE=${release_file}"
+                    ;;
+                run-chaos-experiment.sh)
+                    start_target "${TEST_ROOT}" "${script}" "${TEST_ROOT}/output.log" \
+                        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+                        "TMPDIR=${temporary_directory}" \
+                        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+                        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+                        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+                        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+                        "GITHUB_RUN_ID=run-42" \
+                        "FAKE_CURL_HEALTH_BLOCK_STARTED_FILE=${started_file}" \
+                        "FAKE_CURL_HEALTH_BLOCK_RELEASE_FILE=${release_file}"
+                    ;;
+            esac
+
+            if ! wait_for_file "${started_file}"; then
+                fail "${script} must allocate and begin its blocked request before ${signal_name}"
+            fi
+            if [[ -z "$(command -p find "${temporary_directory}" -mindepth 1 -print -quit)" ]]; then
+                fail "${script} must allocate a temporary file before ${signal_name}"
+            fi
+
+            kill "-${signal_name}" "${BACKGROUND_TARGET_PID}"
+            : > "${release_file}"
+            if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+                fail "${script} must stop after ${signal_name}"
+            else
+                RUN_STATUS=$?
+            fi
+
+            assert_status "${expected_status}" "${script} ${signal_name} exit status"
+            assert_directory_empty "${temporary_directory}" \
+                "${script} ${signal_name} temporary-file cleanup"
+        done
+    done
+}
+
+test_health_retry_jitter_remains_positive_when_random_is_zero() {
+    new_harness staging-positive-jitter staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        'STAGING_SERVICE_HEALTH_URLS_JSON={"example-service":"https://staging.example.test/actuator/health/readiness"}' \
+        "FAKE_JQ_SERVICE_URL=https://staging.example.test/actuator/health/readiness" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP" \
+        "FAKE_BASH_RANDOM_SEED=0"
+
+    assert_status 0 "staging smoke positive jitter with RANDOM=0"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t1' 1 \
+        "staging smoke positive jitter with RANDOM=0"
+
+    new_harness end-to-end-positive-jitter end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP,UP" \
+        "FAKE_BASH_RANDOM_SEED=0"
+
+    assert_status 0 "end-to-end smoke positive jitter with RANDOM=0"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t1' 1 \
+        "end-to-end smoke positive jitter with RANDOM=0"
+
+    new_harness chaos-positive-jitter run-chaos-experiment.sh
+
+    run_target "${TEST_ROOT}" run-chaos-experiment.sh \
+        "LIFEOS_CHAOS_EXPERIMENT_WEBHOOK_URL=https://chaos.example.test/experiments" \
+        "LIFEOS_CHAOS_GATEWAY_HEALTH_URL=https://gateway-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_IDENTITY_HEALTH_URL=https://identity-management.example.test/actuator/health/readiness" \
+        "LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL=https://task-goal.example.test/actuator/health" \
+        "GITHUB_RUN_ID=run-42" \
+        "FAKE_CURL_HEALTH_STATUS_SEQUENCE=DOWN,UP,UP,UP" \
+        "FAKE_BASH_RANDOM_SEED=0"
+
+    assert_status 0 "chaos experiment positive jitter with RANDOM=0"
+    assert_log_line_count "${TEST_ROOT}" $'sleep\t1' 1 \
+        "chaos experiment positive jitter with RANDOM=0"
 }
 
 test_health_checks_bound_chunked_response_bodies() {
@@ -3633,6 +4017,7 @@ test_container_build_selects_portable_timeout_commands
 test_container_scripts_reject_invalid_generated_image_references
 test_container_scripts_enforce_docker_repository_name_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
+test_container_scan_uses_a_csv_quoted_mount_for_comma_cache_paths
 test_container_scan_requires_an_accessible_docker_daemon
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments
 test_source_scan_uses_an_unambiguous_read_only_mount_for_colon_repository_paths
@@ -3652,6 +4037,7 @@ test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
+test_concurrent_database_provisioning_requires_a_bounded_observation_timeout
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
@@ -3673,13 +4059,18 @@ test_contract_sensitive_posts_reject_redirects
 test_staging_and_end_to_end_smoke_fail_closed_before_live_traffic
 test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace
 test_end_to_end_smoke_reports_header_buffer_allocation_failures
+test_operational_scripts_share_https_authority_and_health_helpers
 test_operational_urls_reject_userinfo_before_live_traffic
 test_operational_urls_reject_malformed_authorities_before_live_traffic
 test_operational_urls_accept_explicit_valid_ports_and_paths
 test_operational_urls_accept_valid_bracketed_ipv6_authorities
+test_operational_urls_accept_canonical_dotted_ipv4_authorities
+test_operational_urls_accept_dns_authorities_with_numeric_labels
+test_operational_urls_accept_valid_ipv4_embedded_ipv6_authorities
 test_health_checks_retry_down_responses_and_fail_closed
 test_health_checks_reject_redirects
-test_health_response_files_are_cleaned_on_interruption
+test_temporary_files_are_cleaned_on_normal_exit_and_signals
+test_health_retry_jitter_remains_positive_when_random_is_zero
 test_health_checks_bound_chunked_response_bodies
 test_chaos_experiment_uses_bounded_payload_transport_and_recovery_probes
 test_chaos_experiment_rejects_userinfo_before_payload_or_probes

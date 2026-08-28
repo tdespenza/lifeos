@@ -9,6 +9,7 @@ readonly PIPELINE_SCRIPTS=(
     scan-container-images.sh
     verify-sbom.sh
     deploy-staging.sh
+    https-authority-validation.sh
     staging-smoke-test.sh
     verify-architecture.sh
     end-to-end-smoke-test.sh

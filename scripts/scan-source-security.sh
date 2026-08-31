@@ -13,10 +13,7 @@ readonly REPOSITORY_ROOT
 readonly TRIVY_IMAGE="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
 # Keep the scanner database outside /repo. Otherwise a repeat local scan can recursively inspect
 # its own multi-gigabyte vulnerability cache and turn a source-security gate into an I/O bottleneck.
-readonly TRIVY_CACHE_DIR="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-trivy-cache}"
-# Trivy's filesystem cache uses an exclusive BoltDB lock. Coordinate every LifeOS scan that uses
-# this cache so image and source scans retain warm-cache behavior without racing the database.
-readonly TRIVY_CACHE_LOCK_DIRECTORY="${TRIVY_CACHE_DIR}/.lifeos-trivy-cache.lock"
+readonly TRIVY_CACHE_DIR_INPUT="${LIFEOS_TRIVY_CACHE_DIR:-${RUNNER_TEMP:-/tmp}/lifeos-trivy-cache}"
 readonly TRIVY_CACHE_LOCK_TIMEOUT_SECONDS=300
 readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
 # Docker can hang while connecting to its daemon, pulling the scanner image, or streaming a
@@ -33,10 +30,39 @@ fi
 
 # A relative source can be interpreted as a Docker-managed named volume instead of the directory
 # protected by this process's cache lock. Keep the lock and the scanner on one explicit host path.
-if [[ "${TRIVY_CACHE_DIR}" != /* ]]; then
+if [[ "${TRIVY_CACHE_DIR_INPUT}" != /* ]]; then
     echo "LIFEOS_TRIVY_CACHE_DIR must be an absolute path" >&2
     exit 64
 fi
+
+if ! command -v mkdir >/dev/null 2>&1; then
+    echo "mkdir is required to prepare the Trivy cache directory" >&2
+    exit 69
+fi
+if ! mkdir -p "${TRIVY_CACHE_DIR_INPUT}"; then
+    echo "Unable to create the Trivy cache directory ${TRIVY_CACHE_DIR_INPUT}" >&2
+    exit 69
+fi
+
+if ! CANONICAL_REPOSITORY_ROOT="$(cd -- "${REPOSITORY_ROOT}" && pwd -P)"; then
+    echo "Unable to canonicalize the repository root for Trivy cache validation" >&2
+    exit 69
+fi
+if ! CANONICAL_TRIVY_CACHE_DIR="$(cd -- "${TRIVY_CACHE_DIR_INPUT}" && pwd -P)"; then
+    echo "Unable to canonicalize LIFEOS_TRIVY_CACHE_DIR" >&2
+    exit 69
+fi
+readonly CANONICAL_REPOSITORY_ROOT CANONICAL_TRIVY_CACHE_DIR
+case "${CANONICAL_TRIVY_CACHE_DIR}" in
+    "${CANONICAL_REPOSITORY_ROOT}" | "${CANONICAL_REPOSITORY_ROOT}"/*)
+        echo "LIFEOS_TRIVY_CACHE_DIR must not be inside the repository checkout" >&2
+        exit 64
+        ;;
+esac
+readonly TRIVY_CACHE_DIR="${CANONICAL_TRIVY_CACHE_DIR}"
+# Trivy's filesystem cache uses an exclusive BoltDB lock. Coordinate every LifeOS scan that uses
+# this cache so image and source scans retain warm-cache behavior without racing the database.
+readonly TRIVY_CACHE_LOCK_DIRECTORY="${TRIVY_CACHE_DIR}/.lifeos-trivy-cache.lock"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to run the Trivy source security scan" >&2
@@ -80,17 +106,12 @@ else
     exit 69
 fi
 
-for trivy_cache_command in mkdir rmdir sleep; do
+for trivy_cache_command in rmdir sleep; do
     if ! command -v "${trivy_cache_command}" >/dev/null 2>&1; then
         echo "${trivy_cache_command} is required to coordinate access to the Trivy cache" >&2
         exit 69
     fi
 done
-
-if ! mkdir -p "${TRIVY_CACHE_DIR}"; then
-    echo "Unable to create the Trivy cache directory ${TRIVY_CACHE_DIR}" >&2
-    exit 69
-fi
 
 trivy_cache_lock_is_held() {
     [[ -d "${TRIVY_CACHE_LOCK_DIRECTORY}" && ! -L "${TRIVY_CACHE_LOCK_DIRECTORY}" ]]

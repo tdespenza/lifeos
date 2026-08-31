@@ -114,7 +114,7 @@ if [[ "${status_code}" != "400" ]]; then
 fi
 
 if ! tr -d '\r' < "${headers_file}" | rg --ignore-case --quiet \
-    "^x-correlation-id:[\t ]*${CORRELATION_ID}$"; then
+    "^x-correlation-id:[\t ]*${CORRELATION_ID}[\t ]*$"; then
     echo "Gateway-to-identity flow did not preserve the canonical correlation ID" >&2
     exit 65
 fi

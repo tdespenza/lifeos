@@ -382,8 +382,34 @@ wait_for_background_query_result() {
 
 wait_for_process() {
     local process_id="$1"
-    local log_file="$2"
-    local description="$3"
+    local status_file="$2"
+    local log_file="$3"
+    local description="$4"
+    local deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
+
+    # A background psql client can outlive the lock-holder failure path. Observe its atomic status
+    # marker until the same wall-clock deadline used by readiness polling, then terminate it before
+    # collecting diagnostics. The status marker is written immediately before the worker returns,
+    # so a present marker makes the final wait a bounded reap of an already-completing process.
+    while [[ ! -f "${status_file}" ]] && kill -0 "${process_id}" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline_seconds )); then
+            printf 'Timed out waiting for %s; terminating the background process\n' "${description}" >&2
+            kill "${process_id}" >/dev/null 2>&1 || true
+            kill -KILL "${process_id}" >/dev/null 2>&1 || true
+            wait "${process_id}" >/dev/null 2>&1 || true
+            print_background_log "${description}" "${log_file}"
+            print_container_diagnostics
+            fail "timed out waiting for ${description}"
+        fi
+        sleep "${POLL_INTERVAL_SECONDS}"
+    done
+
+    if [[ ! -f "${status_file}" ]] && ! kill -0 "${process_id}" >/dev/null 2>&1; then
+        wait "${process_id}" >/dev/null 2>&1 || true
+        print_background_log "${description}" "${log_file}"
+        print_container_diagnostics
+        fail "${description} exited before recording its status"
+    fi
 
     if ! wait "${process_id}"; then
         printf 'Output from failed %s:\n' "${description}" >&2
@@ -439,9 +465,11 @@ if wait "${lock_holder_pid}"; then
 fi
 lock_holder_pid=""
 
-wait_for_process "${first_worker_pid}" "${TEST_DIRECTORY}/first-worker.log" "first provisioning worker"
+wait_for_process "${first_worker_pid}" "${first_worker_status_file}" \
+    "${TEST_DIRECTORY}/first-worker.log" "first provisioning worker"
 first_worker_pid=""
-wait_for_process "${second_worker_pid}" "${TEST_DIRECTORY}/second-worker.log" "second provisioning worker"
+wait_for_process "${second_worker_pid}" "${second_worker_status_file}" \
+    "${TEST_DIRECTORY}/second-worker.log" "second provisioning worker"
 second_worker_pid=""
 
 created_databases="$(postgres_query "SELECT datname FROM pg_database WHERE datname IN ('lifeos_identity', 'lifeos_task_goal') ORDER BY datname;")"

@@ -259,6 +259,7 @@ fake_curl() {
 
     if [[ -n "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE:-}" && "${url}" == */api/v1/accounts ]]; then
         local correlation_header_separator=' '
+        local correlation_header_trailing_whitespace=''
         case "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR:-space}" in
             space)
                 ;;
@@ -274,11 +275,26 @@ fake_curl() {
                 return 64
                 ;;
         esac
+        case "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_TRAILING_WHITESPACE:-none}" in
+            none)
+                ;;
+            space)
+                correlation_header_trailing_whitespace=' '
+                ;;
+            htab)
+                correlation_header_trailing_whitespace=$'\t'
+                ;;
+            *)
+                printf 'Unsupported fake trailing correlation-header whitespace: %s\n' \
+                    "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_TRAILING_WHITESPACE}" >&2
+                return 64
+                ;;
+        esac
         if [[ -n "${dump_header_file}" ]]; then
             printf 'HTTP/1.1 %s Response\r\nX-Correlation-ID:%s%s\r\n\r\n' \
                 "${FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE}" \
                 "${correlation_header_separator}" \
-                "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID:-11111111-1111-4111-8111-111111111111}" \
+                "${FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID:-11111111-1111-4111-8111-111111111111}${correlation_header_trailing_whitespace}" \
                 > "${dump_header_file}"
         fi
         if [[ -n "${output_file}" ]]; then
@@ -842,6 +858,11 @@ new_harness() {
     : > "${TEST_ROOT}/commands.log"
 }
 
+new_external_cache_dir() {
+    EXTERNAL_CACHE_DIR="${TEST_ROOT}-trivy-cache"
+    TEST_DIRECTORIES+=("${EXTERNAL_CACHE_DIR}")
+}
+
 add_service_dockerfile() {
     local root="$1"
     local service="$2"
@@ -970,6 +991,7 @@ execute_target() {
         FAKE_CURL_REDIRECT_URL \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_ID \
         FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_SEPARATOR \
+        FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_TRAILING_WHITESPACE \
         FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE \
         FAKE_CURL_ACCOUNT_BLOCK_RELEASE_FILE \
         FAKE_CURL_ACCOUNT_BLOCK_STARTED_FILE \
@@ -1375,6 +1397,7 @@ test_container_build_selects_portable_timeout_commands() {
     disable_fake_command "${TEST_ROOT}" timeout
     add_prerequisite_command "${TEST_ROOT}" bash
     add_prerequisite_command "${TEST_ROOT}" dirname
+    add_prerequisite_command "${TEST_ROOT}" mkdir
     add_prerequisite_command "${TEST_ROOT}" find
     add_prerequisite_command "${TEST_ROOT}" basename
     add_prerequisite_command "${TEST_ROOT}" sort
@@ -1606,7 +1629,8 @@ test_container_scan_requires_an_accessible_docker_daemon() {
 
 test_source_scan_uses_read_only_repository_mount_and_filesystem_arguments() {
     new_harness scan-source-arguments scan-source-security.sh
-    local cache_dir="${TEST_ROOT}/trivy-cache"
+    new_external_cache_dir
+    local cache_dir="${EXTERNAL_CACHE_DIR}"
 
     run_target "${TEST_ROOT}" scan-source-security.sh "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
 
@@ -1627,7 +1651,8 @@ test_source_scan_uses_an_unambiguous_read_only_mount_for_colon_repository_paths(
     new_harness scan-source-colon-path scan-source-security.sh
 
     local colon_repository_root="${TEST_ROOT}/repository:source"
-    local cache_dir="${colon_repository_root}/trivy-cache"
+    new_external_cache_dir
+    local cache_dir="${EXTERNAL_CACHE_DIR}"
     mkdir -p "${colon_repository_root}/scripts"
     cp "${TEST_ROOT}/scripts/scan-source-security.sh" \
         "${colon_repository_root}/scripts/scan-source-security.sh"
@@ -1674,9 +1699,10 @@ test_source_scan_uses_a_csv_quoted_mount_for_comma_repository_paths() {
 
 test_source_scan_requires_an_accessible_docker_daemon() {
     new_harness scan-source-unavailable-daemon scan-source-security.sh
+    new_external_cache_dir
 
     run_target "${TEST_ROOT}" scan-source-security.sh \
-        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "LIFEOS_TRIVY_CACHE_DIR=${EXTERNAL_CACHE_DIR}" \
         "FAKE_DOCKER_INFO_STATUS=1"
 
     assert_status 69 "source security scan with an unavailable Docker daemon"
@@ -1708,6 +1734,40 @@ test_security_scans_require_an_absolute_trivy_cache_directory() {
         assert_no_commands_logged "${TEST_ROOT}" \
             "${security_scan_script} with a relative Trivy cache directory must not invoke Docker"
     done
+
+    local cache_path cache_suffix
+    local cache_case=0
+    for cache_suffix in \
+        "checkout-cache" \
+        "nested/../normalized-checkout-cache"; do
+        ((cache_case += 1))
+        new_harness "source-scan-checkout-cache-${cache_case}" scan-source-security.sh
+        cache_path="${TEST_ROOT}/${cache_suffix}"
+
+        run_target "${TEST_ROOT}" scan-source-security.sh \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_path}"
+
+        assert_status 64 "source security scan with a cache directory inside the checkout (${cache_case})"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "LIFEOS_TRIVY_CACHE_DIR must not be inside the repository checkout" \
+            "source security scan checkout cache validation (${cache_case})"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "source security scan with a checkout cache must not invoke Docker (${cache_case})"
+    done
+
+    new_harness source-scan-symlinked-checkout-cache scan-source-security.sh
+    mkdir -p "${TEST_ROOT}/symlink-target"
+    ln -s "${TEST_ROOT}/symlink-target" "${TEST_ROOT}/symlinked-cache"
+
+    run_target "${TEST_ROOT}" scan-source-security.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/symlinked-cache"
+
+    assert_status 64 "source security scan with a symlinked checkout cache directory"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "LIFEOS_TRIVY_CACHE_DIR must not be inside the repository checkout" \
+        "source security scan symlinked checkout cache validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "source security scan with a symlinked checkout cache must not invoke Docker"
 }
 
 test_security_scans_validate_and_bound_docker_operations() {
@@ -1721,9 +1781,15 @@ test_security_scans_validate_and_bound_docker_operations() {
             if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
                 add_service_dockerfile "${TEST_ROOT}" example-service
             fi
+            if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+                new_external_cache_dir
+                cache_dir="${EXTERNAL_CACHE_DIR}"
+            else
+                cache_dir="${TEST_ROOT}/trivy-cache"
+            fi
 
             run_target "${TEST_ROOT}" "${security_scan_script}" \
-                "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+                "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
                 "LIFEOS_DOCKER_TIMEOUT_SECONDS=${invalid_timeout}"
 
             assert_status 64 "${security_scan_script} with invalid Docker timeout ${invalid_timeout}"
@@ -1738,9 +1804,15 @@ test_security_scans_validate_and_bound_docker_operations() {
         if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
             add_service_dockerfile "${TEST_ROOT}" example-service
         fi
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
 
         run_target "${TEST_ROOT}" "${security_scan_script}" \
-            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
             "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
             "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=info" \
             "FAKE_TIMEOUT_STATUS=124"
@@ -1758,7 +1830,12 @@ test_security_scans_validate_and_bound_docker_operations() {
         if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
             add_service_dockerfile "${TEST_ROOT}" example-service
         fi
-        cache_dir="${TEST_ROOT}/trivy-cache"
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
 
         run_target "${TEST_ROOT}" "${security_scan_script}" \
             "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
@@ -1821,9 +1898,16 @@ test_security_scans_select_portable_timeout_commands() {
             add_prerequisite_command "${TEST_ROOT}" basename
             add_prerequisite_command "${TEST_ROOT}" sort
         fi
+        local timeout_cache_dir
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            timeout_cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            timeout_cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
 
         run_target "${TEST_ROOT}" "${security_scan_script}" \
-            "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+            "LIFEOS_TRIVY_CACHE_DIR=${timeout_cache_dir}" \
             "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
 
         assert_status 0 "${security_scan_script} with the macOS gtimeout fallback"
@@ -1837,6 +1921,7 @@ test_security_scans_select_portable_timeout_commands() {
     disable_fake_command "${TEST_ROOT}" gtimeout
     add_prerequisite_command "${TEST_ROOT}" bash
     add_prerequisite_command "${TEST_ROOT}" dirname
+    add_prerequisite_command "${TEST_ROOT}" mkdir
 
     run_target "${TEST_ROOT}" scan-source-security.sh \
         "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
@@ -1853,7 +1938,8 @@ test_security_scans_serialize_shared_trivy_cache_access() {
     new_harness scan-shared-trivy-cache scan-container-images.sh scan-source-security.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
 
-    local cache_dir="${TEST_ROOT}/trivy-cache"
+    new_external_cache_dir
+    local cache_dir="${EXTERNAL_CACHE_DIR}"
     local lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
     local first_started_file="${TEST_ROOT}/container-scan-started"
     local release_file="${TEST_ROOT}/release-container-scan"
@@ -1987,7 +2073,12 @@ test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created() {
         fi
         add_mkdir_double "${TEST_ROOT}"
 
-        cache_dir="${TEST_ROOT}/trivy-cache"
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
         lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
         run_target "${TEST_ROOT}" "${security_scan_script}" \
             "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
@@ -2021,7 +2112,12 @@ test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting() {
             add_service_dockerfile "${TEST_ROOT}" example-service
         fi
 
-        cache_dir="${TEST_ROOT}/trivy-cache"
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
         lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
         mkdir -p "${cache_dir}"
         ln -s "${TEST_ROOT}" "${lock_directory}"
@@ -2053,7 +2149,12 @@ test_security_scans_retry_after_a_trivy_cache_lock_release_race() {
         fi
         add_mkdir_double "${TEST_ROOT}"
 
-        cache_dir="${TEST_ROOT}/trivy-cache"
+        if [[ "${security_scan_script}" == "scan-source-security.sh" ]]; then
+            new_external_cache_dir
+            cache_dir="${EXTERNAL_CACHE_DIR}"
+        else
+            cache_dir="${TEST_ROOT}/trivy-cache"
+        fi
         lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
         first_failure_file="${TEST_ROOT}/first-cache-lock-mkdir-failure"
         run_target "${TEST_ROOT}" "${security_scan_script}" \
@@ -2093,9 +2194,10 @@ test_security_scans_ignore_untrusted_trivy_image_overrides() {
         "container scan untrusted Trivy image override"
 
     new_harness scan-source-trusted-image scan-source-security.sh
+    new_external_cache_dir
 
     run_target "${TEST_ROOT}" scan-source-security.sh \
-        "LIFEOS_TRIVY_CACHE_DIR=${TEST_ROOT}/trivy-cache" \
+        "LIFEOS_TRIVY_CACHE_DIR=${EXTERNAL_CACHE_DIR}" \
         "LIFEOS_TRIVY_IMAGE=${untrusted_trivy_image}"
 
     assert_status 0 "source security scan with an untrusted Trivy image override"
@@ -2364,6 +2466,12 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
         "concurrent database provisioning bounded container cleanup"
     assert_file_excludes "${concurrency_script}" "MAXIMUM_POLL_ATTEMPTS" \
         "concurrent database provisioning legacy attempt bound"
+    assert_file_contains "${concurrency_script}" \
+        'while [[ ! -f "${status_file}" ]] && kill -0 "${process_id}"' \
+        "concurrent database provisioning bounded worker wait"
+    assert_file_contains "${concurrency_script}" \
+        'kill -KILL "${process_id}"' \
+        "concurrent database provisioning worker timeout termination"
 }
 
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
@@ -3118,6 +3226,20 @@ test_end_to_end_smoke_accepts_correlation_headers_without_optional_whitespace() 
             "End-to-end gateway-to-identity contract passed" \
             "end-to-end smoke with a ${separator} correlation-header separator"
     done
+
+    new_harness end-to-end-correlation-header-trailing-whitespace end-to-end-smoke-test.sh
+
+    run_target "${TEST_ROOT}" end-to-end-smoke-test.sh \
+        "LIFEOS_E2E_GATEWAY_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL=https://gateway-management.example.test" \
+        "LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL=https://identity-management.example.test" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_STATUS_CODE=400" \
+        "FAKE_CURL_ACCOUNT_REGISTRATION_CORRELATION_TRAILING_WHITESPACE=space"
+
+    assert_status 0 "end-to-end smoke with trailing optional correlation-header whitespace"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "End-to-end gateway-to-identity contract passed" \
+        "end-to-end smoke with trailing optional correlation-header whitespace"
 
     new_harness end-to-end-correlation-header-mismatch end-to-end-smoke-test.sh
 

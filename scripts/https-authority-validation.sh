@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 
+# This file is sourced by multiple operational entrypoints. Keep repeated sourcing idempotent so
+# readonly constants are initialized only once in a caller's shell.
+if [[ "${LIFEOS_HTTPS_AUTHORITY_VALIDATION_LOADED:-}" == "1" ]]; then
+    if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+        exit 0
+    fi
+    return 0
+fi
+readonly LIFEOS_HTTPS_AUTHORITY_VALIDATION_LOADED=1
+
 # Shared HTTPS authority validation and health-check retry helpers for operational smoke and
 # chaos scripts. Callers retain endpoint-specific path policies and use
 # has_valid_https_authority for the authority grammar.
@@ -8,6 +18,9 @@ readonly HTTPS_BRACKETED_AUTHORITY_PATTERN='^\[([^][]+)\](:([0-9]+))?$'
 readonly HTTPS_UNBRACKETED_AUTHORITY_PATTERN='^([^:]+)(:([0-9]+))?$'
 readonly HTTPS_DNS_HOST_PATTERN='^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$'
 readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16
+readonly HEALTH_CHECK_MAX_ATTEMPTS=6
+readonly HEALTH_RESPONSE_MAX_BYTES=65536
+HEALTH_RESPONSE_FILE=""
 
 is_valid_ipv4_literal() {
     local value="$1"
@@ -154,6 +167,68 @@ health_check_delay_seconds() {
 
     # Keep jitter positive so a failed health request cannot be immediately reissued.
     printf '%s\n' "$((1 + RANDOM % backoff_seconds))"
+}
+
+wait_for_health() {
+    local service_name="$1"
+    local health_url="$2"
+    local log_prefix="$3"
+    local attempt delay_seconds response_file response_size
+
+    if ! HEALTH_RESPONSE_FILE="$(mktemp)"; then
+        printf 'Unable to allocate a bounded health-response buffer for %s\n' "${service_name}" >&2
+        return 1
+    fi
+    response_file="${HEALTH_RESPONSE_FILE}"
+
+    # Capture one sentinel byte beyond the cap before jq parses the response. This fails closed
+    # for unknown-length/chunked bodies while bounding temporary storage and jq input.
+    # Retry the complete probe so curl only handles transport failures while jq also handles a
+    # successfully returned health payload whose application status is still DOWN.
+    for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
+        if curl \
+            --disable \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --max-redirs 0 \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 20 \
+            "${health_url}" \
+            | head -c "$((HEALTH_RESPONSE_MAX_BYTES + 1))" > "${response_file}" \
+            && response_size="$(wc -c < "${response_file}")" \
+            && [[ "${response_size}" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]] \
+            && (( 10#${BASH_REMATCH[1]} <= HEALTH_RESPONSE_MAX_BYTES )) \
+            && jq --exit-status '.status == "UP"' < "${response_file}" >/dev/null; then
+            if ! rm -f "${response_file}"; then
+                printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
+                return 1
+            fi
+            HEALTH_RESPONSE_FILE=""
+            return 0
+        fi
+
+        if (( attempt == HEALTH_CHECK_MAX_ATTEMPTS )); then
+            break
+        fi
+
+        delay_seconds="$(health_check_delay_seconds "${attempt}")"
+        printf '%s%s is not UP; retrying in %ss (attempt %s/%s)\n' \
+            "${log_prefix}" "${service_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+        sleep "${delay_seconds}"
+    done
+
+    if ! rm -f "${response_file}"; then
+        printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
+        return 1
+    fi
+    HEALTH_RESPONSE_FILE=""
+
+    printf '%s%s did not report UP after %s attempts\n' \
+        "${log_prefix}" "${service_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
+    return 1
 }
 
 has_valid_https_authority() {

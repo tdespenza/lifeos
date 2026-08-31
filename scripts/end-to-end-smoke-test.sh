@@ -24,9 +24,6 @@ fi
 # The library path is derived from this script's directory and is checked above.
 # shellcheck disable=SC1090,SC1091
 source "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}"
-readonly HEALTH_CHECK_MAX_ATTEMPTS=6
-readonly HEALTH_RESPONSE_MAX_BYTES=65536
-HEALTH_RESPONSE_FILE=""
 headers_file=""
 
 cleanup_temporary_files() {
@@ -74,71 +71,11 @@ validate_url LIFEOS_E2E_GATEWAY_BASE_URL "${GATEWAY_URL}"
 validate_url LIFEOS_E2E_GATEWAY_MANAGEMENT_BASE_URL "${GATEWAY_MANAGEMENT_URL}"
 validate_url LIFEOS_E2E_IDENTITY_MANAGEMENT_BASE_URL "${IDENTITY_MANAGEMENT_URL}"
 
-wait_for_health() {
-    local service_name="$1"
-    local health_url="$2"
-    local attempt delay_seconds response_file response_size
-
-    if ! HEALTH_RESPONSE_FILE="$(mktemp)"; then
-        printf 'Unable to allocate a bounded health-response buffer for %s\n' "${service_name}" >&2
-        return 1
-    fi
-    response_file="${HEALTH_RESPONSE_FILE}"
-
-    # Capture one sentinel byte beyond the cap before jq parses the response. This fails closed
-    # for unknown-length/chunked bodies while bounding temporary storage and jq input.
-    # Retry the whole health assertion: curl does not retry when jq rejects a 200/DOWN payload.
-    for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
-        if curl \
-            --disable \
-            --fail \
-            --silent \
-            --show-error \
-            --location \
-            --max-redirs 0 \
-            --proto '=https' \
-            --connect-timeout 10 \
-            --max-time 20 \
-            "${health_url}" \
-            | head -c "$((HEALTH_RESPONSE_MAX_BYTES + 1))" > "${response_file}" \
-            && response_size="$(wc -c < "${response_file}")" \
-            && [[ "${response_size}" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]] \
-            && (( 10#${BASH_REMATCH[1]} <= HEALTH_RESPONSE_MAX_BYTES )) \
-            && jq --exit-status '.status == "UP"' < "${response_file}" >/dev/null; then
-            if ! rm -f "${response_file}"; then
-                printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
-                return 1
-            fi
-            HEALTH_RESPONSE_FILE=""
-            return 0
-        fi
-
-        if (( attempt == HEALTH_CHECK_MAX_ATTEMPTS )); then
-            break
-        fi
-
-        delay_seconds="$(health_check_delay_seconds "${attempt}")"
-        printf 'End-to-end prerequisite %s is not UP; retrying in %ss (attempt %s/%s)\n' \
-            "${service_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
-        sleep "${delay_seconds}"
-    done
-
-    if ! rm -f "${response_file}"; then
-        printf 'Unable to remove the bounded health-response buffer for %s\n' "${service_name}" >&2
-        return 1
-    fi
-    HEALTH_RESPONSE_FILE=""
-
-    printf 'End-to-end prerequisite %s did not report UP after %s attempts\n' \
-        "${service_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
-    return 1
-}
-
 assert_ready() {
     # Require an explicit UP readiness response before exercising the cross-service request path.
     local service_name="$1"
     local base_url="$2"
-    wait_for_health "${service_name}" "${base_url%/}/actuator/health/readiness"
+    wait_for_health "${service_name}" "${base_url%/}/actuator/health/readiness" 'End-to-end prerequisite '
     printf '%s\n' "End-to-end prerequisite is ready: ${service_name}"
 }
 

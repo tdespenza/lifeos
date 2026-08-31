@@ -214,16 +214,23 @@ acquire_trivy_cache_lock() {
 }
 
 release_trivy_cache_lock() {
+    if [[ "${TRIVY_CACHE_LOCK_HELD:-false}" != true ]]; then
+        return 0
+    fi
     rmdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null || true
+    TRIVY_CACHE_LOCK_HELD=false
 }
 
-if ! acquire_trivy_cache_lock; then
-    exit 69
-fi
+TRIVY_CACHE_LOCK_HELD=false
 trap release_trivy_cache_lock EXIT
 
 for service in "${SERVICES[@]}"; do
     image="${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"
+    if ! acquire_trivy_cache_lock; then
+        exit 69
+    fi
+    TRIVY_CACHE_LOCK_HELD=true
+
     if run_docker_operation run --rm \
         --mount "type=bind,$(docker_mount_source "${TRIVY_CACHE_DIR}"),target=/root/.cache" \
         --volume /var/run/docker.sock:/var/run/docker.sock \
@@ -234,9 +241,16 @@ for service in "${SERVICES[@]}"; do
         --ignore-unfixed \
         --severity HIGH,CRITICAL \
         "${image}"; then
-        continue
+        docker_status=0
     else
         docker_status=$?
+    fi
+
+    release_trivy_cache_lock
+    TRIVY_CACHE_LOCK_HELD=false
+
+    if [[ "${docker_status}" -eq 0 ]]; then
+        continue
     fi
     if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
         echo "Trivy image scan for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2

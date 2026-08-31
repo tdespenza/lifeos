@@ -31,9 +31,6 @@ if [[ -z "${GITHUB_RUN_ID:-}" ]] && ! command -v date >/dev/null 2>&1; then
 fi
 
 readonly RUN_ID="${GITHUB_RUN_ID:-local-$(date +%s)}"
-readonly HEALTH_CHECK_MAX_ATTEMPTS=6
-readonly HEALTH_RESPONSE_MAX_BYTES=65536
-HEALTH_RESPONSE_FILE=""
 
 cleanup_health_response_file() {
     local exit_status="$1"
@@ -95,66 +92,6 @@ validate_readiness_url LIFEOS_CHAOS_GATEWAY_HEALTH_URL "${GATEWAY_HEALTH_URL}"
 validate_readiness_url LIFEOS_CHAOS_IDENTITY_HEALTH_URL "${IDENTITY_HEALTH_URL}"
 validate_health_url LIFEOS_CHAOS_TASK_GOAL_HEALTH_URL "${TASK_GOAL_HEALTH_URL}"
 
-wait_for_health() {
-    local target_name="$1"
-    local health_url="$2"
-    local attempt delay_seconds response_file response_size
-
-    if ! HEALTH_RESPONSE_FILE="$(mktemp)"; then
-        printf 'Unable to allocate a bounded health-response buffer for %s\n' "${target_name}" >&2
-        return 1
-    fi
-    response_file="${HEALTH_RESPONSE_FILE}"
-
-    # Capture one sentinel byte beyond the cap before jq parses the response. This fails closed
-    # for unknown-length/chunked bodies while bounding temporary storage and jq input.
-    # Retry the complete probe so a healthy HTTP response with status DOWN is retried as well.
-    for ((attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt++)); do
-        if curl \
-            --disable \
-            --fail \
-            --silent \
-            --show-error \
-            --location \
-            --max-redirs 0 \
-            --proto '=https' \
-            --connect-timeout 10 \
-            --max-time 20 \
-            "${health_url}" \
-            | head -c "$((HEALTH_RESPONSE_MAX_BYTES + 1))" > "${response_file}" \
-            && response_size="$(wc -c < "${response_file}")" \
-            && [[ "${response_size}" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]] \
-            && (( 10#${BASH_REMATCH[1]} <= HEALTH_RESPONSE_MAX_BYTES )) \
-            && jq --exit-status '.status == "UP"' < "${response_file}" >/dev/null; then
-            if ! rm -f "${response_file}"; then
-                printf 'Unable to remove the bounded health-response buffer for %s\n' "${target_name}" >&2
-                return 1
-            fi
-            HEALTH_RESPONSE_FILE=""
-            return 0
-        fi
-
-        if (( attempt == HEALTH_CHECK_MAX_ATTEMPTS )); then
-            break
-        fi
-
-        delay_seconds="$(health_check_delay_seconds "${attempt}")"
-        printf 'Chaos recovery health for %s is not UP; retrying in %ss (attempt %s/%s)\n' \
-            "${target_name}" "${delay_seconds}" "${attempt}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
-        sleep "${delay_seconds}"
-    done
-
-    if ! rm -f "${response_file}"; then
-        printf 'Unable to remove the bounded health-response buffer for %s\n' "${target_name}" >&2
-        return 1
-    fi
-    HEALTH_RESPONSE_FILE=""
-
-    printf 'Chaos recovery health for %s did not report UP after %s attempts\n' \
-        "${target_name}" "${HEALTH_CHECK_MAX_ATTEMPTS}" >&2
-    return 1
-}
-
 payload="$(jq -cn \
     --arg runId "${RUN_ID}" \
     --arg experiment "dependency-isolation-readiness" \
@@ -180,8 +117,8 @@ curl \
     --output /dev/null \
     "${WEBHOOK_URL}"
 
-wait_for_health gateway "${GATEWAY_HEALTH_URL}"
-wait_for_health identity "${IDENTITY_HEALTH_URL}"
-wait_for_health task-goal "${TASK_GOAL_HEALTH_URL}"
+wait_for_health gateway "${GATEWAY_HEALTH_URL}" 'Chaos recovery health for '
+wait_for_health identity "${IDENTITY_HEALTH_URL}" 'Chaos recovery health for '
+wait_for_health task-goal "${TASK_GOAL_HEALTH_URL}" 'Chaos recovery health for '
 
 printf '%s\n' "Chaos experiment completed and all services recovered"

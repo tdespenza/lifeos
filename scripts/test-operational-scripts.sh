@@ -441,6 +441,11 @@ fake_mkdir() {
     command -p mkdir "$@"
 }
 
+fake_rmdir() {
+    fake_log_command rmdir "$@"
+    command -p rmdir "$@"
+}
+
 fake_mktemp() {
     fake_log_command mktemp "$@"
 
@@ -541,6 +546,10 @@ case "${0##*/}" in
         ;;
     mkdir)
         fake_mkdir "$@"
+        exit
+        ;;
+    rmdir)
+        fake_rmdir "$@"
         exit
         ;;
     mktemp)
@@ -892,6 +901,12 @@ add_mkdir_double() {
     local root="$1"
 
     ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/mkdir"
+}
+
+add_rmdir_double() {
+    local root="$1"
+
+    ln -s "${TEST_SCRIPT_PATH}" "${root}/bin/rmdir"
 }
 
 add_mktemp_double() {
@@ -1916,6 +1931,48 @@ test_security_scans_serialize_shared_trivy_cache_access() {
     assert_log_contains "${TEST_ROOT}" \
         $'--mount\ttype=bind,"source='"${cache_dir}"$'",target=/root/.cache\t--mount\ttype=bind,"source='"${TEST_ROOT}"$'",target=/repo,readonly' \
         "source scan shared Trivy cache mount"
+}
+
+test_container_scan_releases_trivy_cache_lock_between_services() {
+    local cache_dir lock_directory line state=0
+
+    new_harness scan-container-per-image-lock scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" service-a
+    add_service_dockerfile "${TEST_ROOT}" service-b
+    add_mkdir_double "${TEST_ROOT}"
+    add_rmdir_double "${TEST_ROOT}"
+
+    cache_dir="${TEST_ROOT}/trivy-cache"
+    lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+    run_target "${TEST_ROOT}" scan-container-images.sh \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}"
+
+    assert_status 0 "container scan with multiple services and a per-image cache lock"
+    assert_log_line_count "${TEST_ROOT}" $'docker\trun\t' 2 \
+        "container scan with multiple services must run both Trivy scans"
+    assert_log_line_count "${TEST_ROOT}" $'mkdir\t'"${lock_directory}" 2 \
+        "container scan must acquire the cache lock for each image"
+    assert_log_line_count "${TEST_ROOT}" $'rmdir\t'"${lock_directory}" 2 \
+        "container scan must release the cache lock for each image"
+
+    # Walk the command log to prove that the first lock is released before the second scan starts.
+    # This fails deterministically if the lock is held around the whole SERVICES loop.
+    while IFS= read -r line; do
+        case "${state}:${line}" in
+            0:mkdir$'\t'"${lock_directory}") state=1 ;;
+            1:docker$'\trun\t'*) state=2 ;;
+            2:rmdir$'\t'"${lock_directory}") state=3 ;;
+            3:mkdir$'\t'"${lock_directory}") state=4 ;;
+            4:docker$'\trun\t'*) state=5 ;;
+            5:rmdir$'\t'"${lock_directory}") state=6 ;;
+        esac
+    done < "${TEST_ROOT}/commands.log"
+    if [[ "${state}" -ne 6 ]]; then
+        fail "container scan must release its Trivy cache lock between service scans"
+    fi
+    if [[ -e "${lock_directory}" ]]; then
+        fail "container scan must leave no Trivy cache lock after all service scans"
+    fi
 }
 
 test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created() {
@@ -3122,6 +3179,12 @@ test_operational_scripts_share_https_authority_and_health_helpers() {
         "shared HTTPS authority validation library legacy IPv4 function"
     assert_file_contains "${shared_validation_script}" "health_check_delay_seconds()" \
         "shared health-check retry helper"
+    assert_file_contains "${shared_validation_script}" "wait_for_health()" \
+        "shared health-check probe"
+    assert_file_contains "${shared_validation_script}" "readonly HEALTH_CHECK_MAX_ATTEMPTS=6" \
+        "shared health-check attempt limit"
+    assert_file_contains "${shared_validation_script}" "readonly HEALTH_RESPONSE_MAX_BYTES=65536" \
+        "shared health-response byte limit"
     assert_file_contains "${shared_validation_script}" "readonly HEALTH_CHECK_MAX_BACKOFF_SECONDS=16" \
         "shared health-check retry backoff cap"
 
@@ -3137,11 +3200,22 @@ test_operational_scripts_share_https_authority_and_health_helpers() {
             "${script} must not duplicate the shared health-check retry helper"
         assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "HEALTH_CHECK_MAX_BACKOFF_SECONDS" \
             "${script} must not duplicate the shared health-check retry backoff cap"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "HEALTH_CHECK_MAX_ATTEMPTS=6" \
+            "${script} must not duplicate the shared health-check attempt limit"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "HEALTH_RESPONSE_MAX_BYTES=65536" \
+            "${script} must not duplicate the shared health-response byte limit"
+        assert_file_excludes "${REPOSITORY_ROOT}/scripts/${script}" "wait_for_health()" \
+            "${script} must not duplicate the shared health-check probe"
     done
 
     new_harness shared-https-authority-validation end-to-end-smoke-test.sh
     assert_readable_file "${TEST_ROOT}/scripts/https-authority-validation.sh" \
         "operational harness shared HTTPS authority validation library"
+
+    if ! bash -c 'set -euo pipefail; source "$1"; first_attempts="${HEALTH_CHECK_MAX_ATTEMPTS}"; source "$1"; [[ "${HEALTH_CHECK_MAX_ATTEMPTS}" == "${first_attempts}" && "${HEALTH_RESPONSE_MAX_BYTES}" == 65536 ]]' \
+        _ "${TEST_ROOT}/scripts/https-authority-validation.sh"; then
+        fail "shared HTTPS authority validation library must be safely sourceable twice"
+    fi
 }
 
 test_operational_urls_reject_userinfo_before_live_traffic() {
@@ -4027,6 +4101,7 @@ test_security_scans_require_an_absolute_trivy_cache_directory
 test_security_scans_validate_and_bound_docker_operations
 test_security_scans_select_portable_timeout_commands
 test_security_scans_serialize_shared_trivy_cache_access
+test_container_scan_releases_trivy_cache_lock_between_services
 test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting
 test_security_scans_retry_after_a_trivy_cache_lock_release_race

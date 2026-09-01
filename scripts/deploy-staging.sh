@@ -128,6 +128,7 @@ payload="$(jq -cn \
 # Do not print the webhook URL or its response: either can carry deployment credentials.
 curl \
     --disable \
+    --globoff \
     --fail \
     --silent \
     --show-error \

@@ -41,14 +41,8 @@ const k6 = Object.freeze({
     },
 });
 
-async function executeReadinessScenario() {
-    const context = vm.createContext({
-        __ENV: {
-            TARGET_URL: 'https://gateway.example.test///',
-            VUS: '3',
-            DURATION: '5s',
-        },
-    });
+async function loadScenario(environment) {
+    const context = vm.createContext({__ENV: environment});
     const httpModule = new vm.SyntheticModule(
         ['default'],
         function initializeHttpModule() {
@@ -79,6 +73,15 @@ async function executeReadinessScenario() {
         throw new Error(`Unexpected readiness scenario import: ${specifier}`);
     });
     await scenario.evaluate();
+    return scenario;
+}
+
+async function executeReadinessScenario() {
+    const scenario = await loadScenario({
+        TARGET_URL: 'https://gateway.example.test///',
+        VUS: '3',
+        DURATION: '5s',
+    });
 
     assert.equal(scenario.namespace.options.vus, 3);
     assert.equal(scenario.namespace.options.duration, '5s');
@@ -104,7 +107,14 @@ async function executeReadinessScenario() {
     assert.equal(predicates['readiness payload is UP']({json: () => 'DOWN'}), false);
 }
 
-executeReadinessScenario()
+async function executeMissingTargetUrlScenario() {
+    await assert.rejects(
+        () => loadScenario({VUS: '3', DURATION: '5s'}),
+        /TARGET_URL is required/,
+    );
+}
+
+Promise.all([executeReadinessScenario(), executeMissingTargetUrlScenario()])
     .then(() => {
         console.log('Readiness smoke scenario behavior passed');
     })

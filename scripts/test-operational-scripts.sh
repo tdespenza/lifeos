@@ -2452,6 +2452,12 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
         'readonly MAXIMUM_OBSERVATION_SECONDS=30' \
         "concurrent database provisioning wall-clock observation bound"
     assert_file_contains "${concurrency_script}" \
+        'container_started=true' \
+        "concurrent database provisioning marks the container cleanup-eligible before startup"
+    assert_file_contains "${concurrency_script}" \
+        "run_docker_with_deadline \"\${startup_deadline_seconds}\" run --detach --rm --name" \
+        "concurrent database provisioning bounds container startup"
+    assert_file_contains "${concurrency_script}" \
         'while (( SECONDS < deadline_seconds )); do' \
         "concurrent database provisioning deadline polling"
     # shellcheck disable=SC2016 # Assert the exact literal wrapper invocation in the target.
@@ -2467,11 +2473,42 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
     assert_file_excludes "${concurrency_script}" "MAXIMUM_POLL_ATTEMPTS" \
         "concurrent database provisioning legacy attempt bound"
     assert_file_contains "${concurrency_script}" \
-        'while [[ ! -f "${status_file}" ]] && kill -0 "${process_id}"' \
+        "while [[ ! -f \"\${status_file}\" ]] && kill -0 \"\${process_id}\"" \
         "concurrent database provisioning bounded worker wait"
     assert_file_contains "${concurrency_script}" \
-        'kill -KILL "${process_id}"' \
+        "kill -KILL \"\${process_id}\"" \
         "concurrent database provisioning worker timeout termination"
+    assert_file_contains "${concurrency_script}" \
+        'wait_for_lock_holder_termination' \
+        "concurrent database provisioning bounds lock-holder termination"
+    assert_file_excludes "${concurrency_script}" \
+        "if wait \"\${lock_holder_pid}\"" \
+        "concurrent database provisioning avoids an unbounded lock-holder wait"
+}
+
+test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait() {
+    local concurrency_script="${REPOSITORY_ROOT}/scripts/test-provision-databases-concurrency.sh"
+
+    new_harness provision-concurrency-startup-timeout test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=run" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "concurrent database provisioning when container startup times out"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Timed out starting the PostgreSQL container within the bounded observation window" \
+        "concurrent database provisioning startup timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=KILL\t' \
+        "concurrent database provisioning bounded startup command"
+    assert_log_contains "${TEST_ROOT}" \
+        $'docker\trm\t--force' \
+        "concurrent database provisioning startup-timeout cleanup"
+    assert_file_contains "${concurrency_script}" \
+        'wait_for_lock_holder_termination' \
+        "concurrent database provisioning lock-holder wait helper"
 }
 
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
@@ -2758,7 +2795,7 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
 
     assert_status 0 "staging deployment with a valid webhook"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
+        $'curl\t--disable\t--globoff\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
         "staging deployment bounded HTTPS transport"
     assert_log_entry_excludes "${TEST_ROOT}" \
         "https://deploy.example.test/hooks/staging" \
@@ -2770,6 +2807,25 @@ test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
     assert_log_contains "${TEST_ROOT}" \
         $'\t--header\tContent-Type: application/json\t--data\t{"mock":true}\t--output\t/dev/null\thttps://deploy.example.test/hooks/staging' \
         "staging deployment webhook payload"
+
+    new_harness deploy-staging-glob-webhook deploy-staging.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" deploy-staging.sh \
+        "STAGING_DEPLOY_WEBHOOK_URL=https://deploy.example.test/hooks/{staging}[blue]" \
+        "GITHUB_SHA=${sha}" \
+        "GITHUB_REF_NAME=dev" \
+        "GITHUB_REPOSITORY=tdespenza/lifeos" \
+        "LIFEOS_IMAGE_PREFIX=registry.example/lifeos" \
+        "LIFEOS_IMAGE_TAG=build-42"
+
+    assert_status 0 "staging deployment with a glob-shaped webhook path"
+    assert_log_contains "${TEST_ROOT}" \
+        $'curl\t--disable\t--globoff\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https\t--connect-timeout\t10\t--max-time\t120' \
+        "staging deployment disables URL globbing"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://deploy.example.test/hooks/{staging}[blue]" \
+        "staging deployment preserves glob-shaped webhook path"
 }
 
 test_service_discovery_requires_its_dependencies() {
@@ -3123,7 +3179,7 @@ test_contract_sensitive_posts_reject_redirects() {
 
     assert_status 47 "staging deployment receiving a 302 redirect"
     assert_log_contains "${TEST_ROOT}" \
-        $'curl\t--disable\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https' \
+        $'curl\t--disable\t--globoff\t--fail\t--silent\t--show-error\t--location\t--max-redirs\t0\t--proto\t=https' \
         "staging deployment redirect rejection"
     assert_file_excludes "${RUN_OUTPUT}" \
         "Staging deployment endpoint accepted" \
@@ -3731,6 +3787,34 @@ test_operational_urls_accept_valid_ipv4_embedded_ipv6_authorities() {
         "chaos experiment preserves an IPv4-embedded IPv6 webhook authority"
 }
 
+test_operational_urls_bound_ipv6_literal_length() {
+    local maximum_literal='ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255'
+    local oversized_literal='ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.2555'
+
+    new_harness staging-ipv6-maximum-length staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        "STAGING_SERVICE_HEALTH_URLS_JSON={\"example-service\":\"https://[${maximum_literal}]/actuator/health/readiness\"}" \
+        "FAKE_JQ_SERVICE_URL=https://[${maximum_literal}]/actuator/health/readiness"
+
+    assert_status 0 "staging smoke test with a maximum-length IPv4-embedded IPv6 literal"
+    assert_log_contains "${TEST_ROOT}" \
+        "https://[${maximum_literal}]/actuator/health/readiness" \
+        "staging smoke test preserves a 45-character IPv6 literal"
+
+    new_harness staging-ipv6-over-maximum-length staging-smoke-test.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    run_target "${TEST_ROOT}" staging-smoke-test.sh \
+        "STAGING_SERVICE_HEALTH_URLS_JSON={\"example-service\":\"https://[${oversized_literal}]/actuator/health/readiness\"}" \
+        "FAKE_JQ_SERVICE_URL=https://[${oversized_literal}]/actuator/health/readiness"
+
+    assert_status 64 "staging smoke test with an oversized IPv6 literal"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "staging smoke test must reject an oversized IPv6 literal before probing"
+}
+
 test_health_checks_retry_down_responses_and_fail_closed() {
     new_harness staging-health-recovery staging-smoke-test.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -4234,6 +4318,7 @@ test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
+test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed

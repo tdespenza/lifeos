@@ -418,12 +418,66 @@ wait_for_process() {
     fi
 }
 
-docker run --detach --rm --name "${CONTAINER_NAME}" \
+wait_for_lock_holder_termination() {
+    local process_id="$1"
+    local status_file="$2"
+    local log_file="$3"
+    local description="$4"
+    local deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
+    local command_exit_status
+
+    # A terminated PostgreSQL backend should release the session advisory lock, but the client
+    # process can still be stuck if Docker does not tear down its exec session. Bound that reap
+    # separately so this regression never hangs after the holder termination request.
+    while [[ ! -f "${status_file}" ]] && kill -0 "${process_id}" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline_seconds )); then
+            printf 'Timed out waiting for %s to terminate; terminating the background process\n' \
+                "${description}" >&2
+            kill "${process_id}" >/dev/null 2>&1 || true
+            kill -KILL "${process_id}" >/dev/null 2>&1 || true
+            wait "${process_id}" >/dev/null 2>&1 || true
+            print_background_log "${description}" "${log_file}"
+            print_container_diagnostics
+            fail "timed out waiting for ${description} to terminate"
+        fi
+        sleep "${POLL_INTERVAL_SECONDS}"
+    done
+
+    if [[ ! -f "${status_file}" ]]; then
+        wait "${process_id}" >/dev/null 2>&1 || true
+        print_background_log "${description}" "${log_file}"
+        print_container_diagnostics
+        fail "${description} exited before recording its status"
+    fi
+
+    if ! IFS= read -r command_exit_status <"${status_file}"; then
+        command_exit_status="unknown"
+    fi
+    if [[ "${command_exit_status}" == "0" ]]; then
+        fail "${description} unexpectedly completed without termination"
+    fi
+
+    # The status marker is written immediately before the worker returns; this is now a bounded
+    # reap of a process that has already completed its Docker command.
+    wait "${process_id}" >/dev/null 2>&1 || true
+}
+
+container_started=true
+startup_deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
+if run_docker_with_deadline "${startup_deadline_seconds}" run --detach --rm --name "${CONTAINER_NAME}" \
     --env "POSTGRES_USER=${POSTGRES_USER}" \
     --env "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
     --env "POSTGRES_DB=postgres" \
-    "${POSTGRES_IMAGE}" >/dev/null
-container_started=true
+    "${POSTGRES_IMAGE}" >/dev/null; then
+    :
+else
+    command_exit_status=$?
+    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+        printf 'Timed out starting the PostgreSQL container within the bounded observation window\n' >&2
+        exit 69
+    fi
+    exit "${command_exit_status}"
+fi
 
 wait_for_final_postgres
 
@@ -460,9 +514,8 @@ if [[ "${terminated_lock_holders//[[:space:]]/}" != "1" ]]; then
     fail "expected to terminate one advisory lock holder, got ${terminated_lock_holders}"
 fi
 
-if wait "${lock_holder_pid}"; then
-    fail "the advisory lock holder unexpectedly completed without termination"
-fi
+wait_for_lock_holder_termination "${lock_holder_pid}" "${lock_holder_status_file}" \
+    "${TEST_DIRECTORY}/lock-holder.log" "the advisory lock holder"
 lock_holder_pid=""
 
 wait_for_process "${first_worker_pid}" "${first_worker_status_file}" \

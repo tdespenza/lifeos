@@ -246,6 +246,11 @@ has_valid_https_authority() {
         fi
         host="${BASH_REMATCH[1]}"
         port="${BASH_REMATCH[3]:-}"
+        # RFC 4291's longest textual IPv6 form (including an IPv4 tail) is 45 characters.
+        # Reject oversized literals before regex splitting to keep validation bounded.
+        if (( ${#host} > 45 )); then
+            return 1
+        fi
         if ! is_valid_ipv6_literal "${host}"; then
             return 1
         fi

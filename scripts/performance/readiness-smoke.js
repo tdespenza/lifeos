@@ -2,6 +2,9 @@ import http from 'k6/http';
 import {check, sleep} from 'k6';
 
 const targetUrl = __ENV.TARGET_URL;
+if (typeof targetUrl !== 'string' || targetUrl.length === 0) {
+  throw new Error('TARGET_URL is required');
+}
 
 export const options = {
   vus: Number(__ENV.VUS || '10'),

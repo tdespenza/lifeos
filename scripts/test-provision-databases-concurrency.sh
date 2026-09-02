@@ -506,8 +506,15 @@ wait_for_background_query_result \
     "${first_worker_pid}" "${first_worker_status_file}" "${TEST_DIRECTORY}/first-worker.log" "the first provisioning worker" \
     "${second_worker_pid}" "${second_worker_status_file}" "${TEST_DIRECTORY}/second-worker.log" "the second provisioning worker"
 
-if ! terminated_lock_holders="$(postgres_query \
+foreground_deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
+if terminated_lock_holders="$(postgres_query_before_deadline "${foreground_deadline_seconds}" \
     "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity WHERE application_name = '${LOCK_HOLDER_APPLICATION_NAME}') AS terminated WHERE terminated;")"; then
+    :
+else
+    command_exit_status=$?
+    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+        fail "timed out terminating the advisory lock holder within the bounded observation window"
+    fi
     fail "could not terminate the advisory lock holder"
 fi
 if [[ "${terminated_lock_holders//[[:space:]]/}" != "1" ]]; then
@@ -525,7 +532,16 @@ wait_for_process "${second_worker_pid}" "${second_worker_status_file}" \
     "${TEST_DIRECTORY}/second-worker.log" "second provisioning worker"
 second_worker_pid=""
 
-created_databases="$(postgres_query "SELECT datname FROM pg_database WHERE datname IN ('lifeos_identity', 'lifeos_task_goal') ORDER BY datname;")"
+if created_databases="$(postgres_query_before_deadline "${foreground_deadline_seconds}" \
+    "SELECT datname FROM pg_database WHERE datname IN ('lifeos_identity', 'lifeos_task_goal') ORDER BY datname;")"; then
+    :
+else
+    command_exit_status=$?
+    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+        fail "timed out querying created databases within the bounded observation window"
+    fi
+    fail "could not query created databases"
+fi
 if [[ "${created_databases}" != $'lifeos_identity\nlifeos_task_goal' ]]; then
     fail "concurrent provisioning did not create both databases: ${created_databases}"
 fi

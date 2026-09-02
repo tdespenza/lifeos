@@ -29,6 +29,52 @@ is_health_probe_log_entry() {
 fake_docker() {
     fake_log_command docker "$@"
 
+    if [[ "${FAKE_CONCURRENT_DATABASE_PROVISIONING:-false}" == "true" \
+        && "${1:-}" == "exec" ]]; then
+        local docker_arguments="$*"
+
+        if [[ "${docker_arguments}" == *"lifeos-provision-lock-holder"* \
+            && "${docker_arguments}" == *"pg_advisory_lock"* ]]; then
+            if [[ -n "${FAKE_CONCURRENT_LOCK_HOLDER_STARTED_FILE:-}" ]]; then
+                : > "${FAKE_CONCURRENT_LOCK_HOLDER_STARTED_FILE}"
+            fi
+            while [[ ! -e "${FAKE_CONCURRENT_RELEASE_FILE:?}" ]]; do
+                command -p sleep 0.05
+            done
+            return "${FAKE_CONCURRENT_LOCK_HOLDER_STATUS:-143}"
+        fi
+
+        if [[ "${docker_arguments}" == *"--interactive"* ]]; then
+            cat >/dev/null
+            while [[ ! -e "${FAKE_CONCURRENT_RELEASE_FILE:?}" ]]; do
+                command -p sleep 0.05
+            done
+            return 0
+        fi
+
+        if [[ "${docker_arguments}" == *"pg_terminate_backend"* ]]; then
+            : > "${FAKE_CONCURRENT_RELEASE_FILE:?}"
+            printf '%s\n' '1'
+            return 0
+        fi
+        if [[ "${docker_arguments}" == *"SELECT datname FROM pg_database"* ]]; then
+            printf '%s\n' 'lifeos_identity' 'lifeos_task_goal'
+            return 0
+        fi
+        if [[ "${docker_arguments}" == *"FROM pg_locks"* ]]; then
+            printf '%s\n' '1'
+            return 0
+        fi
+        if [[ "${docker_arguments}" == *"wait_event_type"* ]]; then
+            printf '%s\n' '2'
+            return 0
+        fi
+        if [[ "${docker_arguments}" == *"SELECT 1;"* ]]; then
+            printf '%s\n' '1'
+            return 0
+        fi
+    fi
+
     if [[ "${1:-}" == "run" && -n "${FAKE_DOCKER_RUN_STARTED_FILE:-}" ]]; then
         if [[ -z "${FAKE_DOCKER_RUN_RELEASE_FILE:-}" ]]; then
             printf '%s\n' 'FAKE_DOCKER_RUN_RELEASE_FILE is required when blocking a fake Docker run' >&2
@@ -116,7 +162,11 @@ fake_timeout() {
         "${@:1:$((docker_argument_index - 1))}" \
         "docker ${docker_subcommand}"
 
-    if [[ -n "${FAKE_TIMEOUT_STATUS+x}" \
+    if [[ -n "${FAKE_TIMEOUT_DOCKER_MATCH:-}" ]]; then
+        if [[ " $* " == *"${FAKE_TIMEOUT_DOCKER_MATCH}"* ]]; then
+            return "${FAKE_TIMEOUT_STATUS:-124}"
+        fi
+    elif [[ -n "${FAKE_TIMEOUT_STATUS+x}" \
         && ( -z "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND:-}" \
             || "${docker_subcommand}" == "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND}" ) ]]; then
         return "${FAKE_TIMEOUT_STATUS}"
@@ -981,7 +1031,12 @@ execute_target() {
         FAKE_DOCKER_RUN_STARTED_FILE \
         FAKE_DOCKER_STDIN_LOG \
         FAKE_DOCKER_STATUS \
+        FAKE_CONCURRENT_DATABASE_PROVISIONING \
+        FAKE_CONCURRENT_RELEASE_FILE \
+        FAKE_CONCURRENT_LOCK_HOLDER_STARTED_FILE \
+        FAKE_CONCURRENT_LOCK_HOLDER_STATUS \
         FAKE_TIMEOUT_DOCKER_SUBCOMMAND \
+        FAKE_TIMEOUT_DOCKER_MATCH \
         FAKE_TIMEOUT_STATUS \
         FAKE_CURL_STATUS \
         FAKE_CURL_STDOUT \
@@ -2509,6 +2564,40 @@ test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait() {
     assert_file_contains "${concurrency_script}" \
         'wait_for_lock_holder_termination' \
         "concurrent database provisioning lock-holder wait helper"
+}
+
+test_concurrent_database_provisioning_bounds_foreground_queries() {
+    local concurrency_script="${REPOSITORY_ROOT}/scripts/test-provision-databases-concurrency.sh"
+
+    new_harness provision-concurrency-foreground-query-timeout test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_CONCURRENT_DATABASE_PROVISIONING=true" \
+        "FAKE_CONCURRENT_RELEASE_FILE=${TEST_ROOT}/lock-holder-release" \
+        "FAKE_TIMEOUT_DOCKER_MATCH=SELECT datname FROM pg_database" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=exec" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 1 "concurrent database provisioning when the foreground database query times out"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "timed out querying created databases within the bounded observation window" \
+        "concurrent database provisioning foreground query timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=KILL\t' \
+        "concurrent database provisioning foreground query timeout wrapper"
+    assert_log_contains "${TEST_ROOT}" \
+        $'docker\trm\t--force' \
+        "concurrent database provisioning foreground query timeout cleanup"
+    assert_file_contains "${concurrency_script}" \
+        "postgres_query_before_deadline \"\${foreground_deadline_seconds}\"" \
+        "concurrent database provisioning bounds foreground PostgreSQL queries"
+    assert_file_excludes "${concurrency_script}" \
+        "terminated_lock_holders=\"\$(postgres_query " \
+        "concurrent database provisioning has no unbounded foreground lock-holder query"
+    assert_file_excludes "${concurrency_script}" \
+        "created_databases=\"\$(postgres_query " \
+        "concurrent database provisioning has no unbounded foreground database query"
 }
 
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
@@ -4319,6 +4408,7 @@ test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
 test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait
+test_concurrent_database_provisioning_bounds_foreground_queries
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed

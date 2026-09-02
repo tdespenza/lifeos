@@ -117,12 +117,15 @@ trivy_cache_lock_is_held() {
     [[ -d "${TRIVY_CACHE_LOCK_DIRECTORY}" && ! -L "${TRIVY_CACHE_LOCK_DIRECTORY}" ]]
 }
 
+trivy_cache_lock_owned=false
+
 acquire_trivy_cache_lock() {
     local deadline_seconds=$((SECONDS + TRIVY_CACHE_LOCK_TIMEOUT_SECONDS))
     local mkdir_error
 
     while true; do
         if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+            trivy_cache_lock_owned=true
             return 0
         fi
 
@@ -131,6 +134,7 @@ acquire_trivy_cache_lock() {
         # malformed cache path or permission error. Do not treat a symlink as lock contention.
         if ! trivy_cache_lock_is_held; then
             if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+                trivy_cache_lock_owned=true
                 return 0
             fi
             if ! trivy_cache_lock_is_held; then
@@ -149,13 +153,16 @@ acquire_trivy_cache_lock() {
 }
 
 release_trivy_cache_lock() {
-    rmdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null || true
+    if [[ "${trivy_cache_lock_owned}" == true ]]; then
+        rmdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>/dev/null || true
+        trivy_cache_lock_owned=false
+    fi
 }
 
+trap release_trivy_cache_lock EXIT
 if ! acquire_trivy_cache_lock; then
     exit 69
 fi
-trap release_trivy_cache_lock EXIT
 
 if run_docker_operation run --rm \
     --mount "type=bind,$(docker_mount_source "${TRIVY_CACHE_DIR}"),target=/root/.cache" \

@@ -11,37 +11,34 @@ process.chdir(repositoryRoot);
 
 const scenarioPath = path.resolve('scripts/performance/readiness-smoke.js');
 const scenarioSource = fs.readFileSync('scripts/performance/readiness-smoke.js', 'utf8');
-const requestCalls = [];
-const checkCalls = [];
-const sleepCalls = [];
-const jsonFields = [];
-
-const readinessResponse = Object.freeze({
-    status: 200,
-    json(field) {
-        jsonFields.push(field);
-        return field === 'status' ? 'UP' : undefined;
-    },
-});
-
-const http = Object.freeze({
-    get(url, options) {
-        requestCalls.push({url, options});
-        return readinessResponse;
-    },
-});
-
-const k6 = Object.freeze({
-    check(response, predicates) {
-        checkCalls.push({response, predicates});
-        return Object.values(predicates).every((predicate) => predicate(response));
-    },
-    sleep(seconds) {
-        sleepCalls.push(seconds);
-    },
-});
 
 async function loadScenario(environment) {
+    const requestCalls = [];
+    const checkCalls = [];
+    const sleepCalls = [];
+    const jsonFields = [];
+    const readinessResponse = Object.freeze({
+        status: 200,
+        json(field) {
+            jsonFields.push(field);
+            return field === 'status' ? 'UP' : undefined;
+        },
+    });
+    const http = Object.freeze({
+        get(url, options) {
+            requestCalls.push({url, options});
+            return readinessResponse;
+        },
+    });
+    const k6 = Object.freeze({
+        check(response, predicates) {
+            checkCalls.push({response, predicates});
+            return Object.values(predicates).every((predicate) => predicate(response));
+        },
+        sleep(seconds) {
+            sleepCalls.push(seconds);
+        },
+    });
     const context = vm.createContext({__ENV: environment});
     const httpModule = new vm.SyntheticModule(
         ['default'],
@@ -73,15 +70,19 @@ async function loadScenario(environment) {
         throw new Error(`Unexpected readiness scenario import: ${specifier}`);
     });
     await scenario.evaluate();
-    return scenario;
+    return {
+        scenario,
+        recorders: {requestCalls, checkCalls, sleepCalls, jsonFields, readinessResponse},
+    };
 }
 
 async function executeReadinessScenario() {
-    const scenario = await loadScenario({
+    const {scenario, recorders} = await loadScenario({
         TARGET_URL: 'https://gateway.example.test///',
         VUS: '3',
         DURATION: '5s',
     });
+    const {requestCalls, checkCalls, sleepCalls, jsonFields, readinessResponse} = recorders;
 
     assert.equal(scenario.namespace.options.vus, 3);
     assert.equal(scenario.namespace.options.duration, '5s');
@@ -124,7 +125,7 @@ async function executeInvalidVusScenarios() {
 }
 
 async function executeDefaultVusScenario() {
-    const scenario = await loadScenario({TARGET_URL: 'https://gateway.example.test'});
+    const {scenario} = await loadScenario({TARGET_URL: 'https://gateway.example.test'});
     assert.equal(scenario.namespace.options.vus, 10);
 }
 

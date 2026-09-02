@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 
 # This file is sourced by multiple operational entrypoints. Keep repeated sourcing idempotent so
-# readonly constants are initialized only once in a caller's shell.
-if [[ "${LIFEOS_HTTPS_AUTHORITY_VALIDATION_LOADED:-}" == "1" ]]; then
+# readonly constants are initialized only once in a caller's shell. An indexed array cannot be
+# imported from the environment, so a scalar with the same name cannot spoof this sentinel.
+if [[ "$(declare -p _LIFEOS_HTTPS_AUTHORITY_VALIDATION_STATE 2>/dev/null)" == "declare -a "* ]]; then
     if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         exit 0
     fi
     return 0
 fi
-readonly LIFEOS_HTTPS_AUTHORITY_VALIDATION_LOADED=1
+_LIFEOS_HTTPS_AUTHORITY_VALIDATION_STATE=()
 
 # Shared HTTPS authority validation and health-check retry helpers for operational smoke and
 # chaos scripts. Callers retain endpoint-specific path policies and use

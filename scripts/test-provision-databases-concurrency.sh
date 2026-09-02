@@ -161,12 +161,6 @@ lock_holder_status_file="${TEST_DIRECTORY}/lock-holder.status"
 first_worker_status_file="${TEST_DIRECTORY}/first-worker.status"
 second_worker_status_file="${TEST_DIRECTORY}/second-worker.status"
 
-postgres_query() {
-    docker exec "${CONTAINER_NAME}" \
-        psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_STOP=1 \
-        --tuples-only --no-align --quiet --command "$1"
-}
-
 remaining_observation_timeout_seconds() {
     local deadline_seconds="$1"
     local remaining_seconds=$(( deadline_seconds - SECONDS ))
@@ -532,6 +526,10 @@ wait_for_process "${second_worker_pid}" "${second_worker_status_file}" \
     "${TEST_DIRECTORY}/second-worker.log" "second provisioning worker"
 second_worker_pid=""
 
+# The lock-holder wait above can consume most of the observation window. Start a fresh bounded
+# window for the final database inventory so a successful termination is not reported as a query
+# timeout merely because the earlier wait used the original deadline.
+foreground_deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
 if created_databases="$(postgres_query_before_deadline "${foreground_deadline_seconds}" \
     "SELECT datname FROM pg_database WHERE datname IN ('lifeos_identity', 'lifeos_task_goal') ORDER BY datname;")"; then
     :

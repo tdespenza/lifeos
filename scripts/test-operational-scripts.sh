@@ -538,7 +538,17 @@ fake_mktemp() {
         fi
     fi
 
-    command -p mktemp "$@"
+    local temporary_path
+    if ! temporary_path="$(command -p mktemp "$@")"; then
+        return $?
+    fi
+    if [[ -n "${FAKE_MKTEMP_BLOCK_STARTED_FILE:-}" ]]; then
+        : > "${FAKE_MKTEMP_BLOCK_STARTED_FILE}"
+        while [[ ! -e "${FAKE_MKTEMP_BLOCK_RELEASE_FILE:?}" ]]; do
+            command -p sleep 0.05
+        done
+    fi
+    printf '%s\n' "${temporary_path}"
 }
 
 fake_dirname() {
@@ -575,6 +585,13 @@ fake_k6() {
 
     mkdir -p "$(dirname "${summary_path}")"
     printf '%s\n' '{"metrics":{}}' > "${summary_path}"
+
+    if [[ -n "${FAKE_K6_BLOCK_STARTED_FILE:-}" ]]; then
+        : > "${FAKE_K6_BLOCK_STARTED_FILE}"
+        while [[ ! -e "${FAKE_K6_BLOCK_RELEASE_FILE:?}" ]]; do
+            command -p sleep 0.05
+        done
+    fi
 }
 
 case "${0##*/}" in
@@ -1062,6 +1079,10 @@ execute_target() {
         FAKE_MKDIR_FAILURE_PATH \
         FAKE_MKDIR_FAILURE_ONCE_FILE \
         FAKE_MKDIR_FAILURE_STATUS \
+        FAKE_K6_BLOCK_STARTED_FILE \
+        FAKE_K6_BLOCK_RELEASE_FILE \
+        FAKE_MKTEMP_BLOCK_STARTED_FILE \
+        FAKE_MKTEMP_BLOCK_RELEASE_FILE \
         FAKE_MKTEMP_CALL_COUNT_FILE \
         FAKE_MKTEMP_FAIL_ON_CALL \
         FAKE_MKTEMP_FAILURE_STATUS \
@@ -2156,6 +2177,46 @@ test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created() {
     done
 }
 
+test_source_scan_releases_owned_trivy_lock_when_interrupted() {
+    new_harness source-scan-cache-lock-interruption scan-source-security.sh
+
+    new_external_cache_dir
+    local cache_dir="${EXTERNAL_CACHE_DIR}"
+    local lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+    local started_file="${TEST_ROOT}/trivy-run-started"
+    local release_file="${TEST_ROOT}/trivy-run-release"
+
+    start_target "${TEST_ROOT}" scan-source-security.sh "${TEST_ROOT}/output.log" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+        "FAKE_DOCKER_RUN_STARTED_FILE=${started_file}" \
+        "FAKE_DOCKER_RUN_RELEASE_FILE=${release_file}"
+
+    if ! wait_for_file "${started_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "source scan must reach Trivy after acquiring the cache lock"
+    fi
+    if [[ ! -d "${lock_directory}" || -L "${lock_directory}" ]]; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "source scan must create a real cache lock before interruption"
+    fi
+
+    kill -TERM "${BACKGROUND_TARGET_PID}"
+    : > "${release_file}"
+    if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+        fail "source scan must stop after SIGTERM"
+    else
+        RUN_STATUS=$?
+    fi
+
+    assert_status 143 "source scan cache-lock interruption exit status"
+    if [[ -e "${lock_directory}" ]]; then
+        fail "source scan must release only its owned cache lock after SIGTERM"
+    fi
+}
+
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting() {
     local security_scan_script
     local cache_dir
@@ -2674,8 +2735,8 @@ test_performance_smoke_accepts_100_vus_and_prefers_k6() {
         "LIFEOS_PERFORMANCE_SUMMARY_PATH=build/reports/performance/k6-summary.json"
 
     assert_status 0 "performance smoke test with 100 VUs"
-    assert_log_contains "${TEST_ROOT}" $'k6\trun\t--quiet\t--summary-export\t'"${TEST_ROOT}"$'/build/reports/performance/k6-summary.json' \
-        "performance smoke native k6 selection"
+    assert_log_contains "${TEST_ROOT}" $'k6\trun\t--quiet\t--summary-export\t'"${TMPDIR:-/tmp}"$'/lifeos-k6-summary.' \
+        "performance smoke native k6 selection and private summary staging"
     assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' "performance smoke when native k6 is available"
     assert_file_contains "${TEST_ROOT}/scripts/performance/readiness-smoke.js" "checks: ['rate==1']" \
         "performance smoke k6 check-failure threshold"
@@ -2708,6 +2769,48 @@ test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
         "performance Docker fallback predictable container summary path"
     if [[ ! -s "${TEST_ROOT}/build/reports/performance/k6-summary.json" ]]; then
         fail "performance Docker fallback must write the mounted summary file"
+    fi
+}
+
+test_performance_smoke_rejects_concurrent_summary_parent_symlink_swap() {
+    new_harness performance-summary-parent-symlink-race performance-smoke-test.sh performance/readiness-smoke.js
+    add_mktemp_double "${TEST_ROOT}"
+    local outside_root
+    local started_file="${TEST_ROOT}/summary-mktemp-started"
+    local release_file="${TEST_ROOT}/summary-mktemp-release"
+    local target_parent="${TEST_ROOT}/build"
+
+    outside_root="$(mktemp -d "${TMPDIR:-/tmp}/lifeos-operational-outside.XXXXXX")"
+    TEST_DIRECTORIES+=("${outside_root}")
+    mkdir -p "${target_parent}/reports/performance"
+
+    start_target "${TEST_ROOT}" performance-smoke-test.sh "${TEST_ROOT}/output.log" \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH=build/reports/performance/k6-summary.json" \
+        "FAKE_MKTEMP_BLOCK_STARTED_FILE=${started_file}" \
+        "FAKE_MKTEMP_BLOCK_RELEASE_FILE=${release_file}"
+    RUN_OUTPUT="${TEST_ROOT}/output.log"
+
+    if ! wait_for_file "${started_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "performance smoke must validate its summary path before the summary-parent symlink swap"
+    fi
+
+    mv "${target_parent}" "${TEST_ROOT}/build-original"
+    ln -s "${outside_root}" "${target_parent}"
+    : > "${release_file}"
+    if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+        fail "performance smoke must reject a concurrent summary-parent symlink swap"
+    else
+        RUN_STATUS=$?
+    fi
+
+    assert_status 73 "performance smoke summary-parent symlink swap"
+    assert_file_contains "${RUN_OUTPUT}" "Unable to install the performance summary safely" \
+        "performance smoke summary-parent symlink swap diagnostic"
+    if [[ -e "${outside_root}/reports/performance/k6-summary.json" ]]; then
+        fail "performance smoke must not write a summary through a swapped parent symlink"
     fi
 }
 
@@ -3482,6 +3585,11 @@ test_operational_scripts_share_https_authority_and_health_helpers() {
     if ! bash -c 'set -euo pipefail; source "$1"; first_attempts="${HEALTH_CHECK_MAX_ATTEMPTS}"; source "$1"; [[ "${HEALTH_CHECK_MAX_ATTEMPTS}" == "${first_attempts}" && "${HEALTH_RESPONSE_MAX_BYTES}" == 65536 ]]' \
         _ "${TEST_ROOT}/scripts/https-authority-validation.sh"; then
         fail "shared HTTPS authority validation library must be safely sourceable twice"
+    fi
+
+    if ! LIFEOS_HTTPS_AUTHORITY_VALIDATION_LOADED=1 bash -c 'set -euo pipefail; source "$1"; declare -F has_valid_https_authority >/dev/null; declare -F wait_for_health >/dev/null; [[ -n "${HEALTH_RESPONSE_FILE+x}" ]]' \
+        _ "${TEST_ROOT}/scripts/https-authority-validation.sh"; then
+        fail "shared HTTPS authority validation library must not trust an inherited load marker"
     fi
 }
 
@@ -4398,6 +4506,7 @@ test_security_scans_select_portable_timeout_commands
 test_security_scans_serialize_shared_trivy_cache_access
 test_container_scan_releases_trivy_cache_lock_between_services
 test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created
+test_source_scan_releases_owned_trivy_lock_when_interrupted
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting
 test_security_scans_retry_after_a_trivy_cache_lock_release_race
 test_security_scans_ignore_untrusted_trivy_image_overrides
@@ -4414,6 +4523,7 @@ test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
+test_performance_smoke_rejects_concurrent_summary_parent_symlink_swap
 test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_bounds_summary_path_input
 test_performance_smoke_rejects_invalid_vus_values

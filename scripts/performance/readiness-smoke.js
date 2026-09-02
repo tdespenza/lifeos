@@ -6,8 +6,13 @@ if (typeof targetUrl !== 'string' || targetUrl.length === 0) {
   throw new Error('TARGET_URL is required');
 }
 
+const vus = Number(__ENV.VUS || '10');
+if (!Number.isFinite(vus) || !Number.isInteger(vus) || vus <= 0) {
+  throw new Error('VUS must be a positive integer');
+}
+
 export const options = {
-  vus: Number(__ENV.VUS || '10'),
+  vus,
   duration: __ENV.DURATION || '15s',
   thresholds: {
     http_req_failed: ['rate<0.01'],

@@ -114,7 +114,26 @@ async function executeMissingTargetUrlScenario() {
     );
 }
 
-Promise.all([executeReadinessScenario(), executeMissingTargetUrlScenario()])
+async function executeInvalidVusScenarios() {
+    for (const value of ['1.5', '0', '-1', 'Infinity', 'not-a-number']) {
+        await assert.rejects(
+            () => loadScenario({TARGET_URL: 'https://gateway.example.test', VUS: value}),
+            /VUS must be a positive integer/,
+        );
+    }
+}
+
+async function executeDefaultVusScenario() {
+    const scenario = await loadScenario({TARGET_URL: 'https://gateway.example.test'});
+    assert.equal(scenario.namespace.options.vus, 10);
+}
+
+Promise.all([
+    executeReadinessScenario(),
+    executeMissingTargetUrlScenario(),
+    executeInvalidVusScenarios(),
+    executeDefaultVusScenario(),
+])
     .then(() => {
         console.log('Readiness smoke scenario behavior passed');
     })

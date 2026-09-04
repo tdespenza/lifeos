@@ -7,7 +7,6 @@ To build and run this project locally you need:
 * **JDK 25** — the project targets a Java 25 toolchain (see [ADR-001](docs/adr/ADR-001-use-java-25.md)). [SDKMAN](https://sdkman.io/) is the easiest way to install one (e.g. Temurin 25): `sdk install java 25.0.3-tem`.
   * Gradle itself needs JVM **17+** just to launch — if your default `java` on `PATH` is older, either `sdk default java 25.0.3-tem` or set `JAVA_HOME` to a 17+ JDK before running `./gradlew`.
 * **Docker** — for local PostgreSQL + Redis via `infrastructure/docker-compose/`.
-* **Node.js 20.18.0 or newer** — `./gradlew check` runs the deterministic k6 readiness-scenario test through the Node.js runtime.
 * **Git**.
 
 No local Gradle install is required — use the wrapper (`./gradlew`), which pins the exact Gradle version the project builds with.

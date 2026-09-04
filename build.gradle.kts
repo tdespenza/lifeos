@@ -289,9 +289,31 @@ tasks.register<Exec>("endToEndTest") {
     commandLine("bash", rootProject.file("scripts/end-to-end-smoke-test.sh").absolutePath)
 }
 
+val minimumNodeMajor = 20
+val minimumNodeMinor = 18
+val minimumNodeVersion = "$minimumNodeMajor.$minimumNodeMinor.0"
+tasks.register<Exec>("nodeRuntimeCheck") {
+    description = "Verifies Node.js $minimumNodeVersion or newer is available for readiness checks."
+    group = "verification"
+    commandLine(
+        "node",
+        "-e",
+        """
+        const [major, minor] = process.versions.node.split('.').map(Number);
+        const supported = Number.isInteger(major) && Number.isInteger(minor) &&
+          (major > $minimumNodeMajor || (major === $minimumNodeMajor && minor >= $minimumNodeMinor));
+        if (!supported) {
+          console.error('Node.js >=$minimumNodeVersion is required for performance readiness checks; found ' + process.versions.node);
+          process.exit(1);
+        }
+        """.trimIndent()
+    )
+}
+
 tasks.register<Exec>("performanceReadinessScenarioTest") {
     description = "Executes the k6 readiness scenario with a deterministic mocked k6 runtime."
     group = "verification"
+    dependsOn("nodeRuntimeCheck")
     commandLine(
         "node",
         "--experimental-vm-modules",

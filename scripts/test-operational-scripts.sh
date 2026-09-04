@@ -90,6 +90,10 @@ fake_docker() {
         return "${FAKE_DOCKER_INFO_STATUS:-0}"
     fi
 
+    if [[ "${1:-}" == "pull" ]]; then
+        return "${FAKE_DOCKER_PULL_STATUS:-${FAKE_DOCKER_STATUS:-0}}"
+    fi
+
     if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
         return "${FAKE_DOCKER_IMAGE_INSPECT_STATUS:-0}"
     fi
@@ -1044,6 +1048,7 @@ execute_target() {
         FAKE_DOCKER_COMPOSE_UP_STATUS \
         FAKE_DOCKER_INFO_STATUS \
         FAKE_DOCKER_IMAGE_INSPECT_STATUS \
+        FAKE_DOCKER_PULL_STATUS \
         FAKE_DOCKER_RUN_RELEASE_FILE \
         FAKE_DOCKER_RUN_STARTED_FILE \
         FAKE_DOCKER_STDIN_LOG \
@@ -2543,19 +2548,26 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
     add_database_provisioning_sql "${TEST_ROOT}"
 
     # Stop after recording docker run: the remaining test needs a real PostgreSQL server.
-    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh "FAKE_DOCKER_STATUS=75"
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_DOCKER_PULL_STATUS=0" \
+        "FAKE_DOCKER_STATUS=75"
 
     assert_status 75 "concurrent database provisioning with its default image"
     assert_log_contains "${TEST_ROOT}" $'docker\trun\t--detach\t--rm\t--name' \
         "concurrent database provisioning default image invocation"
     assert_log_contains "${TEST_ROOT}" "${pinned_image}" \
         "concurrent database provisioning default image pin"
+    assert_log_order "${TEST_ROOT}" \
+        $'docker\tpull\t'"${pinned_image}" \
+        $'docker\trun\t--detach\t--rm\t--name' \
+        "concurrent database provisioning pulls the default image before startup"
 
     new_harness provision-concurrency-override-image test-provision-databases-concurrency.sh
     add_database_provisioning_sql "${TEST_ROOT}"
 
     run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
         "LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE=${override_image}" \
+        "FAKE_DOCKER_PULL_STATUS=0" \
         "FAKE_DOCKER_STATUS=75"
 
     assert_status 75 "concurrent database provisioning with an image override"
@@ -2563,6 +2575,10 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
         "concurrent database provisioning image override"
     assert_log_excludes "${TEST_ROOT}" "${pinned_image}" \
         "concurrent database provisioning image override"
+    assert_log_order "${TEST_ROOT}" \
+        $'docker\tpull\t'"${override_image}" \
+        $'docker\trun\t--detach\t--rm\t--name' \
+        "concurrent database provisioning pulls the override image before startup"
 
     assert_file_contains "${concurrency_script}" \
         'readonly MAXIMUM_OBSERVATION_SECONDS=30' \
@@ -2570,6 +2586,12 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
     assert_file_contains "${concurrency_script}" \
         'container_started=true' \
         "concurrent database provisioning marks the container cleanup-eligible before startup"
+    assert_file_contains "${concurrency_script}" \
+        'readonly IMAGE_PULL_TIMEOUT_SECONDS=120' \
+        "concurrent database provisioning bounds the image pull independently"
+    assert_file_contains "${concurrency_script}" \
+        "run_docker_with_deadline \"\${image_pull_deadline_seconds}\" pull \"\${POSTGRES_IMAGE}\"" \
+        "concurrent database provisioning pulls the image before startup"
     assert_file_contains "${concurrency_script}" \
         "run_docker_with_deadline \"\${startup_deadline_seconds}\" run --detach --rm --name" \
         "concurrent database provisioning bounds container startup"
@@ -2600,6 +2622,43 @@ test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
     assert_file_excludes "${concurrency_script}" \
         "if wait \"\${lock_holder_pid}\"" \
         "concurrent database provisioning avoids an unbounded lock-holder wait"
+}
+
+test_concurrent_database_provisioning_bounds_image_pull() {
+    local concurrency_script="${REPOSITORY_ROOT}/scripts/test-provision-databases-concurrency.sh"
+
+    new_harness provision-concurrency-pull-timeout test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=pull" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "concurrent database provisioning when image pull times out"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Timed out pulling the PostgreSQL image within the bounded image-pull window" \
+        "concurrent database provisioning image-pull timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=KILL\t119s\tdocker pull' \
+        "concurrent database provisioning bounded image-pull command"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" run \
+        "concurrent database provisioning must not start a container after an image-pull timeout"
+
+    new_harness provision-concurrency-pull-failure test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_DOCKER_PULL_STATUS=75"
+
+    assert_status 75 "concurrent database provisioning when image pull fails"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Could not pull the PostgreSQL image before starting the container" \
+        "concurrent database provisioning image-pull failure diagnostic"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" run \
+        "concurrent database provisioning must not start a container after an image-pull failure"
+    assert_file_contains "${concurrency_script}" \
+        "startup_deadline_seconds=\$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))" \
+        "concurrent database provisioning keeps the 30-second startup deadline"
 }
 
 test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait() {
@@ -2842,6 +2901,22 @@ test_performance_smoke_rejects_escaped_summary_paths() {
     if [[ -e "${outside_root}/k6-summary.json" ]]; then
         fail "performance smoke test must not write through a lexically escaped summary path"
     fi
+}
+
+test_performance_smoke_rejects_summary_paths_with_newlines() {
+    new_harness performance-summary-path-newline performance-smoke-test.sh performance/readiness-smoke.js
+    local invalid_summary_path=$'build/reports/performance/k6-summary\ntruncated.json'
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH=${invalid_summary_path}"
+
+    assert_status 64 "performance smoke test with a newline in the summary path"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "LIFEOS_PERFORMANCE_SUMMARY_PATH must resolve to a valid path" \
+        "performance summary-path newline validation"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "performance smoke test must reject a summary path with a newline before invoking k6 or Docker"
 }
 
 test_performance_smoke_bounds_summary_path_input() {
@@ -4516,6 +4591,7 @@ test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
 test_database_provisioning_sql_keeps_create_queries_open_for_gexec
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override
+test_concurrent_database_provisioning_bounds_image_pull
 test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait
 test_concurrent_database_provisioning_bounds_foreground_queries
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout
@@ -4525,6 +4601,7 @@ test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
 test_performance_smoke_rejects_concurrent_summary_parent_symlink_swap
 test_performance_smoke_rejects_escaped_summary_paths
+test_performance_smoke_rejects_summary_paths_with_newlines
 test_performance_smoke_bounds_summary_path_input
 test_performance_smoke_rejects_invalid_vus_values
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport

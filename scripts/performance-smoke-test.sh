@@ -140,6 +140,10 @@ canonicalize_path() {
         return 1
     fi
 
+    if [[ "${input_path}" == *$'\n'* ]]; then
+        return 1
+    fi
+
     if [[ "${input_path}" == /* ]]; then
         candidate_path="${input_path}"
     else

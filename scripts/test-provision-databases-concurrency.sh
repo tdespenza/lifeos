@@ -28,6 +28,9 @@ readonly OBSERVATION_TIMEOUT_EXIT_STATUS=124
 # Preserve bounded failure diagnostics and container cleanup without consuming the provisioning
 # SQL's remaining 15-second lock-timeout headroom after a 30-second observation window.
 readonly FAILURE_RECOVERY_TIMEOUT_SECONDS=3
+# Image pulls can be slow on a cold CI runner, but must still be bounded independently of the
+# 30-second container-start observation window below.
+readonly IMAGE_PULL_TIMEOUT_SECONDS=120
 
 TEST_DIRECTORY=""
 container_started=false
@@ -455,6 +458,19 @@ wait_for_lock_holder_termination() {
     # reap of a process that has already completed its Docker command.
     wait "${process_id}" >/dev/null 2>&1 || true
 }
+
+image_pull_deadline_seconds=$(( SECONDS + IMAGE_PULL_TIMEOUT_SECONDS ))
+if run_docker_with_deadline "${image_pull_deadline_seconds}" pull "${POSTGRES_IMAGE}" >/dev/null; then
+    :
+else
+    command_exit_status=$?
+    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+        printf 'Timed out pulling the PostgreSQL image within the bounded image-pull window\n' >&2
+        exit 69
+    fi
+    printf 'Could not pull the PostgreSQL image before starting the container\n' >&2
+    exit "${command_exit_status}"
+fi
 
 container_started=true
 startup_deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))

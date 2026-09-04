@@ -16,6 +16,8 @@ readonly PIPELINE_SCRIPTS=(
     performance-smoke-test.sh
     run-chaos-experiment.sh
     provision-local-databases.sh
+    test-operational-scripts.sh
+    test-provision-databases-concurrency.sh
 )
 
 if ! command -v node >/dev/null 2>&1; then

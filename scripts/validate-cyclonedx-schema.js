@@ -271,6 +271,19 @@ function validateBomPurls(bom) {
     return errors;
 }
 
+function validateMetadataComponentRules(bom) {
+    if (
+        bom.specVersion === '1.7'
+        && isObject(bom.metadata)
+        && isObject(bom.metadata.component)
+        && bom.metadata.component.isExternal === true
+    ) {
+        return ['/metadata/component/isExternal: must be false for a metadata component'];
+    }
+
+    return [];
+}
+
 async function validateSchema() {
     const args = process.argv.slice(2);
     if (args.length !== 1) {
@@ -321,11 +334,20 @@ async function validateSchema() {
     }
 
     const purlErrors = validateBomPurls(bom);
+    const metadataErrors = validateMetadataComponentRules(bom);
     if (purlErrors.length > 0) {
         console.error(`CycloneDX PURL validation failed for ${JSON.stringify(sbomPath)}:`);
         for (const error of purlErrors) {
             console.error(error);
         }
+    }
+    if (metadataErrors.length > 0) {
+        console.error(`CycloneDX semantic validation failed for ${JSON.stringify(sbomPath)}:`);
+        for (const error of metadataErrors) {
+            console.error(error);
+        }
+    }
+    if (purlErrors.length > 0 || metadataErrors.length > 0) {
         process.exitCode = 65;
     }
 }

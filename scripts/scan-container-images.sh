@@ -25,6 +25,7 @@ readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
 # deadline so a broken Docker dependency cannot consume the enclosing CI-job timeout.
 readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
 readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
 readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
 readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
 # Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
@@ -130,6 +131,13 @@ run_docker_operation() {
     "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
 }
 
+is_docker_timeout_status() {
+    local docker_status="$1"
+
+    [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" \
+        || "${docker_status}" -eq "${DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
+
 docker_mount_source() {
     local source="$1"
 
@@ -143,7 +151,7 @@ if run_docker_operation info >/dev/null 2>&1; then
     :
 else
     docker_status=$?
-    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_docker_timeout_status "${docker_status}"; then
         echo "Docker daemon check timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
         exit 69
     fi
@@ -158,7 +166,7 @@ for service in "${SERVICES[@]}"; do
     else
         docker_status=$?
     fi
-    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_docker_timeout_status "${docker_status}"; then
         echo "Container image availability check for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
         exit 69
     fi
@@ -188,6 +196,7 @@ acquire_trivy_cache_lock() {
 
     while true; do
         if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+            TRIVY_CACHE_LOCK_HELD=true
             return 0
         fi
 
@@ -196,6 +205,7 @@ acquire_trivy_cache_lock() {
         # malformed cache path or permission error. Do not treat a symlink as lock contention.
         if ! trivy_cache_lock_is_held; then
             if mkdir_error="$(mkdir "${TRIVY_CACHE_LOCK_DIRECTORY}" 2>&1)"; then
+                TRIVY_CACHE_LOCK_HELD=true
                 return 0
             fi
             if ! trivy_cache_lock_is_held; then
@@ -229,7 +239,6 @@ for service in "${SERVICES[@]}"; do
     if ! acquire_trivy_cache_lock; then
         exit 69
     fi
-    TRIVY_CACHE_LOCK_HELD=true
 
     if run_docker_operation run --rm \
         --mount "type=bind,$(docker_mount_source "${TRIVY_CACHE_DIR}"),target=/root/.cache" \
@@ -252,7 +261,7 @@ for service in "${SERVICES[@]}"; do
     if [[ "${docker_status}" -eq 0 ]]; then
         continue
     fi
-    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_docker_timeout_status "${docker_status}"; then
         echo "Trivy image scan for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
         exit 69
     fi

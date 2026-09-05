@@ -21,6 +21,7 @@ readonly TRIVY_CACHE_LOCK_POLL_SECONDS=1
 # deadline so a broken Docker dependency cannot consume the enclosing CI-job timeout.
 readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
 readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
 
 if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
     || (( 10#${DOCKER_OPERATION_TIMEOUT_SECONDS} > 900 )); then
@@ -85,6 +86,13 @@ run_docker_operation() {
     "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
 }
 
+is_docker_timeout_status() {
+    local docker_status="$1"
+
+    [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" \
+        || "${docker_status}" -eq "${DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
+
 docker_mount_source() {
     local source="$1"
 
@@ -98,7 +106,7 @@ if run_docker_operation info >/dev/null 2>&1; then
     :
 else
     docker_status=$?
-    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_docker_timeout_status "${docker_status}"; then
         echo "Docker daemon check timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
         exit 69
     fi
@@ -181,7 +189,7 @@ if run_docker_operation run --rm \
     :
 else
     docker_status=$?
-    if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_docker_timeout_status "${docker_status}"; then
         echo "Trivy source security scan timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
         exit 69
     fi

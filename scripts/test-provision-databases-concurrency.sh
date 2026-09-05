@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+for required_command in dirname od tr date awk mktemp sed rm sleep docker; do
+    if ! command -v "${required_command}" >/dev/null 2>&1; then
+        echo "${required_command} is required to run the concurrent database provisioning regression test" >&2
+        exit 69
+    fi
+done
+
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly PROVISION_FILE="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
@@ -136,11 +143,6 @@ fi
 
 if ! verify_session_lock_structure; then
     exit 65
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-    echo "docker is required to run the concurrent database provisioning regression test" >&2
-    exit 69
 fi
 
 if command -v timeout >/dev/null 2>&1; then

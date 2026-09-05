@@ -16,6 +16,7 @@ readonly PUSH_IMAGES="${LIFEOS_PUSH_IMAGES:-false}"
 # dependency cannot consume the enclosing CI-job timeout.
 readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
 readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
 readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
 readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
 # Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
@@ -103,6 +104,13 @@ run_docker_operation() {
     "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
 }
 
+is_docker_timeout_status() {
+    local docker_status="$1"
+
+    [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" \
+        || "${docker_status}" -eq "${DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
+
 case "${PUSH_IMAGES}" in
     true|false) ;;
     *)
@@ -156,7 +164,7 @@ for service in "${SERVICES[@]}"; do
         :
     else
         docker_status=$?
-        if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+        if is_docker_timeout_status "${docker_status}"; then
             echo "Container image build for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
             exit 69
         fi
@@ -169,7 +177,7 @@ for service in "${SERVICES[@]}"; do
             :
         else
             docker_status=$?
-            if [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" ]]; then
+            if is_docker_timeout_status "${docker_status}"; then
                 echo "Container image push for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
                 exit 69
             fi

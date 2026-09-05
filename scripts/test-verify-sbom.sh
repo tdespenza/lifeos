@@ -178,6 +178,20 @@ assert_fails "a nested CycloneDX 1.7 component version range requires isExternal
     "$FIXTURE_DIR/invalid-1.7-nested-version-range-with-external-false.json"
 assert_fails "a CycloneDX 1.7 metadata component cannot be external" \
     "$FIXTURE_DIR/invalid-1.7-metadata-component-external.json"
+validator_output="$(mktemp)"
+if node "$SCRIPT_DIR/validate-cyclonedx-schema.js" \
+    "$FIXTURE_DIR/invalid-1.7-metadata-component-external.json" >"$validator_output" 2>&1; then
+    echo "FAIL: the CycloneDX validator accepted an external metadata component" >&2
+    rm -f -- "$validator_output"
+    exit 1
+fi
+if ! grep -Fq '/metadata/component/isExternal: must be false for a metadata component' \
+    "$validator_output"; then
+    echo "FAIL: the CycloneDX validator did not report the metadata-component isExternal rule" >&2
+    rm -f -- "$validator_output"
+    exit 1
+fi
+rm -f -- "$validator_output"
 assert_fails "an unknown nested component property is rejected" \
     "$FIXTURE_DIR/unknown-nested-component-property.json"
 assert_schema_fails "an unknown root property is rejected by the declared schema" \

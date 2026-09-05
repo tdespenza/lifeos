@@ -572,6 +572,14 @@ fake_find() {
 fake_k6() {
     fake_log_command k6 "$@"
 
+    trap - INT
+    if [[ -n "${FAKE_K6_SIGNAL_FILE:-}" ]]; then
+        trap 'printf "%s\n" "$$" > "${FAKE_K6_SIGNAL_FILE}"; exit 130' INT
+    fi
+    if [[ -n "${FAKE_K6_PID_FILE:-}" ]]; then
+        printf '%s\n' "$$" > "${FAKE_K6_PID_FILE}"
+    fi
+
     local summary_path=""
     local index
     for ((index = 1; index <= $#; index += 1)); do
@@ -1086,6 +1094,8 @@ execute_target() {
         FAKE_MKDIR_FAILURE_STATUS \
         FAKE_K6_BLOCK_STARTED_FILE \
         FAKE_K6_BLOCK_RELEASE_FILE \
+        FAKE_K6_PID_FILE \
+        FAKE_K6_SIGNAL_FILE \
         FAKE_MKTEMP_BLOCK_STARTED_FILE \
         FAKE_MKTEMP_BLOCK_RELEASE_FILE \
         FAKE_MKTEMP_CALL_COUNT_FILE \
@@ -1447,6 +1457,22 @@ test_container_build_validates_and_bounds_docker_operations() {
         "container build timeout wrapper"
     assert_no_logged_docker_subcommand "${TEST_ROOT}" build \
         "container build must not invoke Docker after its timeout wrapper expires"
+
+    new_harness build-sigkill-timeout build-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+    add_service_jar "${TEST_ROOT}" example-service example-service.jar
+
+    run_target "${TEST_ROOT}" build-container-images.sh \
+        "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=build" \
+        "FAKE_TIMEOUT_STATUS=137"
+
+    assert_status 69 "container build with Docker killed at the timeout deadline"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Container image build for lifeos/example-service:local timed out after 1s" \
+        "container build SIGKILL timeout diagnostic"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" build \
+        "container build must not continue after a SIGKILL timeout"
 
     new_harness build-push-timeout build-container-images.sh
     add_service_dockerfile "${TEST_ROOT}" example-service
@@ -1907,7 +1933,7 @@ test_security_scans_validate_and_bound_docker_operations() {
         assert_no_logged_command "${TEST_ROOT}" docker \
             "${security_scan_script} must not invoke Docker after its timeout wrapper expires"
 
-        new_harness "${security_scan_script%.sh}-trivy-run-timeout" "${security_scan_script}"
+        new_harness "${security_scan_script%.sh}-trivy-run-sigkill-timeout" "${security_scan_script}"
         if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
             add_service_dockerfile "${TEST_ROOT}" example-service
         fi
@@ -1922,7 +1948,7 @@ test_security_scans_validate_and_bound_docker_operations() {
             "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
             "LIFEOS_DOCKER_TIMEOUT_SECONDS=1" \
             "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=run" \
-            "FAKE_TIMEOUT_STATUS=124"
+            "FAKE_TIMEOUT_STATUS=137"
 
         assert_status 69 "${security_scan_script} with a timed out Trivy invocation"
         if [[ "${security_scan_script}" == "scan-container-images.sh" ]]; then
@@ -2222,6 +2248,46 @@ test_source_scan_releases_owned_trivy_lock_when_interrupted() {
     fi
 }
 
+test_container_scan_releases_owned_trivy_lock_when_interrupted() {
+    new_harness container-scan-cache-lock-interruption scan-container-images.sh
+    add_service_dockerfile "${TEST_ROOT}" example-service
+
+    local cache_dir="${TEST_ROOT}/trivy-cache"
+    local lock_directory="${cache_dir}/.lifeos-trivy-cache.lock"
+    local started_file="${TEST_ROOT}/trivy-run-started"
+    local release_file="${TEST_ROOT}/trivy-run-release"
+
+    start_target "${TEST_ROOT}" scan-container-images.sh "${TEST_ROOT}/output.log" \
+        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+        "LIFEOS_TRIVY_CACHE_DIR=${cache_dir}" \
+        "FAKE_DOCKER_RUN_STARTED_FILE=${started_file}" \
+        "FAKE_DOCKER_RUN_RELEASE_FILE=${release_file}"
+
+    if ! wait_for_file "${started_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "container scan must reach Trivy after acquiring its cache lock"
+    fi
+    if [[ ! -d "${lock_directory}" || -L "${lock_directory}" ]]; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "container scan must create a real cache lock before interruption"
+    fi
+
+    kill -TERM "${BACKGROUND_TARGET_PID}"
+    : > "${release_file}"
+    if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+        fail "container scan must stop after SIGTERM"
+    else
+        RUN_STATUS=$?
+    fi
+
+    assert_status 143 "container scan cache-lock interruption exit status"
+    if [[ -e "${lock_directory}" ]]; then
+        fail "container scan must release only its owned cache lock after SIGTERM"
+    fi
+}
+
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting() {
     local security_scan_script
     local cache_dir
@@ -2368,6 +2434,25 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
     assert_nonzero_status "database provisioning when Compose cannot start postgres"
     assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' "database provisioning after Compose request failure"
 
+    new_harness provision-exec-sigkill-timeout provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=compose" \
+        "FAKE_TIMEOUT_DOCKER_MATCH=exec" \
+        "FAKE_TIMEOUT_STATUS=137"
+
+    assert_status 69 "database provisioning when SQL execution is killed at the timeout deadline"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Database provisioning SQL execution timed out after 1s" \
+        "database provisioning SQL timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker compose' \
+        "database provisioning SQL timeout wrapper"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning must not invoke Docker after the SQL timeout wrapper expires"
+
     new_harness provision-timeout provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
 
@@ -2381,6 +2466,21 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
         $'\tup\t--detach\t--wait\t--wait-timeout\t1\tpostgres' \
         "database provisioning timeout bound"
     assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' "database provisioning after a health timeout"
+}
+
+test_database_provisioning_requires_dirname_before_root_resolution() {
+    new_harness provision-missing-dirname provision-local-databases.sh
+    add_prerequisite_command "${TEST_ROOT}" bash
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "database provisioning without dirname"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "dirname is required to resolve the repository root" \
+        "database provisioning dirname prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "database provisioning without dirname must not invoke downstream commands"
 }
 
 test_database_provisioning_requires_the_compose_plugin() {
@@ -2741,7 +2841,7 @@ test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
     disable_fake_command "${TEST_ROOT}" gtimeout
 
     local prerequisite
-    for prerequisite in bash dirname date od tr awk; do
+    for prerequisite in bash dirname date od tr awk mktemp sed rm; do
         add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
     done
 
@@ -2754,6 +2854,34 @@ test_concurrent_database_provisioning_requires_a_bounded_observation_timeout() {
         "concurrent database provisioning timeout prerequisite"
     assert_no_commands_logged "${TEST_ROOT}" \
         "concurrent database provisioning without a timeout must fail before Docker"
+}
+
+test_concurrent_database_provisioning_preflights_host_utilities() {
+    local missing_command prerequisite
+    local -a required_commands=(dirname od tr date awk mktemp sed rm sleep docker)
+
+    for missing_command in "${required_commands[@]}"; do
+        new_harness "provision-concurrency-missing-${missing_command}" test-provision-databases-concurrency.sh
+        if [[ -e "${TEST_ROOT}/bin/${missing_command}" ]]; then
+            disable_fake_command "${TEST_ROOT}" "${missing_command}"
+        fi
+        add_prerequisite_command "${TEST_ROOT}" bash
+        for prerequisite in "${required_commands[@]}"; do
+            if [[ "${prerequisite}" != "${missing_command}" ]]; then
+                add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+            fi
+        done
+
+        run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+            "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+        assert_status 69 "concurrent database provisioning without ${missing_command}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "${missing_command} is required to run the concurrent database provisioning regression test" \
+            "concurrent database provisioning ${missing_command} prerequisite"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "concurrent database provisioning without ${missing_command} must fail before external commands"
+    done
 }
 
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly() {
@@ -3030,6 +3158,94 @@ test_performance_smoke_rejects_invalid_target_authorities() {
         assert_no_commands_logged "${TEST_ROOT}" \
             "performance smoke must reject ${invalid_target_url} before Docker k6"
     done
+}
+
+test_performance_smoke_preflights_fallback_dependencies() {
+    new_harness performance-missing-basename performance-smoke-test.sh performance/readiness-smoke.js
+    disable_fake_command "${TEST_ROOT}" k6
+    local prerequisite
+    for prerequisite in bash dirname id mkdir mktemp mv readlink rm; do
+        add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+    done
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6=true" \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "PATH=${TEST_ROOT}/bin:${TEST_ROOT}/prerequisite-bin"
+
+    assert_status 69 "performance smoke without basename"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "basename is required to stage the performance summary safely" \
+        "performance smoke basename prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "performance smoke without basename must fail before Docker fallback"
+
+    new_harness performance-missing-authority-library performance-smoke-test.sh performance/readiness-smoke.js
+    rm -f -- "${TEST_ROOT}/scripts/https-authority-validation.sh"
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test"
+
+    assert_status 69 "performance smoke without the HTTPS authority validation library"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "HTTPS authority validation library is required" \
+        "performance smoke HTTPS authority library prerequisite"
+    assert_no_commands_logged "${TEST_ROOT}" \
+        "performance smoke without the HTTPS authority library must fail before k6 or Docker"
+}
+
+test_performance_smoke_cleans_temporary_summary_on_sigint() {
+    new_harness performance-sigint-temporary-summary performance-smoke-test.sh performance/readiness-smoke.js
+    local temporary_directory="${TEST_ROOT}/temporary-files"
+    local started_file="${TEST_ROOT}/k6-started"
+    local release_file="${TEST_ROOT}/k6-release"
+    local k6_pid_file="${TEST_ROOT}/k6.pid"
+    local k6_signal_file="${TEST_ROOT}/k6-int"
+    local k6_pid
+    mkdir -p "${temporary_directory}"
+
+    start_target "${TEST_ROOT}" performance-smoke-test.sh "${TEST_ROOT}/output.log" \
+        "FAKE_RESET_SIGNAL_DISPOSITIONS=true" \
+        "TMPDIR=${temporary_directory}" \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "FAKE_K6_BLOCK_STARTED_FILE=${started_file}" \
+        "FAKE_K6_BLOCK_RELEASE_FILE=${release_file}" \
+        "FAKE_K6_PID_FILE=${k6_pid_file}" \
+        "FAKE_K6_SIGNAL_FILE=${k6_signal_file}"
+
+    if ! wait_for_file "${started_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "performance smoke must begin its foreground k6 run before SIGINT"
+    fi
+    if [[ -z "$(command -p find "${temporary_directory}" -mindepth 1 -print -quit)" ]]; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "performance smoke must allocate a temporary summary before SIGINT"
+    fi
+
+    if ! wait_for_file "${k6_pid_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "performance smoke must expose the foreground k6 process before SIGINT"
+    fi
+    k6_pid="$(command -p cat "${k6_pid_file}")"
+    kill -INT "${k6_pid}"
+    if ! wait_for_file "${k6_signal_file}"; then
+        : > "${release_file}"
+        wait "${BACKGROUND_TARGET_PID}" || true
+        fail "performance smoke foreground k6 must receive SIGINT"
+    fi
+    : > "${release_file}"
+    if wait "${BACKGROUND_TARGET_PID}" 2>/dev/null; then
+        fail "performance smoke must stop after SIGINT"
+    else
+        RUN_STATUS=$?
+    fi
+
+    assert_status 130 "performance smoke SIGINT exit status"
+    assert_directory_empty "${temporary_directory}" \
+        "performance smoke SIGINT temporary-summary cleanup"
 }
 
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport() {
@@ -4638,10 +4854,12 @@ test_security_scans_serialize_shared_trivy_cache_access
 test_container_scan_releases_trivy_cache_lock_between_services
 test_security_scans_fail_fast_when_the_trivy_cache_lock_cannot_be_created
 test_source_scan_releases_owned_trivy_lock_when_interrupted
+test_container_scan_releases_owned_trivy_lock_when_interrupted
 test_security_scans_reject_symlinked_trivy_cache_locks_without_waiting
 test_security_scans_retry_after_a_trivy_cache_lock_release_race
 test_security_scans_ignore_untrusted_trivy_image_overrides
 test_database_provisioning_waits_before_exec_and_handles_failures
+test_database_provisioning_requires_dirname_before_root_resolution
 test_database_provisioning_requires_the_compose_plugin
 test_database_provisioning_requires_a_supported_compose_version
 test_database_provisioning_rejects_unbounded_timeout
@@ -4651,6 +4869,7 @@ test_concurrent_database_provisioning_bounds_image_pull
 test_concurrent_database_provisioning_bounds_startup_and_lock_holder_wait
 test_concurrent_database_provisioning_bounds_foreground_queries
 test_concurrent_database_provisioning_requires_a_bounded_observation_timeout
+test_concurrent_database_provisioning_preflights_host_utilities
 test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
@@ -4661,6 +4880,8 @@ test_performance_smoke_rejects_summary_paths_with_newlines
 test_performance_smoke_bounds_summary_path_input
 test_performance_smoke_rejects_invalid_vus_values
 test_performance_smoke_rejects_invalid_target_authorities
+test_performance_smoke_preflights_fallback_dependencies
+test_performance_smoke_cleans_temporary_summary_on_sigint
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies
 test_container_service_discovery_fails_closed_after_partial_output

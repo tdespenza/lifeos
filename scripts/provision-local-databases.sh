@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v dirname >/dev/null 2>&1; then
+    echo "dirname is required to resolve the repository root" >&2
+    exit 69
+fi
+
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
 readonly COMPOSE_FILE="${REPOSITORY_ROOT}/infrastructure/docker-compose/docker-compose.yml"
 readonly PROVISION_FILE="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
 readonly STARTUP_TIMEOUT_SECONDS="${LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS:-60}"
+readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
 readonly MINIMUM_COMPOSE_VERSION_MAJOR=2
 readonly MINIMUM_COMPOSE_VERSION_MINOR=17
 readonly MINIMUM_COMPOSE_VERSION_PATCH=0
@@ -106,6 +113,29 @@ if [[ ! "${STARTUP_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
     exit 64
 fi
 
+if command -v timeout >/dev/null 2>&1; then
+    DOCKER_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    # macOS ships no timeout utility; Homebrew's coreutils exposes the GNU-compatible command
+    # as gtimeout. Prefer timeout on CI/Linux while retaining a clear local development path.
+    DOCKER_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound database provisioning" >&2
+    exit 69
+fi
+readonly DOCKER_TIMEOUT_COMMAND
+
+run_docker_operation() {
+    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${STARTUP_TIMEOUT_SECONDS}s" docker "$@"
+}
+
+is_docker_timeout_status() {
+    local docker_status="$1"
+
+    [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" \
+        || "${docker_status}" -eq "${DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
+
 if ! compose_version="$(docker compose version --short 2>/dev/null)"; then
     echo "docker Compose plugin is required to provision local LifeOS databases" >&2
     exit 69
@@ -157,6 +187,16 @@ fi
 docker compose -f "${COMPOSE_FILE}" up --detach --wait \
     --wait-timeout "${STARTUP_TIMEOUT_SECONDS}" postgres
 
-docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+# shellcheck disable=SC2016 # The command must expand POSTGRES_USER inside the container.
+if run_docker_operation compose -f "${COMPOSE_FILE}" exec -T postgres \
     sh -ec 'psql --username "$POSTGRES_USER" --dbname postgres --set ON_ERROR_STOP=1' \
-    <"${PROVISION_FILE}"
+    <"${PROVISION_FILE}"; then
+    :
+else
+    docker_status=$?
+    if is_docker_timeout_status "${docker_status}"; then
+        echo "Database provisioning SQL execution timed out after ${STARTUP_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
+    exit "${docker_status}"
+fi

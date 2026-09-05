@@ -10,18 +10,32 @@ readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
 readonly K6_IMAGE="grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2"
 # This bounds the user-controlled input processed by canonicalize_path; it is not an OS PATH_MAX.
 readonly PERFORMANCE_SUMMARY_PATH_MAX_LENGTH=4096
-source "${REPOSITORY_ROOT}/scripts/https-authority-validation.sh"
+readonly HTTPS_AUTHORITY_VALIDATION_SCRIPT="${REPOSITORY_ROOT}/scripts/https-authority-validation.sh"
+if [[ ! -f "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}" || ! -r "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}" ]]; then
+    echo "HTTPS authority validation library is required" >&2
+    exit 69
+fi
+# The library path is derived from the repository root and is checked above.
+# shellcheck disable=SC1090,SC1091
+source "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}"
 
 temporary_summary_path=""
 
 cleanup_temporary_summary() {
+    local exit_status="${1:-$?}"
+
+    trap - EXIT HUP INT TERM
     # Keep a failed Docker run from leaving its private bind-mount source in the host temp directory.
     if [[ -n "${temporary_summary_path}" ]]; then
-        rm -f -- "${temporary_summary_path}"
+        rm -f -- "${temporary_summary_path}" || true
     fi
+    exit "${exit_status}"
 }
 
-trap cleanup_temporary_summary EXIT
+trap 'cleanup_temporary_summary "$?"' EXIT
+trap 'cleanup_temporary_summary 129' HUP
+trap 'cleanup_temporary_summary 130' INT
+trap 'cleanup_temporary_summary 143' TERM
 
 install_summary_securely() {
     local source_path="$1"
@@ -231,10 +245,12 @@ if [[ "${SUMMARY_PATH}" != "${REPOSITORY_ROOT}/"* ]]; then
     echo "LIFEOS_PERFORMANCE_SUMMARY_PATH must stay under the repository root" >&2
     exit 64
 fi
-if ! command -v mktemp >/dev/null 2>&1; then
-    echo "mktemp is required to stage the performance summary safely" >&2
-    exit 69
-fi
+for performance_command in mktemp basename; do
+    if ! command -v "${performance_command}" >/dev/null 2>&1; then
+        echo "${performance_command} is required to stage the performance summary safely" >&2
+        exit 69
+    fi
+done
 
 if command -v k6 >/dev/null 2>&1; then
     temporary_summary_path="$(mktemp "${TMPDIR:-/tmp}/lifeos-k6-summary.XXXXXX")" || {

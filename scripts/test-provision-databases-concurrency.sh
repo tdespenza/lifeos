@@ -25,6 +25,8 @@ readonly WORKER_APPLICATION_NAME="lifeos-provision-concurrency-worker"
 readonly MAXIMUM_OBSERVATION_SECONDS=30
 readonly POLL_INTERVAL_SECONDS=0.1
 readonly OBSERVATION_TIMEOUT_EXIT_STATUS=124
+# GNU timeout exits 128 + SIGKILL when its child is killed after the deadline.
+readonly OBSERVATION_TIMEOUT_SIGNAL_EXIT_STATUS=137
 # Preserve bounded failure diagnostics and container cleanup without consuming the provisioning
 # SQL's remaining 15-second lock-timeout headroom after a 30-second observation window.
 readonly FAILURE_RECOVERY_TIMEOUT_SECONDS=3
@@ -190,6 +192,13 @@ run_docker_with_deadline() {
     # KILL avoids a grace-period overrun after a probe consumes its remaining budget. The
     # disposable container is removed by cleanup, so a killed Docker client cannot leak it.
     "${OBSERVATION_TIMEOUT_COMMAND}" --signal=KILL "${timeout_seconds}s" docker "$@"
+}
+
+is_observation_timeout_status() {
+    local command_exit_status="$1"
+
+    [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" \
+        || "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
 }
 
 postgres_query_before_deadline() {
@@ -464,7 +473,7 @@ if run_docker_with_deadline "${image_pull_deadline_seconds}" pull "${POSTGRES_IM
     :
 else
     command_exit_status=$?
-    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_observation_timeout_status "${command_exit_status}"; then
         printf 'Timed out pulling the PostgreSQL image within the bounded image-pull window\n' >&2
         exit 69
     fi
@@ -482,7 +491,7 @@ if run_docker_with_deadline "${startup_deadline_seconds}" run --detach --rm --na
     :
 else
     command_exit_status=$?
-    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_observation_timeout_status "${command_exit_status}"; then
         printf 'Timed out starting the PostgreSQL container within the bounded observation window\n' >&2
         exit 69
     fi
@@ -522,7 +531,7 @@ if terminated_lock_holders="$(postgres_query_before_deadline "${foreground_deadl
     :
 else
     command_exit_status=$?
-    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_observation_timeout_status "${command_exit_status}"; then
         fail "timed out terminating the advisory lock holder within the bounded observation window"
     fi
     fail "could not terminate the advisory lock holder"
@@ -551,7 +560,7 @@ if created_databases="$(postgres_query_before_deadline "${foreground_deadline_se
     :
 else
     command_exit_status=$?
-    if [[ "${command_exit_status}" -eq "${OBSERVATION_TIMEOUT_EXIT_STATUS}" ]]; then
+    if is_observation_timeout_status "${command_exit_status}"; then
         fail "timed out querying created databases within the bounded observation window"
     fi
     fail "could not query created databases"

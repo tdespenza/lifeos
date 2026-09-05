@@ -2644,6 +2644,20 @@ test_concurrent_database_provisioning_bounds_image_pull() {
     assert_no_logged_docker_subcommand "${TEST_ROOT}" run \
         "concurrent database provisioning must not start a container after an image-pull timeout"
 
+    new_harness provision-concurrency-pull-sigkill-timeout test-provision-databases-concurrency.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" test-provision-databases-concurrency.sh \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=pull" \
+        "FAKE_TIMEOUT_STATUS=137"
+
+    assert_status 69 "concurrent database provisioning when image pull is killed at the deadline"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Timed out pulling the PostgreSQL image within the bounded image-pull window" \
+        "concurrent database provisioning SIGKILL image-pull timeout diagnostic"
+    assert_no_logged_docker_subcommand "${TEST_ROOT}" run \
+        "concurrent database provisioning must not start a container after a SIGKILL image-pull timeout"
+
     new_harness provision-concurrency-pull-failure test-provision-databases-concurrency.sh
     add_database_provisioning_sql "${TEST_ROOT}"
 
@@ -2973,6 +2987,48 @@ test_performance_smoke_rejects_invalid_vus_values() {
         assert_status 64 "performance smoke test with invalid VUS ${value}"
         assert_file_contains "${RUN_OUTPUT}" "must be between 1 and 100" "performance VUS validation ${value}"
         assert_log_excludes "${TEST_ROOT}" $'k6\trun\t' "performance smoke after invalid VUS ${value}"
+    done
+}
+
+test_performance_smoke_rejects_invalid_target_authorities() {
+    local invalid_target_url
+    local harness_suffix
+    local prerequisite
+
+    for invalid_target_url in 'https://:' 'https://127.1'; do
+        harness_suffix="${invalid_target_url#https://}"
+        harness_suffix="${harness_suffix//[^A-Za-z0-9]/-}"
+
+        new_harness "performance-invalid-target-native-${harness_suffix}" \
+            performance-smoke-test.sh performance/readiness-smoke.js
+
+        run_target "${TEST_ROOT}" performance-smoke-test.sh \
+            "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=${invalid_target_url}"
+
+        assert_status 64 "performance smoke test with invalid target authority ${invalid_target_url}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" \
+            "performance target-authority validation ${invalid_target_url}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "performance smoke must reject ${invalid_target_url} before native k6 or Docker"
+
+        new_harness "performance-invalid-target-docker-${harness_suffix}" \
+            performance-smoke-test.sh performance/readiness-smoke.js
+        disable_fake_command "${TEST_ROOT}" k6
+        for prerequisite in bash basename dirname id mkdir mktemp mv readlink rm; do
+            add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+        done
+
+        run_target "${TEST_ROOT}" performance-smoke-test.sh \
+            "LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6=true" \
+            "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=${invalid_target_url}"
+
+        assert_status 64 "performance Docker fallback with invalid target authority ${invalid_target_url}"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" \
+            "performance Docker target-authority validation ${invalid_target_url}"
+        assert_no_commands_logged "${TEST_ROOT}" \
+            "performance smoke must reject ${invalid_target_url} before Docker k6"
     done
 }
 
@@ -4604,6 +4660,7 @@ test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_summary_paths_with_newlines
 test_performance_smoke_bounds_summary_path_input
 test_performance_smoke_rejects_invalid_vus_values
+test_performance_smoke_rejects_invalid_target_authorities
 test_deploy_staging_rejects_unsafe_webhooks_and_uses_bounded_transport
 test_service_discovery_requires_its_dependencies
 test_container_service_discovery_fails_closed_after_partial_output

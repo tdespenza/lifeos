@@ -10,6 +10,7 @@ readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
 readonly K6_IMAGE="grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2"
 # This bounds the user-controlled input processed by canonicalize_path; it is not an OS PATH_MAX.
 readonly PERFORMANCE_SUMMARY_PATH_MAX_LENGTH=4096
+source "${REPOSITORY_ROOT}/scripts/https-authority-validation.sh"
 
 temporary_summary_path=""
 
@@ -210,7 +211,8 @@ if ! SUMMARY_PATH="$(canonicalize_path "${SUMMARY_PATH_INPUT}")"; then
 fi
 readonly SUMMARY_PATH
 
-if [[ ! "${TARGET_URL}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]]; then
+if [[ ! "${TARGET_URL}" =~ ^https://[^/@?#]+(/[^?#]*)?$ ]] \
+    || ! has_valid_https_authority "${TARGET_URL}"; then
     echo "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL must be a canonical HTTPS URL" >&2
     exit 64
 fi

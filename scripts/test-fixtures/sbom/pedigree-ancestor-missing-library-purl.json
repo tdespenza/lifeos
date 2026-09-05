@@ -1,0 +1,18 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "pedigree-owner",
+      "pedigree": {
+        "ancestors": [
+          {
+            "type": "library",
+            "name": "ancestor-without-purl"
+          }
+        ]
+      }
+    }
+  ]
+}

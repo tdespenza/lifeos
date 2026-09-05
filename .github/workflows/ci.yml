@@ -29,6 +29,14 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install SBOM schema validator
+        run: npm ci --ignore-scripts
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
@@ -37,3 +45,20 @@ jobs:
 
       - name: Test release version helper
         run: bash scripts/test-release-version.sh
+
+      - name: Test operational script behavior
+        run: bash scripts/test-operational-scripts.sh
+
+      - name: Test concurrent database provisioning
+        run: bash scripts/test-provision-databases-concurrency.sh
+
+      - name: Verify operational script syntax
+        run: bash scripts/verify-pipeline-scripts.sh
+
+      - name: Test SBOM validator
+        run: bash scripts/test-verify-sbom.sh
+
+      - name: Generate and validate CycloneDX SBOM
+        run: |
+          ./gradlew cyclonedxBom
+          bash scripts/verify-sbom.sh

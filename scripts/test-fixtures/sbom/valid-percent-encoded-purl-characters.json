@@ -1,0 +1,16 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "percent-encoded-square-brackets",
+      "purl": "pkg:npm/foo%5Bbar%5D"
+    },
+    {
+      "type": "library",
+      "name": "percent-encoded-non-ascii",
+      "purl": "pkg:npm/na%C3%AFve"
+    }
+  ]
+}

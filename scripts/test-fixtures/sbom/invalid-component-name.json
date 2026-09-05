@@ -1,0 +1,10 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": 42
+    }
+  ]
+}

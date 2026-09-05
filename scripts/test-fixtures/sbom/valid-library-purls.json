@@ -1,0 +1,43 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "lifeos"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "spring-boot-starter-web",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-web@3.5.0"
+    },
+    {
+      "type": "library",
+      "name": "@angular/core",
+      "purl": "pkg:npm/%40angular/core@19.0.0"
+    },
+    {
+      "type": "library",
+      "name": "commons-lang3",
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.17.0?type=jar&classifier=sources"
+    },
+    {
+      "type": "library",
+      "name": "encoded-qualifier-separators",
+      "purl": "pkg:maven/com.example/encoded-qualifier-separators@1.0.0?repository_url=x%3Ftype%3Dy"
+    },
+    {
+      "type": "application",
+      "name": "nested-component-owner",
+      "components": [
+        {
+          "type": "library",
+          "name": "nested-library",
+          "purl": "pkg:maven/com.example/nested-library@1.0.0"
+        }
+      ]
+    }
+  ]
+}

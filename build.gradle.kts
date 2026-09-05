@@ -289,9 +289,42 @@ tasks.register<Exec>("endToEndTest") {
     commandLine("bash", rootProject.file("scripts/end-to-end-smoke-test.sh").absolutePath)
 }
 
+val minimumNodeMajor = 20
+val minimumNodeMinor = 18
+val minimumNodeVersion = "$minimumNodeMajor.$minimumNodeMinor.0"
+tasks.register<Exec>("nodeRuntimeCheck") {
+    description = "Verifies Node.js $minimumNodeVersion or newer is available for readiness checks."
+    group = "verification"
+    commandLine(
+        "node",
+        "-e",
+        """
+        const [major, minor] = process.versions.node.split('.').map(Number);
+        const supported = Number.isInteger(major) && Number.isInteger(minor) &&
+          (major > $minimumNodeMajor || (major === $minimumNodeMajor && minor >= $minimumNodeMinor));
+        if (!supported) {
+          console.error('Node.js >=$minimumNodeVersion is required for performance readiness checks; found ' + process.versions.node);
+          process.exit(1);
+        }
+        """.trimIndent()
+    )
+}
+
+tasks.register<Exec>("performanceReadinessScenarioTest") {
+    description = "Executes the k6 readiness scenario with a deterministic mocked k6 runtime."
+    group = "verification"
+    dependsOn("nodeRuntimeCheck")
+    commandLine(
+        "node",
+        "--experimental-vm-modules",
+        rootProject.file("scripts/test-performance-readiness-smoke.js").absolutePath
+    )
+}
+
 tasks.register<Exec>("performanceTest") {
     description = "Runs the bounded k6 readiness performance smoke test against an enabled environment."
     group = "verification"
+    dependsOn("performanceReadinessScenarioTest")
     commandLine("bash", rootProject.file("scripts/performance-smoke-test.sh").absolutePath)
 }
 
@@ -306,5 +339,5 @@ tasks.named("check") {
     // without making it a mutation-test command; PIT remains the explicit `mutationTest` task.
     dependsOn("formatCheck", "staticAnalysis")
     dependsOn(javaSubprojectTaskPaths("check"))
-    dependsOn("architectureTest")
+    dependsOn("architectureTest", "performanceReadinessScenarioTest")
 }

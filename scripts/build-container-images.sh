@@ -17,17 +17,13 @@ readonly PUSH_IMAGES="${LIFEOS_PUSH_IMAGES:-false}"
 readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
 readonly DOCKER_TIMEOUT_EXIT_STATUS=124
 readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
-readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
-readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
-# Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
-# "[aaaa]". Until that parser is available, accept only DNS-style registry hosts rather than
-# allowing an invalid generated reference to reach Docker.
-readonly IMAGE_REGISTRY_HOST_PATTERN="${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN}(\.${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN})*"
-readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
-readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
-# The Distribution reference parser limits the complete repository name (including an optional
-# registry and port, but excluding the tag) to 255 characters.
-readonly IMAGE_REPOSITORY_NAME_MAX_LENGTH=255
+readonly IMAGE_REFERENCE_VALIDATION_SCRIPT="${REPOSITORY_ROOT}/scripts/image-reference-validation.sh"
+if [[ ! -f "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" || ! -r "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" ]]; then
+    echo "Image reference validation library is required" >&2
+    exit 69
+fi
+# shellcheck disable=SC1090,SC1091
+source "${IMAGE_REFERENCE_VALIDATION_SCRIPT}"
 SERVICES=()
 
 if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
@@ -58,30 +54,6 @@ if [[ -n "${discovered_services}" ]]; then
     done <<< "${discovered_services}"
 fi
 readonly SERVICES
-
-# Validate the fully assembled reference so malformed registry ports, repository segments, tags,
-# and Dockerfile-derived service names fail before any image build or push is attempted.
-validate_image_reference() {
-    local image_reference="$1"
-    local repository_name
-
-    if [[ ! "${image_reference}" =~ ${IMAGE_REFERENCE_PATTERN} ]]; then
-        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
-            "${image_reference}" >&2
-        return 1
-    fi
-
-    # Tags always follow the final colon in a syntactically valid reference, so this preserves a
-    # registry port. Docker's reference parser limits this entire name, including any registry,
-    # rather than only its slash-separated path.
-    repository_name="${image_reference%:*}"
-
-    if (( ${#repository_name} > IMAGE_REPOSITORY_NAME_MAX_LENGTH )); then
-        printf 'Invalid container image reference %q generated from LIFEOS_IMAGE_PREFIX and LIFEOS_IMAGE_TAG\n' \
-            "${image_reference}" >&2
-        return 1
-    fi
-}
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required to build LifeOS container images" >&2

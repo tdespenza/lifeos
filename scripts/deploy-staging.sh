@@ -8,6 +8,13 @@ fi
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPOSITORY_ROOT
+readonly IMAGE_REFERENCE_VALIDATION_SCRIPT="${REPOSITORY_ROOT}/scripts/image-reference-validation.sh"
+if [[ ! -f "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" || ! -r "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" ]]; then
+    echo "Image reference validation library is required" >&2
+    exit 69
+fi
+# shellcheck disable=SC1090,SC1091
+source "${IMAGE_REFERENCE_VALIDATION_SCRIPT}"
 required_variables=(
     STAGING_DEPLOY_WEBHOOK_URL
     GITHUB_SHA
@@ -16,17 +23,6 @@ required_variables=(
     LIFEOS_IMAGE_PREFIX
     LIFEOS_IMAGE_TAG
 )
-readonly IMAGE_NAME_COMPONENT_PATTERN='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
-readonly IMAGE_REGISTRY_HOST_COMPONENT_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
-# Bracketed IPv6 registry hosts need full IPv6 parsing to distinguish malformed values such as
-# "[aaaa]". Until that parser is available, accept only DNS-style registry hosts rather than
-# allowing invalid image metadata to reach the staging deployment endpoint.
-readonly IMAGE_REGISTRY_HOST_PATTERN="${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN}(\.${IMAGE_REGISTRY_HOST_COMPONENT_PATTERN})*"
-readonly IMAGE_TAG_PATTERN='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
-readonly IMAGE_REFERENCE_PATTERN="^(((${IMAGE_REGISTRY_HOST_PATTERN})(:[0-9]+)?)/)?${IMAGE_NAME_COMPONENT_PATTERN}(/${IMAGE_NAME_COMPONENT_PATTERN})*:${IMAGE_TAG_PATTERN}$"
-# The Distribution reference parser limits the complete repository name (including an optional
-# registry and port, but excluding the tag) to 255 characters.
-readonly IMAGE_REPOSITORY_NAME_MAX_LENGTH=255
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required to construct the staging deployment payload" >&2

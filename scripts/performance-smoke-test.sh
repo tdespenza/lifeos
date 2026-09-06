@@ -10,6 +10,9 @@ readonly K6_SCRIPT="${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
 readonly K6_IMAGE="grafana/k6@sha256:b24f418fc99a26dd57904c952c03bfaf79462be18508acc45aafa07ff68e7df2"
 # This bounds the user-controlled input processed by canonicalize_path; it is not an OS PATH_MAX.
 readonly PERFORMANCE_SUMMARY_PATH_MAX_LENGTH=4096
+readonly PERFORMANCE_OPERATION_TIMEOUT_SECONDS="${LIFEOS_PERFORMANCE_TIMEOUT_SECONDS:-300}"
+readonly PERFORMANCE_TIMEOUT_EXIT_STATUS=124
+readonly PERFORMANCE_TIMEOUT_SIGNAL_EXIT_STATUS=137
 readonly HTTPS_AUTHORITY_VALIDATION_SCRIPT="${REPOSITORY_ROOT}/scripts/https-authority-validation.sh"
 if [[ ! -f "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}" || ! -r "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}" ]]; then
     echo "HTTPS authority validation library is required" >&2
@@ -18,6 +21,34 @@ fi
 # The library path is derived from the repository root and is checked above.
 # shellcheck disable=SC1090,SC1091
 source "${HTTPS_AUTHORITY_VALIDATION_SCRIPT}"
+
+if [[ ! "${PERFORMANCE_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
+    || (( 10#${PERFORMANCE_OPERATION_TIMEOUT_SECONDS} > 900 )); then
+    echo "LIFEOS_PERFORMANCE_TIMEOUT_SECONDS must be between 1 and 900 seconds" >&2
+    exit 64
+fi
+
+if command -v timeout >/dev/null 2>&1; then
+    PERFORMANCE_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    PERFORMANCE_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound the performance smoke test" >&2
+    exit 69
+fi
+readonly PERFORMANCE_TIMEOUT_COMMAND
+
+run_performance_operation() {
+    "${PERFORMANCE_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s \
+        "${PERFORMANCE_OPERATION_TIMEOUT_SECONDS}s" "$@"
+}
+
+is_performance_timeout_status() {
+    local operation_status="$1"
+
+    [[ "${operation_status}" -eq "${PERFORMANCE_TIMEOUT_EXIT_STATUS}" \
+        || "${operation_status}" -eq "${PERFORMANCE_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
 
 temporary_summary_path=""
 
@@ -257,13 +288,22 @@ if command -v k6 >/dev/null 2>&1; then
         echo "Unable to create a temporary k6 summary file" >&2
         exit 73
     }
-    k6 run \
+    if run_performance_operation k6 run \
         --quiet \
         --summary-export "${temporary_summary_path}" \
         --env "TARGET_URL=${TARGET_URL}" \
         --env "VUS=${VUS}" \
         --env "DURATION=${DURATION}" \
-        "${K6_SCRIPT}"
+        "${K6_SCRIPT}"; then
+        :
+    else
+        operation_status=$?
+        if is_performance_timeout_status "${operation_status}"; then
+            echo "Native k6 performance run timed out after ${PERFORMANCE_OPERATION_TIMEOUT_SECONDS}s" >&2
+            exit 69
+        fi
+        exit "${operation_status}"
+    fi
     if [[ ! -s "${temporary_summary_path}" ]]; then
         echo "k6 did not produce a performance summary: ${SUMMARY_PATH}" >&2
         exit 65
@@ -280,7 +320,7 @@ elif command -v docker >/dev/null 2>&1; then
     }
     container_summary_path="/tmp/$(basename "${temporary_summary_path}")"
 
-    docker run --rm \
+    if run_performance_operation docker run --rm \
         --user "$(id -u):$(id -g)" \
         --volume "${REPOSITORY_ROOT}:/work:ro" \
         --volume "${temporary_summary_path}:${container_summary_path}" \
@@ -292,7 +332,16 @@ elif command -v docker >/dev/null 2>&1; then
         --env "TARGET_URL=${TARGET_URL}" \
         --env "VUS=${VUS}" \
         --env "DURATION=${DURATION}" \
-        "/work/scripts/performance/readiness-smoke.js"
+        "/work/scripts/performance/readiness-smoke.js"; then
+        :
+    else
+        operation_status=$?
+        if is_performance_timeout_status "${operation_status}"; then
+            echo "Docker k6 performance run timed out after ${PERFORMANCE_OPERATION_TIMEOUT_SECONDS}s" >&2
+            exit 69
+        fi
+        exit "${operation_status}"
+    fi
 
     if [[ ! -s "${temporary_summary_path}" ]]; then
         echo "k6 did not produce a performance summary: ${SUMMARY_PATH}" >&2

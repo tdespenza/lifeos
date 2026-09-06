@@ -112,6 +112,7 @@ if [[ ! "${STARTUP_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
     echo "LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS must be between 1 and 300 seconds" >&2
     exit 64
 fi
+readonly DOCKER_STARTUP_OPERATION_TIMEOUT_SECONDS=$((10#${STARTUP_TIMEOUT_SECONDS} + 10))
 
 if command -v timeout >/dev/null 2>&1; then
     DOCKER_TIMEOUT_COMMAND="timeout"
@@ -126,7 +127,10 @@ fi
 readonly DOCKER_TIMEOUT_COMMAND
 
 run_docker_operation() {
-    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${STARTUP_TIMEOUT_SECONDS}s" docker "$@"
+    local timeout_seconds="$1"
+    shift
+
+    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${timeout_seconds}s" docker "$@"
 }
 
 is_docker_timeout_status() {
@@ -184,11 +188,20 @@ fi
 
 # The script intentionally consumes the caller's Compose environment/.env file rather than storing
 # credentials. It is idempotent and does not drop, alter, or overwrite existing databases.
-docker compose -f "${COMPOSE_FILE}" up --detach --wait \
-    --wait-timeout "${STARTUP_TIMEOUT_SECONDS}" postgres
+if run_docker_operation "${DOCKER_STARTUP_OPERATION_TIMEOUT_SECONDS}" compose -f "${COMPOSE_FILE}" up --detach --wait \
+    --wait-timeout "${STARTUP_TIMEOUT_SECONDS}" postgres; then
+    :
+else
+    docker_status=$?
+    if is_docker_timeout_status "${docker_status}"; then
+        echo "Database provisioning startup timed out after ${DOCKER_STARTUP_OPERATION_TIMEOUT_SECONDS}s" >&2
+        exit 69
+    fi
+    exit "${docker_status}"
+fi
 
 # shellcheck disable=SC2016 # The command must expand POSTGRES_USER inside the container.
-if run_docker_operation compose -f "${COMPOSE_FILE}" exec -T postgres \
+if run_docker_operation "${STARTUP_TIMEOUT_SECONDS}" compose -f "${COMPOSE_FILE}" exec -T postgres \
     sh -ec 'psql --username "$POSTGRES_USER" --dbname postgres --set ON_ERROR_STOP=1' \
     <"${PROVISION_FILE}"; then
     :

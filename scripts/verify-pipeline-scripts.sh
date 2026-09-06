@@ -10,6 +10,7 @@ readonly PIPELINE_SCRIPTS=(
     verify-sbom.sh
     deploy-staging.sh
     https-authority-validation.sh
+    image-reference-validation.sh
     staging-smoke-test.sh
     verify-architecture.sh
     end-to-end-smoke-test.sh
@@ -30,6 +31,9 @@ for script in "${PIPELINE_SCRIPTS[@]}"; do
 done
 
 node --check "${REPOSITORY_ROOT}/scripts/performance/readiness-smoke.js"
+node --check "${REPOSITORY_ROOT}/scripts/node-runtime-check.js"
+node --check "${REPOSITORY_ROOT}/scripts/test-node-runtime-check.js"
+node "${REPOSITORY_ROOT}/scripts/test-node-runtime-check.js"
 node --check "${REPOSITORY_ROOT}/scripts/validate-cyclonedx-schema.js"
 
 printf '%s\n' "Validated ${#PIPELINE_SCRIPTS[@]} CI/CD and operational shell scripts"

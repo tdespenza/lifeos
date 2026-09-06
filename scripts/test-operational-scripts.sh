@@ -137,25 +137,27 @@ fake_docker() {
 
 fake_timeout() {
     local argument
-    local docker_argument_index=0
-    local docker_subcommand=""
+    local wrapped_command_index=0
+    local wrapped_command=""
+    local wrapped_subcommand=""
     local argument_index
     local next_argument_index
     local docker_command_start_index
     for ((argument_index = 1; argument_index <= $#; argument_index += 1)); do
         argument="${!argument_index}"
-        if [[ "${argument}" == "docker" ]]; then
-            docker_argument_index="${argument_index}"
+        if [[ "${argument}" == "docker" || "${argument}" == "k6" ]]; then
+            wrapped_command_index="${argument_index}"
+            wrapped_command="${argument}"
             if (( argument_index < $# )); then
                 next_argument_index=$((argument_index + 1))
-                docker_subcommand="${!next_argument_index}"
+                wrapped_subcommand="${!next_argument_index}"
             fi
             break
         fi
     done
 
-    if (( docker_argument_index == 0 || docker_argument_index == $# )); then
-        printf '%s\n' 'fake timeout requires a docker command' >&2
+    if (( wrapped_command_index == 0 || wrapped_command_index == $# )); then
+        printf '%s\n' 'fake timeout requires a docker or k6 command' >&2
         return 64
     fi
 
@@ -163,21 +165,24 @@ fake_timeout() {
     # arguments: the delegated fake Docker call records those, and duplicating them would make
     # command-count assertions mistake the wrapper for a second Trivy invocation.
     fake_log_command "${0##*/}" \
-        "${@:1:$((docker_argument_index - 1))}" \
-        "docker ${docker_subcommand}"
+        "${@:1:$((wrapped_command_index - 1))}" \
+        "${wrapped_command} ${wrapped_subcommand}"
 
-    if [[ -n "${FAKE_TIMEOUT_DOCKER_MATCH:-}" ]]; then
+    if [[ "${wrapped_command}" == "k6" && -n "${FAKE_TIMEOUT_K6_STATUS:-}" ]]; then
+        return "${FAKE_TIMEOUT_K6_STATUS}"
+    fi
+    if [[ "${wrapped_command}" == "docker" && -n "${FAKE_TIMEOUT_DOCKER_MATCH:-}" ]]; then
         if [[ " $* " == *"${FAKE_TIMEOUT_DOCKER_MATCH}"* ]]; then
             return "${FAKE_TIMEOUT_STATUS:-124}"
         fi
-    elif [[ -n "${FAKE_TIMEOUT_STATUS+x}" \
+    elif [[ "${wrapped_command}" == "docker" && -n "${FAKE_TIMEOUT_STATUS+x}" \
         && ( -z "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND:-}" \
-            || "${docker_subcommand}" == "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND}" ) ]]; then
+            || "${wrapped_subcommand}" == "${FAKE_TIMEOUT_DOCKER_SUBCOMMAND}" ) ]]; then
         return "${FAKE_TIMEOUT_STATUS}"
     fi
 
-    docker_command_start_index=$((docker_argument_index + 1))
-    docker "${@:docker_command_start_index}"
+    docker_command_start_index=$((wrapped_command_index + 1))
+    "${wrapped_command}" "${@:docker_command_start_index}"
 }
 
 fake_jq() {
@@ -923,6 +928,8 @@ new_harness() {
         "${TEST_ROOT}/scripts"
     cp "${REPOSITORY_ROOT}/scripts/https-authority-validation.sh" \
         "${TEST_ROOT}/scripts/https-authority-validation.sh"
+    cp "${REPOSITORY_ROOT}/scripts/image-reference-validation.sh" \
+        "${TEST_ROOT}/scripts/image-reference-validation.sh"
 
     local script signal_reset_runner
     for script in "$@"; do
@@ -1043,6 +1050,7 @@ execute_target() {
         LIFEOS_IMAGE_TAG \
         LIFEOS_PERFORMANCE_DURATION \
         LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL \
+        LIFEOS_PERFORMANCE_TIMEOUT_SECONDS \
         LIFEOS_PERFORMANCE_SUMMARY_PATH \
         LIFEOS_PERFORMANCE_VUS \
         LIFEOS_PROVISION_CONCURRENCY_POSTGRES_IMAGE \
@@ -1068,6 +1076,7 @@ execute_target() {
         FAKE_TIMEOUT_DOCKER_SUBCOMMAND \
         FAKE_TIMEOUT_DOCKER_MATCH \
         FAKE_TIMEOUT_STATUS \
+        FAKE_TIMEOUT_K6_STATUS \
         FAKE_CURL_STATUS \
         FAKE_CURL_STDOUT \
         FAKE_CURL_REDIRECT_FINAL_CORRELATION_ID \
@@ -1583,6 +1592,22 @@ test_container_scripts_reject_invalid_generated_image_references() {
             "container scan image-reference validation ${expected_reference}"
         assert_no_commands_logged "${TEST_ROOT}" \
             "container scan with invalid reference ${expected_reference} must not invoke Docker"
+    done
+}
+
+test_container_scripts_require_shared_image_reference_validator() {
+    local script
+
+    for script in build-container-images.sh scan-container-images.sh deploy-staging.sh; do
+        new_harness "${script%.sh}-missing-image-validator" "${script}"
+        rm -f -- "${TEST_ROOT}/scripts/image-reference-validation.sh"
+
+        run_target "${TEST_ROOT}" "${script}"
+
+        assert_status 69 "${script} without the shared image-reference validator"
+        assert_file_contains "${RUN_OUTPUT}" \
+            "Image reference validation library is required" \
+            "${script} shared image-reference validator prerequisite"
     done
 }
 
@@ -2440,7 +2465,7 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
     run_target "${TEST_ROOT}" provision-local-databases.sh \
         "LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS=1" \
         "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=compose" \
-        "FAKE_TIMEOUT_DOCKER_MATCH=exec" \
+        "FAKE_TIMEOUT_DOCKER_MATCH=exec -T postgres" \
         "FAKE_TIMEOUT_STATUS=137"
 
     assert_status 69 "database provisioning when SQL execution is killed at the timeout deadline"
@@ -2452,6 +2477,24 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
         "database provisioning SQL timeout wrapper"
     assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
         "database provisioning must not invoke Docker after the SQL timeout wrapper expires"
+
+    new_harness provision-startup-sigkill-timeout provision-local-databases.sh
+    add_database_provisioning_sql "${TEST_ROOT}"
+
+    run_target "${TEST_ROOT}" provision-local-databases.sh \
+        "LIFEOS_DATABASE_PROVISION_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_MATCH= up " \
+        "FAKE_TIMEOUT_STATUS=137"
+
+    assert_status 69 "database provisioning when startup is killed at the timeout deadline"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Database provisioning startup timed out after 11s" \
+        "database provisioning startup timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t11s\tdocker compose' \
+        "database provisioning startup timeout wrapper"
+    assert_log_excludes "${TEST_ROOT}" $'\texec\t-T\tpostgres' \
+        "database provisioning must not invoke SQL after the startup timeout wrapper expires"
 
     new_harness provision-timeout provision-local-databases.sh
     add_database_provisioning_sql "${TEST_ROOT}"
@@ -2971,6 +3014,48 @@ test_performance_smoke_docker_fallback_uses_read_only_repository_mount() {
     if [[ ! -s "${TEST_ROOT}/build/reports/performance/k6-summary.json" ]]; then
         fail "performance Docker fallback must write the mounted summary file"
     fi
+}
+
+test_performance_smoke_bounds_native_k6_execution() {
+    new_harness performance-k6-timeout performance-smoke-test.sh performance/readiness-smoke.js
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_K6_STATUS=137"
+
+    assert_status 69 "performance smoke native k6 timeout"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Native k6 performance run timed out after 1s" \
+        "performance smoke native k6 timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" \
+        $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tk6 run' \
+        "performance smoke native k6 timeout wrapper"
+    assert_log_excludes "${TEST_ROOT}" $'docker\trun\t' \
+        "performance smoke native k6 timeout must not invoke Docker"
+}
+
+test_performance_smoke_bounds_docker_k6_execution() {
+    new_harness performance-docker-timeout performance-smoke-test.sh performance/readiness-smoke.js
+    disable_fake_command "${TEST_ROOT}" k6
+    local prerequisite
+    for prerequisite in bash basename dirname id mkdir mktemp mv readlink rm; do
+        add_prerequisite_command "${TEST_ROOT}" "${prerequisite}"
+    done
+
+    run_target "${TEST_ROOT}" performance-smoke-test.sh \
+        "LIFEOS_OPERATIONAL_TEST_NO_NATIVE_K6=true" \
+        "LIFEOS_PERFORMANCE_GATEWAY_MANAGEMENT_BASE_URL=https://gateway.example.test" \
+        "LIFEOS_PERFORMANCE_TIMEOUT_SECONDS=1" \
+        "FAKE_TIMEOUT_DOCKER_SUBCOMMAND=run" \
+        "FAKE_TIMEOUT_STATUS=124"
+
+    assert_status 69 "performance smoke Docker k6 timeout"
+    assert_file_contains "${RUN_OUTPUT}" \
+        "Docker k6 performance run timed out after 1s" \
+        "performance smoke Docker k6 timeout diagnostic"
+    assert_log_contains "${TEST_ROOT}" $'timeout\t--signal=TERM\t--kill-after=10s\t1s\tdocker run' \
+        "performance smoke Docker k6 command wrapper"
 }
 
 test_performance_smoke_rejects_concurrent_summary_parent_symlink_swap() {
@@ -4839,6 +4924,7 @@ test_build_passes_jar_argument_and_honors_push_switch
 test_container_build_validates_and_bounds_docker_operations
 test_container_build_selects_portable_timeout_commands
 test_container_scripts_reject_invalid_generated_image_references
+test_container_scripts_require_shared_image_reference_validator
 test_container_scripts_enforce_docker_repository_name_length
 test_container_scan_rejects_missing_images_and_passes_trivy_arguments
 test_container_scan_uses_a_csv_quoted_mount_for_comma_cache_paths
@@ -4874,6 +4960,8 @@ test_concurrent_database_provisioning_reports_advisory_lock_validation_cleanly
 test_verifier_repository_root_resolution_fails_closed
 test_performance_smoke_accepts_100_vus_and_prefers_k6
 test_performance_smoke_docker_fallback_uses_read_only_repository_mount
+test_performance_smoke_bounds_native_k6_execution
+test_performance_smoke_bounds_docker_k6_execution
 test_performance_smoke_rejects_concurrent_summary_parent_symlink_swap
 test_performance_smoke_rejects_escaped_summary_paths
 test_performance_smoke_rejects_summary_paths_with_newlines

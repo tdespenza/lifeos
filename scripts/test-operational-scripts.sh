@@ -58,7 +58,18 @@ fake_docker() {
             return 0
         fi
         if [[ "${docker_arguments}" == *"SELECT datname FROM pg_database"* ]]; then
-            printf '%s\n' 'lifeos_identity' 'lifeos_task_goal'
+            printf '%s\n' \
+                'lifeos_ai_assistant' \
+                'lifeos_analytics' \
+                'lifeos_calendar' \
+                'lifeos_document_vault' \
+                'lifeos_finance' \
+                'lifeos_identity' \
+                'lifeos_media' \
+                'lifeos_notification' \
+                'lifeos_profile' \
+                'lifeos_task_goal' \
+                'lifeos_trust_ledger'
             return 0
         fi
         if [[ "${docker_arguments}" == *"FROM pg_locks"* ]]; then
@@ -2440,13 +2451,13 @@ test_database_provisioning_waits_before_exec_and_handles_failures() {
         $'docker\tcompose\t-f\t'"${compose_file}"$'\texec\t-T\tpostgres' \
         "database provisioning startup ordering"
     assert_file_contains "${TEST_ROOT}/executed-provisioning.sql" \
-        "CREATE DATABASE %I', 'lifeos_identity'" \
+        "('lifeos_identity')," \
         "database provisioning identity SQL payload"
     assert_file_contains "${TEST_ROOT}/executed-provisioning.sql" \
-        "CREATE DATABASE %I', 'lifeos_task_goal'" \
+        "('lifeos_task_goal')" \
         "database provisioning task-goal SQL payload"
     assert_file_contains "${TEST_ROOT}/executed-provisioning.sql" \
-        $'WHERE datname = \'lifeos_identity\'\n)\n\\gexec' \
+        $'WHERE datname = requested.name\n)\n\\gexec' \
         "database provisioning psql gexec payload"
 
     new_harness provision-request-failure provision-local-databases.sh
@@ -2675,11 +2686,14 @@ test_database_provisioning_sql_keeps_create_queries_open_for_gexec() {
     local provision_file="${REPOSITORY_ROOT}/infrastructure/docker-compose/provision-databases.sql"
 
     assert_file_contains "${provision_file}" \
-        $'WHERE NOT EXISTS (\n    SELECT 1\n    FROM pg_database\n    WHERE datname = \'lifeos_identity\'\n)\n\\gexec' \
+        "('lifeos_identity')," \
         "identity database provisioning statement"
     assert_file_contains "${provision_file}" \
-        $'WHERE NOT EXISTS (\n    SELECT 1\n    FROM pg_database\n    WHERE datname = \'lifeos_task_goal\'\n)\n\\gexec' \
+        "('lifeos_task_goal')" \
         "task-goal database provisioning statement"
+    assert_file_contains "${provision_file}" \
+        "('lifeos_trust_ledger')" \
+        "expanded database provisioning statement"
 }
 
 test_concurrent_database_provisioning_pins_its_default_image_and_honors_override() {

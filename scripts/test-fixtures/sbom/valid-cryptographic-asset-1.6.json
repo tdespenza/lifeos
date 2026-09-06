@@ -1,0 +1,10 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "cryptographic-asset",
+      "name": "AES-128-GCM"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "library",
+      "name": "dot-dot-subpath",
+      "purl": "pkg:maven/com.example/artifact@1.0.0#%2E%2E"
+    }
+  ]
+}

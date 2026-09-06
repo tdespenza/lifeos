@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "library",
+      "name": "encoded-namespace-separator",
+      "purl": "pkg:maven/com%2Fexample/artifact@1.0.0"
+    }
+  ]
+}

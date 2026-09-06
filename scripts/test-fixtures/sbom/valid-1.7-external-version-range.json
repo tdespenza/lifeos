@@ -1,0 +1,12 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "components": [
+    {
+      "type": "application",
+      "name": "external-runtime",
+      "isExternal": true,
+      "versionRange": "vers:generic/>=1.0.0|<2.0.0"
+    }
+  ]
+}

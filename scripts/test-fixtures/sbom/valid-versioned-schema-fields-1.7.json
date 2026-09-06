@@ -1,0 +1,8 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "citations": [],
+  "metadata": {
+    "distributionConstraints": {}
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "name": "missing-component-type"
+    }
+  ]
+}

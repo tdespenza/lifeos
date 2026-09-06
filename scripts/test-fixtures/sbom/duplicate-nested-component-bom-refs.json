@@ -1,0 +1,23 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "root-component",
+      "bom-ref": "root-component-ref",
+      "components": [
+        {
+          "type": "application",
+          "name": "first-nested-component",
+          "bom-ref": "duplicate-nested-ref"
+        },
+        {
+          "type": "application",
+          "name": "second-nested-component",
+          "bom-ref": "duplicate-nested-ref"
+        }
+      ]
+    }
+  ]
+}

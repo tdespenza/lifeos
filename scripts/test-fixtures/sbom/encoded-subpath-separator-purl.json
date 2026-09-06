@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "library",
+      "name": "encoded-subpath-separator",
+      "purl": "pkg:maven/com.example/artifact@1.0.0#one%2Ftwo"
+    }
+  ]
+}

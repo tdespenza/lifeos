@@ -1,0 +1,16 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "nested-component-owner",
+      "components": [
+        {
+          "type": "library",
+          "name": "nested-library-without-purl"
+        }
+      ]
+    }
+  ]
+}

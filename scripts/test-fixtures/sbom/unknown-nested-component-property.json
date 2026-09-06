@@ -1,0 +1,17 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "parent",
+      "components": [
+        {
+          "type": "application",
+          "name": "child",
+          "unexpected": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "library",
+      "name": "encoded-name-separator",
+      "purl": "pkg:maven/com.example/art%2Ffact@1.0.0"
+    }
+  ]
+}

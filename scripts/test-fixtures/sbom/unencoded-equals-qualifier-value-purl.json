@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "unencoded-equals-qualifier-value",
+      "purl": "pkg:maven/com.example/app@1.0?repository_url=x=type"
+    }
+  ]
+}

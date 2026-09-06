@@ -1,0 +1,17 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "nested-component-owner",
+      "components": [
+        {
+          "type": "library",
+          "name": "nested-library-with-malformed-purl",
+          "purl": "pkg:maven/com.example/nested-library@1.0.0?missingQualifierValue"
+        }
+      ]
+    }
+  ]
+}

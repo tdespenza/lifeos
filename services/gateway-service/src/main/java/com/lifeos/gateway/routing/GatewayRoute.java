@@ -476,7 +476,8 @@ public record GatewayRoute(
             Set<String> authenticationPublicMethods) {
         return NOTIFICATION_STREAM_PATH.equals(pathPrefix)
                 && authenticationRequired
-                && authenticationRequiredMethods.equals(Set.of("GET"))
+                && (authenticationRequiredMethods.isEmpty()
+                        || authenticationRequiredMethods.equals(Set.of("GET")))
                 && authenticationPublicPaths.isEmpty()
                 && authenticationPublicMethods.isEmpty();
     }

@@ -44,4 +44,3 @@ validate_image_reference() {
         return 1
     fi
 }
-

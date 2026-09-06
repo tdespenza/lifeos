@@ -558,7 +558,7 @@ second_worker_pid=""
 # timeout merely because the earlier wait used the original deadline.
 foreground_deadline_seconds=$(( SECONDS + MAXIMUM_OBSERVATION_SECONDS ))
 if created_databases="$(postgres_query_before_deadline "${foreground_deadline_seconds}" \
-    "SELECT datname FROM pg_database WHERE datname IN ('lifeos_identity', 'lifeos_task_goal') ORDER BY datname;")"; then
+    "SELECT datname FROM pg_database WHERE datname IN ('lifeos_ai_assistant', 'lifeos_analytics', 'lifeos_calendar', 'lifeos_document_vault', 'lifeos_finance', 'lifeos_identity', 'lifeos_media', 'lifeos_notification', 'lifeos_profile', 'lifeos_task_goal', 'lifeos_trust_ledger') ORDER BY datname;")"; then
     :
 else
     command_exit_status=$?
@@ -567,8 +567,8 @@ else
     fi
     fail "could not query created databases"
 fi
-if [[ "${created_databases}" != $'lifeos_identity\nlifeos_task_goal' ]]; then
-    fail "concurrent provisioning did not create both databases: ${created_databases}"
+if [[ "${created_databases}" != $'lifeos_ai_assistant\nlifeos_analytics\nlifeos_calendar\nlifeos_document_vault\nlifeos_finance\nlifeos_identity\nlifeos_media\nlifeos_notification\nlifeos_profile\nlifeos_task_goal\nlifeos_trust_ledger' ]]; then
+    fail "concurrent provisioning did not create every local bounded-context database: ${created_databases}"
 fi
 
 echo "Concurrent database provisioning regression test passed"

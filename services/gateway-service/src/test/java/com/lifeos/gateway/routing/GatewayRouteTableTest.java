@@ -211,6 +211,51 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void classifiesOnlyExactDocumentUploadsForStreaming() {
+        GatewayRoute route = documentUploadRoute();
+
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "POST"))
+                .isTrue();
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH + "/child", "POST"))
+                .isFalse();
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "PUT"))
+                .isFalse();
+    }
+
+    @Test
+    void classifiesOnlyCanonicalMediaSourceUploadsForStreaming() {
+        GatewayRoute route = mediaUploadRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
+
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "PUT")).isTrue();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "POST")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source/child", "PUT")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/not-a-canonical-uuid/source", "PUT"))
+                .isFalse();
+    }
+
+    @Test
+    void classifiesOnlyReviewedMediaHlsResponsesForStreaming() {
+        GatewayRoute route = mediaHlsRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
+
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.m4s", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.ts", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/nested/part.m4s", "GET"))
+                .isFalse();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/../part.m4s", "GET"))
+                .isFalse();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "POST")).isFalse();
+        assertThat(route.isExactMediaHlsRequest(
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX
+                                + "/not-a-canonical-uuid/hls/master.m3u8",
+                        "GET"))
+                .isFalse();
+    }
+
+    @Test
     void validatesVersionedPrefixesAndLoopbackUpstreams() {
         assertThat(GatewayRoute.isValidPathPrefix("/")).isTrue();
         assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals")).isTrue();
@@ -253,6 +298,51 @@ class GatewayRouteTableTest {
                         false,
                         false))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static GatewayRoute documentUploadRoute() {
+        return new GatewayRoute(
+                "documents",
+                GatewayRoute.DOCUMENT_UPLOAD_PATH,
+                URI.create("https://documents.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                true,
+                false,
+                false);
+    }
+
+    private static GatewayRoute mediaUploadRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                true,
+                false);
+    }
+
+    private static GatewayRoute mediaHlsRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                false,
+                true);
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

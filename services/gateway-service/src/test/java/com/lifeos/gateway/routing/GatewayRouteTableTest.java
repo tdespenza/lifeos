@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.lifeos.gateway.config.GatewayProperties;
+import java.net.URI;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -119,6 +120,229 @@ class GatewayRouteTableTest {
         assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PUT")).isTrue();
         assertThat(route.requiresAuthentication("/api/v1/accounts/child", "PATCH")).isTrue();
         assertThat(route.requiresAuthentication("/api/v1/accounts/child", "DELETE")).isTrue();
+    }
+
+    @Test
+    void acceptsOnlyReviewedStreamingRoutePolicies() {
+        assertThat(new GatewayRoute(
+                        "notifications",
+                        GatewayRoute.NOTIFICATION_STREAM_PATH,
+                        URI.create("https://notifications.test"),
+                        true,
+                        Set.of(),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        false,
+                        false)
+                .isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "GET"))
+                .isTrue();
+        assertThat(new GatewayRoute(
+                        "notifications",
+                        GatewayRoute.NOTIFICATION_STREAM_PATH,
+                        URI.create("https://notifications.test"),
+                        true,
+                        Set.of("GET"),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        false,
+                        false)
+                .isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "GET"))
+                .isTrue();
+
+        assertInvalidStreamingRoute("/api/v1/notifications", true, Set.of("GET"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(GatewayRoute.NOTIFICATION_STREAM_PATH, false, Set.of("GET"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(
+                GatewayRoute.NOTIFICATION_STREAM_PATH, true, Set.of("POST"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(
+                GatewayRoute.NOTIFICATION_STREAM_PATH,
+                true,
+                Set.of("GET"),
+                Set.of(GatewayRoute.NOTIFICATION_STREAM_PATH),
+                Set.of());
+        assertInvalidStreamingRoute(
+                GatewayRoute.NOTIFICATION_STREAM_PATH, true, Set.of("GET"), Set.of(), Set.of("GET"));
+    }
+
+    @Test
+    void rejectsInvalidUploadAndHlsStreamingPolicies() {
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "documents",
+                        GatewayRoute.DOCUMENT_UPLOAD_PATH,
+                        URI.create("https://documents.test"),
+                        true,
+                        Set.of("POST"),
+                        Set.of(),
+                        Set.of(),
+                        false,
+                        true,
+                        false,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "media",
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                        URI.create("https://media.test"),
+                        true,
+                        Set.of(),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        true,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "media",
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                        URI.create("https://media.test"),
+                        true,
+                        Set.of(),
+                        Set.of(GatewayRoute.MEDIA_ASSETS_PATH_PREFIX),
+                        Set.of(),
+                        false,
+                        false,
+                        false,
+                        true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void classifiesOnlyExactDocumentUploadsForStreaming() {
+        GatewayRoute route = documentUploadRoute();
+
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "POST"))
+                .isTrue();
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH + "/child", "POST"))
+                .isFalse();
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "PUT"))
+                .isFalse();
+    }
+
+    @Test
+    void classifiesOnlyCanonicalMediaSourceUploadsForStreaming() {
+        GatewayRoute route = mediaUploadRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
+
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "PUT")).isTrue();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "POST")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source/child", "PUT")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/not-a-canonical-uuid/source", "PUT"))
+                .isFalse();
+    }
+
+    @Test
+    void classifiesOnlyReviewedMediaHlsResponsesForStreaming() {
+        GatewayRoute route = mediaHlsRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
+
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.m4s", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.ts", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/nested/part.m4s", "GET"))
+                .isFalse();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/../part.m4s", "GET"))
+                .isFalse();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "POST")).isFalse();
+        assertThat(route.isExactMediaHlsRequest(
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX
+                                + "/not-a-canonical-uuid/hls/master.m3u8",
+                        "GET"))
+                .isFalse();
+    }
+
+    @Test
+    void validatesVersionedPrefixesAndLoopbackUpstreams() {
+        assertThat(GatewayRoute.isValidPathPrefix("/")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v12/goals/active")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix(null)).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix(" ")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("api/v1/goals")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v0/goals")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals/")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals//active")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals?draft")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals#section")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/*")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/{goal}")).isFalse();
+
+        assertThat(GatewayRoute.isValidUpstream("https://gateway.test")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://localhost:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://127.0.0.1:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://[::1]:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://gateway.test")).isFalse();
+    }
+
+    private static void assertInvalidStreamingRoute(
+            String pathPrefix,
+            boolean authenticationRequired,
+            Set<String> authenticationRequiredMethods,
+            Set<String> authenticationPublicPaths,
+            Set<String> authenticationPublicMethods) {
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "notifications",
+                        pathPrefix,
+                        URI.create("https://notifications.test"),
+                        authenticationRequired,
+                        authenticationRequiredMethods,
+                        authenticationPublicPaths,
+                        authenticationPublicMethods,
+                        true,
+                        false,
+                        false,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static GatewayRoute documentUploadRoute() {
+        return new GatewayRoute(
+                "documents",
+                GatewayRoute.DOCUMENT_UPLOAD_PATH,
+                URI.create("https://documents.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                true,
+                false,
+                false);
+    }
+
+    private static GatewayRoute mediaUploadRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                true,
+                false);
+    }
+
+    private static GatewayRoute mediaHlsRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                false,
+                true);
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

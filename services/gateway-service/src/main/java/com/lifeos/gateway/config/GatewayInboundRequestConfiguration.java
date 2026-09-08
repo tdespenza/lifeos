@@ -29,9 +29,10 @@ public class GatewayInboundRequestConfiguration {
     @Bean
     public WebServerFactoryCustomizer<TomcatServletWebServerFactory> gatewayInboundRequestTimeoutCustomizer(
             GatewayProperties properties) {
-        Duration timeout = properties.getInboundRequestTimeout();
+        Duration requestTimeout = properties.getInboundRequestTimeout();
+        Duration uploadTimeout = properties.getInboundUploadTimeout();
         return factory -> factory.addConnectorCustomizers(
-                connector -> configureConnector(connector.getProtocolHandler(), timeout));
+                connector -> configureConnector(connector.getProtocolHandler(), requestTimeout, uploadTimeout));
     }
 
     /**
@@ -41,15 +42,15 @@ public class GatewayInboundRequestConfiguration {
      * @param handler Tomcat connector protocol handler
      * @param timeout bounded gateway timeout
      */
-    static void configureConnector(ProtocolHandler handler, Duration timeout) {
+    static void configureConnector(ProtocolHandler handler, Duration requestTimeout, Duration uploadTimeout) {
         if (!(handler instanceof AbstractHttp11Protocol<?> protocol)) {
             throw new IllegalStateException(
                     "gateway requires a Tomcat HTTP/1.1 connector to enforce inbound request-body timeouts");
         }
-        int timeoutMillis = timeoutMillis(timeout);
-        protocol.setConnectionTimeout(timeoutMillis);
-        protocol.setKeepAliveTimeout(timeoutMillis);
-        protocol.setConnectionUploadTimeout(timeoutMillis);
+        int requestTimeoutMillis = timeoutMillis(requestTimeout);
+        protocol.setConnectionTimeout(requestTimeoutMillis);
+        protocol.setKeepAliveTimeout(requestTimeoutMillis);
+        protocol.setConnectionUploadTimeout(timeoutMillis(uploadTimeout));
         protocol.setDisableUploadTimeout(false);
     }
 

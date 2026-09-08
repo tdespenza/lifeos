@@ -71,6 +71,16 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rejectsMediaUploadVirtualRouteIdCollisionsInEitherDeclarationOrder() {
+        assertVirtualRouteIdCollision("media-media-upload", true, false);
+    }
+
+    @Test
+    void rejectsMediaHlsVirtualRouteIdCollisionsInEitherDeclarationOrder() {
+        assertVirtualRouteIdCollision("media-media-hls", false, true);
+    }
+
+    @Test
     void rejectsNonHttpOriginsAndWildcardPaths() {
         GatewayProperties.Route unsafeOrigin = new GatewayProperties.Route(
                 "unsafe", "/api/v1/unsafe", "file:///etc/passwd");
@@ -343,6 +353,23 @@ class GatewayRouteTableTest {
                 false,
                 false,
                 true);
+    }
+
+    private static void assertVirtualRouteIdCollision(
+            String collidingId, boolean mediaUploadStreaming, boolean mediaHlsStreaming) {
+        GatewayProperties.Route streaming = new GatewayProperties.Route(
+                "media", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
+        streaming.setMediaUploadStreaming(mediaUploadStreaming);
+        streaming.setMediaHlsStreaming(mediaHlsStreaming);
+        GatewayProperties.Route colliding = new GatewayProperties.Route(
+                collidingId, "/api/v1/other", "https://other.test");
+
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(streaming, colliding)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("route id");
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(colliding, streaming)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("route id");
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

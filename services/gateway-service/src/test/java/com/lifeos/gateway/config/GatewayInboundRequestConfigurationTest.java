@@ -15,9 +15,10 @@ import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactor
 class GatewayInboundRequestConfigurationTest {
 
     @Test
-    void registersTheSameBoundedTimeoutForInitialKeepAliveAndBodyUploadReads() {
+    void registersShortConnectionTimeoutsAndTheReviewedLongerUploadTimeout() {
         GatewayProperties properties = new GatewayProperties();
         properties.setInboundRequestTimeout(Duration.ofSeconds(7));
+        properties.setInboundUploadTimeout(Duration.ofSeconds(60));
         GatewayInboundRequestConfiguration configuration = new GatewayInboundRequestConfiguration();
         TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory();
 
@@ -28,7 +29,7 @@ class GatewayInboundRequestConfigurationTest {
 
         assertThat(protocol.getConnectionTimeout()).isEqualTo(7_000);
         assertThat(protocol.getKeepAliveTimeout()).isEqualTo(7_000);
-        assertThat(protocol.getConnectionUploadTimeout()).isEqualTo(7_000);
+        assertThat(protocol.getConnectionUploadTimeout()).isEqualTo(60_000);
         assertThat(protocol.getDisableUploadTimeout()).isFalse();
     }
 
@@ -38,7 +39,7 @@ class GatewayInboundRequestConfigurationTest {
 
         assertThatIllegalStateException()
                 .isThrownBy(() -> GatewayInboundRequestConfiguration.configureConnector(
-                        unsupportedHandler, Duration.ofSeconds(7)))
+                        unsupportedHandler, Duration.ofSeconds(7), Duration.ofSeconds(60)))
                 .withMessageContaining("HTTP/1.1");
     }
 
@@ -48,7 +49,19 @@ class GatewayInboundRequestConfigurationTest {
 
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> GatewayInboundRequestConfiguration.configureConnector(
-                        protocol, Duration.ofNanos(999_999)))
+                        protocol, Duration.ofNanos(999_999), Duration.ofSeconds(60)))
                 .withMessageContaining("at least one millisecond");
+    }
+
+    @Test
+    void supportsAnInterReadUploadPauseLongerThanTheOrdinaryConnectionTimeout() {
+        Http11NioProtocol protocol = new Http11NioProtocol();
+
+        GatewayInboundRequestConfiguration.configureConnector(
+                protocol, Duration.ofSeconds(10), Duration.ofSeconds(60));
+
+        assertThat(protocol.getConnectionTimeout()).isEqualTo(10_000);
+        assertThat(protocol.getConnectionUploadTimeout()).isGreaterThan(10_000);
+        assertThat(protocol.getDisableUploadTimeout()).isFalse();
     }
 }

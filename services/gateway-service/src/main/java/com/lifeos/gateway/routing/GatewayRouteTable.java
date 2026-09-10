@@ -27,15 +27,25 @@ public class GatewayRouteTable {
     public GatewayRouteTable(GatewayProperties properties) {
         List<GatewayRoute> routes = new ArrayList<>();
         Set<String> routeIds = new HashSet<>();
+        Set<String> reservedVirtualRouteIds = new HashSet<>();
         Set<String> pathPrefixes = new HashSet<>();
         for (GatewayProperties.Route configuredRoute : properties.getRoutes()) {
             GatewayRoute route = GatewayRoute.from(configuredRoute);
+            if (reservedVirtualRouteIds.contains(route.id())) {
+                throw new IllegalStateException("gateway route id collides with a reserved virtual route id");
+            }
             if (!routeIds.add(route.id())) {
                 throw new IllegalStateException("duplicate gateway route id");
             }
             if (!pathPrefixes.add(route.pathPrefix())) {
                 throw new IllegalStateException("duplicate gateway route path prefix");
             }
+            reserveVirtualRouteId(route, routeIds, reservedVirtualRouteIds, route.mediaUploadStreaming()
+                    ? route.mediaUploadResilienceId()
+                    : null);
+            reserveVirtualRouteId(route, routeIds, reservedVirtualRouteIds, route.mediaHlsStreaming()
+                    ? route.mediaHlsResilienceId()
+                    : null);
             routes.add(route);
         }
         if (routes.isEmpty()) {
@@ -43,6 +53,16 @@ public class GatewayRouteTable {
         }
         routes.sort(Comparator.comparingInt((GatewayRoute route) -> route.pathPrefix().length()).reversed());
         this.routesByPrefix = List.copyOf(routes);
+    }
+
+    private static void reserveVirtualRouteId(
+            GatewayRoute route, Set<String> routeIds, Set<String> reservedVirtualRouteIds, String virtualRouteId) {
+        if (virtualRouteId == null) {
+            return;
+        }
+        if (routeIds.contains(virtualRouteId) || !reservedVirtualRouteIds.add(virtualRouteId)) {
+            throw new IllegalStateException("duplicate or colliding gateway virtual route id");
+        }
     }
 
     /**

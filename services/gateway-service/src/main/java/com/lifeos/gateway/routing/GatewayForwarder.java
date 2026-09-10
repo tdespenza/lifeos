@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -77,9 +78,15 @@ public class GatewayForwarder {
             "x-lifeos-workload-identity",
             "x-lifeos-workload-token");
 
-    private final RestClient restClient;
+    private final RestClient bufferedRestClient;
+    private final RestClient streamingRestClient;
+    private final RestClient documentUploadRestClient;
+    private final RestClient mediaUploadRestClient;
+    private final RestClient mediaHlsRestClient;
+    private final RestClient aiAssistantRestClient;
     private final GatewayProperties properties;
     private final GatewayUpstreamResilience resilience;
+    private final GatewayRetryPolicy retryPolicy;
     private final Semaphore requestBodyAdmission;
     private final Counter requestBodyCapacityRejections;
     private final Semaphore responseBufferAdmission;
@@ -89,21 +96,33 @@ public class GatewayForwarder {
     /**
      * Creates a forwarder with the configured outbound HTTP client.
      *
-     * @param restClient outbound HTTP client
+     * @param bufferedRestClient ordinary bounded outbound HTTP client
      * @param properties gateway bounds
      * @param meterRegistry metrics registry for bounded in-flight request instrumentation
      * @throws IllegalArgumentException when response-buffer bounds exceed their aggregate budget
      */
     @Autowired
     public GatewayForwarder(
-            RestClient restClient,
+            @Qualifier("gatewayBufferedRestClient") RestClient bufferedRestClient,
+            @Qualifier("gatewayStreamingRestClient") RestClient streamingRestClient,
+            @Qualifier("gatewayDocumentUploadRestClient") RestClient documentUploadRestClient,
+            @Qualifier("gatewayMediaUploadRestClient") RestClient mediaUploadRestClient,
+            @Qualifier("gatewayMediaHlsRestClient") RestClient mediaHlsRestClient,
+            @Qualifier("gatewayAiAssistantRestClient") RestClient aiAssistantRestClient,
             GatewayProperties properties,
             MeterRegistry meterRegistry,
-            GatewayUpstreamResilience resilience) {
+            GatewayUpstreamResilience resilience,
+            GatewayRetryPolicy retryPolicy) {
         requireValidResponseBufferBudget(properties);
-        this.restClient = restClient;
+        this.bufferedRestClient = bufferedRestClient;
+        this.streamingRestClient = streamingRestClient;
+        this.documentUploadRestClient = documentUploadRestClient;
+        this.mediaUploadRestClient = mediaUploadRestClient;
+        this.mediaHlsRestClient = mediaHlsRestClient;
+        this.aiAssistantRestClient = aiAssistantRestClient;
         this.properties = properties;
         this.resilience = resilience;
+        this.retryPolicy = retryPolicy;
         this.requestBodyAdmission = new Semaphore(properties.getMaxConcurrentRequestBodyBuffers(), true);
         this.requestBodyCapacityRejections = Counter.builder("gateway.request.body.capacity.rejections")
                 .description("Requests rejected because bounded inbound body buffering is full")
@@ -132,7 +151,17 @@ public class GatewayForwarder {
      * must use the injected shared {@link GatewayUpstreamResilience}.
      */
     GatewayForwarder(RestClient restClient, GatewayProperties properties, MeterRegistry meterRegistry) {
-        this(restClient, properties, meterRegistry, new GatewayUpstreamResilience(properties, meterRegistry));
+        this(
+                restClient,
+                restClient,
+                restClient,
+                restClient,
+                restClient,
+                restClient,
+                properties,
+                meterRegistry,
+                new GatewayUpstreamResilience(properties, meterRegistry),
+                new GatewayRetryPolicy(properties));
     }
 
     /**
@@ -177,22 +206,20 @@ public class GatewayForwarder {
             byte[] requestBody = readRequestBody(request, method);
             URI target = targetUri(route, request);
 
-            RestClient.RequestBodySpec requestSpec = restClient.method(method).uri(target);
-            requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
-
-            RestClient.RequestHeadersSpec<?> outgoing = requestSpec;
-            if (requestBody.length > 0) {
-                outgoing = requestSpec.body(requestBody);
-            }
-
             responseBufferAdmissionAcquired = acquireResponseBufferAdmission();
-            GatewayUpstreamResilience.Permit permit = resilience.acquire(route);
-            DownstreamResponse downstream = null;
+            GatewayUpstreamResilience.Permit permit = acquirePermit(route, request, method);
+            DownstreamResponse downstream;
             try (permit) {
                 inFlightRequests.incrementAndGet();
                 try {
-                    downstream = outgoing.exchange(
-                            (clientRequest, clientResponse) -> readResponse(clientResponse));
+                    downstream = exchangeWithRetry(
+                            selectClient(route, request, method),
+                            method,
+                            target,
+                            request,
+                            correlationId,
+                            subject,
+                            requestBody);
                     if (downstream.status().is5xxServerError()) {
                         permit.recordFailure();
                     } else {
@@ -227,6 +254,92 @@ public class GatewayForwarder {
             releaseResponseBufferAdmission(responseBufferAdmissionAcquired);
             releaseRequestBodyAdmission(bodyAdmissionAcquired);
         }
+    }
+
+    private DownstreamResponse exchangeWithRetry(
+            RestClient client,
+            HttpMethod method,
+            URI target,
+            HttpServletRequest request,
+            String correlationId,
+            GatewayAuthenticatedSubject subject,
+            byte[] requestBody) {
+        long startedAtNanos = retryPolicy.start();
+        int completedAttempts = 0;
+        while (true) {
+            completedAttempts++;
+            try {
+                DownstreamResponse response = exchange(
+                        client, method, target, request, correlationId, subject, requestBody);
+                if (!response.status().is5xxServerError() || !awaitRetry(method, completedAttempts, startedAtNanos)) {
+                    return response;
+                }
+            } catch (RestClientException exception) {
+                if (!awaitRetry(method, completedAttempts, startedAtNanos)) {
+                    throw exception;
+                }
+            }
+        }
+    }
+
+    private DownstreamResponse exchange(
+            RestClient client,
+            HttpMethod method,
+            URI target,
+            HttpServletRequest request,
+            String correlationId,
+            GatewayAuthenticatedSubject subject,
+            byte[] requestBody) {
+        RestClient.RequestBodySpec requestSpec = client.method(method).uri(target);
+        requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
+        RestClient.RequestHeadersSpec<?> outgoing = requestBody.length > 0 ? requestSpec.body(requestBody) : requestSpec;
+        return outgoing.exchange((clientRequest, clientResponse) -> readResponse(clientResponse));
+    }
+
+    private boolean awaitRetry(HttpMethod method, int completedAttempts, long startedAtNanos) {
+        GatewayRetryPolicy.RetryDecision decision = retryPolicy.nextRetry(method, completedAttempts, startedAtNanos);
+        return decision.retry() && retryPolicy.await(decision.delay());
+    }
+
+    RestClient selectClient(GatewayRoute route, HttpServletRequest request, HttpMethod method) {
+        String path = pathWithoutContext(request);
+        if (route.isExactStreamingRequest(path, method.name())) {
+            return streamingRestClient;
+        }
+        if (route.isExactDocumentUploadRequest(path, method.name())) {
+            return documentUploadRestClient;
+        }
+        if (route.isExactMediaUploadRequest(path, method.name())) {
+            return mediaUploadRestClient;
+        }
+        if (route.isExactMediaHlsRequest(path, method.name())) {
+            return mediaHlsRestClient;
+        }
+        return route.isAiAssistantRoute() ? aiAssistantRestClient : bufferedRestClient;
+    }
+
+    GatewayUpstreamResilience.Permit acquirePermit(
+            GatewayRoute route, HttpServletRequest request, HttpMethod method) {
+        String path = pathWithoutContext(request);
+        if (route.isExactMediaUploadRequest(path, method.name())) {
+            return resilience.acquireMediaUpload(route);
+        }
+        if (route.isExactMediaHlsRequest(path, method.name())) {
+            return resilience.acquireMediaHls(route);
+        }
+        return resilience.acquire(route);
+    }
+
+    private static String pathWithoutContext(HttpServletRequest request) {
+        String requestUri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath == null || contextPath.isEmpty()) {
+            return requestUri;
+        }
+        if (requestUri == null || !requestUri.startsWith(contextPath)) {
+            throw new GatewayBadRequestException();
+        }
+        return requestUri.substring(contextPath.length());
     }
 
     private boolean acquireResponseBufferAdmission() {

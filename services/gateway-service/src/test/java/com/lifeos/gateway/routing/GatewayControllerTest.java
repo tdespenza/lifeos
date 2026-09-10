@@ -57,6 +57,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -649,7 +650,7 @@ class GatewayControllerTest {
 
     @Test
     void mapsUpstreamTimeoutsAndOtherTransportFailures() throws Exception {
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withException(new SocketTimeoutException("timed out")));
 
         mockMvc.perform(get("/api/v1/goals"))
@@ -658,7 +659,7 @@ class GatewayControllerTest {
         upstream.verify();
 
         upstream.reset();
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withException(new IOException("connection closed")));
 
         mockMvc.perform(get("/api/v1/goals"))
@@ -673,7 +674,7 @@ class GatewayControllerTest {
 
     @Test
     void mapsUpstreamServerErrorsWithoutRewritingTheirResponse() throws Exception {
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withServerError());
 
         mockMvc.perform(get("/api/v1/goals"))

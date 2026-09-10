@@ -62,6 +62,9 @@ public class GatewayProperties {
     @NotNull(message = "inboundRequestTimeout must be configured")
     private Duration inboundRequestTimeout = Duration.ofSeconds(10);
 
+    @NotNull(message = "inboundUploadTimeout must be configured")
+    private Duration inboundUploadTimeout = Duration.ofSeconds(60);
+
     /** Optional shared HMAC used to prove gateway-authenticated subjects to analytics. */
     private String analyticsProofSecret = "";
 
@@ -270,6 +273,28 @@ public class GatewayProperties {
         this.inboundRequestTimeout = inboundRequestTimeout;
     }
 
+    /**
+     * Returns the bounded idle timeout applied while Tomcat receives an accepted request body.
+     *
+     * <p>This is intentionally independent from the short request-line and keep-alive timeout:
+     * upload routes have a reviewed, finite 60-second inter-read allowance without allowing idle
+     * sockets to occupy ordinary connection capacity for that long.
+     *
+     * @return inbound upload timeout
+     */
+    public Duration getInboundUploadTimeout() {
+        return inboundUploadTimeout;
+    }
+
+    /**
+     * Sets the bounded idle timeout applied while Tomcat receives a request body.
+     *
+     * @param inboundUploadTimeout inbound upload timeout
+     */
+    public void setInboundUploadTimeout(Duration inboundUploadTimeout) {
+        this.inboundUploadTimeout = inboundUploadTimeout;
+    }
+
     public String getAnalyticsProofSecret() {
         return analyticsProofSecret;
     }
@@ -401,6 +426,13 @@ public class GatewayProperties {
     public boolean isInboundRequestTimeoutValid() {
         return isBoundedPositive(inboundRequestTimeout)
                 && inboundRequestTimeout.compareTo(Duration.ofMillis(1)) >= 0;
+    }
+
+    /** Validates the separate, finite body-upload deadline accepted by Tomcat. */
+    @AssertTrue(message = "inboundUploadTimeout must be at least one millisecond and no greater than 60 seconds")
+    public boolean isInboundUploadTimeoutValid() {
+        return isBoundedPositive(inboundUploadTimeout)
+                && inboundUploadTimeout.compareTo(Duration.ofMillis(1)) >= 0;
     }
 
     /**

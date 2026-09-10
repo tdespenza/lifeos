@@ -333,6 +333,10 @@ public class GatewayForwarder {
                     throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
                 } catch (ResourceAccessException exception) {
                     permit.recordFailure();
+                    if (isCommittedCallbackIoFailure(response, exception)) {
+                        logCommittedRelayFailure(route, "Media HLS", exception);
+                        return;
+                    }
                     boolean timeout = isTimeout(exception);
                     HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
                     logUpstreamFailure(route, status, timeout ? "timeout" : "transport");
@@ -411,95 +415,20 @@ public class GatewayForwarder {
             GatewayAuthenticatedSubject subject)
             throws IOException {
         GatewayProperties.DocumentUpload upload = properties.getDocumentUpload();
-        long declaredLength = request.getContentLengthLong();
-        if (declaredLength > upload.getMaxRequestBodyBytes()) {
-            throw new GatewayPayloadTooLargeException();
-        }
-        if (!documentUploadAdmission.tryAcquire()) {
-            documentUploadCapacityRejections.increment();
-            throw new GatewayDocumentUploadCapacityException();
-        }
-
-        boolean responseBufferAdmissionAcquired = false;
-        try {
-            responseBufferAdmissionAcquired = acquireResponseBufferAdmission();
-            GatewayUpstreamResilience.Permit permit;
-            try {
-                permit = resilience.acquire(route);
-            } catch (GatewayUpstreamException exception) {
-                logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
-                throw exception;
-            }
-
-            DownstreamResponse downstream;
-            try (permit) {
-                inFlightRequests.incrementAndGet();
-                inFlightDocumentUploads.incrementAndGet();
-                try {
-                    downstream = invokeDocumentUpload(request, route, correlationId, subject, upload);
-                    if (downstream.status().is5xxServerError()) {
-                        permit.recordFailure();
-                    } else {
-                        permit.recordSuccess();
-                    }
-                } catch (GatewayPayloadTooLargeException exception) {
-                    // A lying or absent Content-Length can be discovered only while copying. It
-                    // is a client validation result, not evidence that the upstream is unhealthy.
-                    permit.recordAbandoned();
-                    throw exception;
-                } catch (ResourceAccessException exception) {
-                    if (hasPayloadTooLargeCause(exception)) {
-                        permit.recordAbandoned();
-                        throw new GatewayPayloadTooLargeException();
-                    }
-                    if (hasClientRequestAbortCause(exception)) {
-                        permit.recordAbandoned();
-                        throw new GatewayBadRequestException(exception);
-                    }
-                    permit.recordFailure();
-                    boolean timeout = isTimeout(exception);
-                    HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                    logUpstreamFailure(route, status, timeout ? "upload-timeout" : "upload-transport");
-                    throw new GatewayUpstreamException(status, exception);
-                } catch (RestClientException exception) {
-                    if (hasPayloadTooLargeCause(exception)) {
-                        permit.recordAbandoned();
-                        throw new GatewayPayloadTooLargeException();
-                    }
-                    if (hasClientRequestAbortCause(exception)) {
-                        permit.recordAbandoned();
-                        throw new GatewayBadRequestException(exception);
-                    }
-                    permit.recordFailure();
-                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "upload-client");
-                    throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
-                } finally {
-                    inFlightDocumentUploads.decrementAndGet();
-                    inFlightRequests.decrementAndGet();
-                }
-            }
-            writeResponse(response, downstream, HttpMethod.POST);
-        } finally {
-            releaseResponseBufferAdmission(responseBufferAdmissionAcquired);
-            documentUploadAdmission.release();
-        }
-    }
-
-    private DownstreamResponse invokeDocumentUpload(
-            HttpServletRequest request,
-            GatewayRoute route,
-            String correlationId,
-            GatewayAuthenticatedSubject subject,
-            GatewayProperties.DocumentUpload upload) {
-        RestClient.RequestBodySpec requestSpec = documentUploadRestClient.post().uri(targetUri(route, request));
-        requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
-        long declaredLength = request.getContentLengthLong();
-        if (declaredLength >= 0) {
-            requestSpec.contentLength(declaredLength);
-        }
-        return requestSpec.body((StreamingHttpOutputMessage.Body) output -> copyBounded(
-                        request, output, upload.getMaxRequestBodyBytes()))
-                .exchange((clientRequest, clientResponse) -> readResponse(clientResponse));
+        forwardUpload(
+                request,
+                response,
+                route,
+                correlationId,
+                subject,
+                upload.getMaxRequestBodyBytes(),
+                documentUploadAdmission,
+                documentUploadCapacityRejections,
+                inFlightDocumentUploads,
+                resilience::acquire,
+                documentUploadRestClient,
+                HttpMethod.POST,
+                "upload");
     }
 
     /**
@@ -516,15 +445,55 @@ public class GatewayForwarder {
             HttpServletResponse response,
             GatewayRoute route,
             String correlationId,
-            GatewayAuthenticatedSubject subject)
+        GatewayAuthenticatedSubject subject)
             throws IOException {
         GatewayProperties.MediaUpload upload = properties.getMediaUpload();
+        forwardUpload(
+                request,
+                response,
+                route,
+                correlationId,
+                subject,
+                upload.getMaxRequestBodyBytes(),
+                mediaUploadAdmission,
+                mediaUploadCapacityRejections,
+                inFlightMediaUploads,
+                resilience::acquireMediaUpload,
+                mediaUploadRestClient,
+                HttpMethod.PUT,
+                "media-upload");
+    }
+
+    /**
+     * Relays a reviewed upload operation without retaining its request body in the gateway heap.
+     *
+     * <p>The parameters keep Document Vault and Media capacity, resilience, and HTTP contracts
+     * separate while ensuring that their security-sensitive error classification remains identical.
+     */
+    private void forwardUpload(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            GatewayRoute route,
+            String correlationId,
+            GatewayAuthenticatedSubject subject,
+            long maxRequestBodyBytes,
+            Semaphore admission,
+            Counter capacityRejections,
+            AtomicInteger inFlightUploads,
+            java.util.function.Function<GatewayRoute, GatewayUpstreamResilience.Permit> permitSupplier,
+            RestClient client,
+            HttpMethod method,
+            String failurePrefix)
+            throws IOException {
         long declaredLength = request.getContentLengthLong();
-        if (declaredLength > upload.getMaxRequestBodyBytes()) {
+        if (declaredLength > maxRequestBodyBytes) {
             throw new GatewayPayloadTooLargeException();
         }
-        if (!mediaUploadAdmission.tryAcquire()) {
-            mediaUploadCapacityRejections.increment();
+        if (!admission.tryAcquire()) {
+            capacityRejections.increment();
+            if (method == HttpMethod.POST) {
+                throw new GatewayDocumentUploadCapacityException();
+            }
             throw new GatewayMediaUploadCapacityException();
         }
 
@@ -533,7 +502,7 @@ public class GatewayForwarder {
             responseBufferAdmissionAcquired = acquireResponseBufferAdmission();
             GatewayUpstreamResilience.Permit permit;
             try {
-                permit = resilience.acquireMediaUpload(route);
+                permit = permitSupplier.apply(route);
             } catch (GatewayUpstreamException exception) {
                 logUpstreamFailure(route, exception.getStatus(), exception.getFailureClass());
                 throw exception;
@@ -542,24 +511,23 @@ public class GatewayForwarder {
             DownstreamResponse downstream;
             try (permit) {
                 inFlightRequests.incrementAndGet();
-                inFlightMediaUploads.incrementAndGet();
+                inFlightUploads.incrementAndGet();
                 try {
-                    downstream = invokeMediaUpload(request, route, correlationId, subject, upload);
+                    downstream = invokeUpload(
+                            client, method, request, route, correlationId, subject, maxRequestBodyBytes);
                     if (downstream.status().is5xxServerError()) {
                         permit.recordFailure();
                     } else {
                         permit.recordSuccess();
                     }
                 } catch (GatewayPayloadTooLargeException exception) {
-                    // A dishonest/chunked client body is a client validation result, not a Media
-                    // dependency health signal. A half-open probe must remain available to a real
-                    // upstream call.
+                    // A dishonest/chunked body is a client validation result, not dependency health.
                     permit.recordAbandoned();
                     throw exception;
                 } catch (ResourceAccessException exception) {
                     if (hasPayloadTooLargeCause(exception)) {
                         permit.recordAbandoned();
-                        throw new GatewayPayloadTooLargeException();
+                        throw new GatewayPayloadTooLargeException(exception);
                     }
                     if (hasClientRequestAbortCause(exception)) {
                         permit.recordAbandoned();
@@ -568,46 +536,49 @@ public class GatewayForwarder {
                     permit.recordFailure();
                     boolean timeout = isTimeout(exception);
                     HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
-                    logUpstreamFailure(route, status, timeout ? "media-upload-timeout" : "media-upload-transport");
+                    logUpstreamFailure(
+                            route, status, timeout ? failurePrefix + "-timeout" : failurePrefix + "-transport");
                     throw new GatewayUpstreamException(status, exception);
                 } catch (RestClientException exception) {
                     if (hasPayloadTooLargeCause(exception)) {
                         permit.recordAbandoned();
-                        throw new GatewayPayloadTooLargeException();
+                        throw new GatewayPayloadTooLargeException(exception);
                     }
                     if (hasClientRequestAbortCause(exception)) {
                         permit.recordAbandoned();
                         throw new GatewayBadRequestException(exception);
                     }
                     permit.recordFailure();
-                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, "media-upload-client");
+                    logUpstreamFailure(route, HttpStatus.BAD_GATEWAY, failurePrefix + "-client");
                     throw new GatewayUpstreamException(HttpStatus.BAD_GATEWAY, exception);
                 } finally {
-                    inFlightMediaUploads.decrementAndGet();
+                    inFlightUploads.decrementAndGet();
                     inFlightRequests.decrementAndGet();
                 }
             }
-            writeResponse(response, downstream, HttpMethod.PUT);
+            writeResponse(response, downstream, method);
         } finally {
             releaseResponseBufferAdmission(responseBufferAdmissionAcquired);
-            mediaUploadAdmission.release();
+            admission.release();
         }
     }
 
-    private DownstreamResponse invokeMediaUpload(
+    private DownstreamResponse invokeUpload(
+            RestClient client,
+            HttpMethod method,
             HttpServletRequest request,
             GatewayRoute route,
             String correlationId,
             GatewayAuthenticatedSubject subject,
-            GatewayProperties.MediaUpload upload) {
-        RestClient.RequestBodySpec requestSpec = mediaUploadRestClient.put().uri(targetUri(route, request));
+            long maxRequestBodyBytes) {
+        RestClient.RequestBodySpec requestSpec = client.method(method).uri(targetUri(route, request));
         requestSpec.headers(headers -> copyRequestHeaders(request, headers, correlationId, subject));
         long declaredLength = request.getContentLengthLong();
         if (declaredLength >= 0) {
             requestSpec.contentLength(declaredLength);
         }
         return requestSpec.body((StreamingHttpOutputMessage.Body) output -> copyBounded(
-                        request, output, upload.getMaxRequestBodyBytes()))
+                        request, output, maxRequestBodyBytes))
                 .exchange((clientRequest, clientResponse) -> readResponse(clientResponse));
     }
 
@@ -671,6 +642,10 @@ public class GatewayForwarder {
                     throw exception;
                 } catch (ResourceAccessException exception) {
                     permit.recordFailure();
+                    if (isCommittedCallbackIoFailure(response, exception)) {
+                        logCommittedRelayFailure(route, "SSE", exception);
+                        return;
+                    }
                     boolean timeout = isTimeout(exception);
                     HttpStatus status = timeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
                     logUpstreamFailure(route, status, timeout ? "media-hls-timeout" : "media-hls-transport");
@@ -715,7 +690,7 @@ public class GatewayForwarder {
                         response, clientResponse, route, properties.getMediaHls().getMaxResponseBodyBytes()));
     }
 
-    private static HttpStatusCode writeMediaHlsResponse(
+    static HttpStatusCode writeMediaHlsResponse(
             HttpServletResponse response,
             ClientHttpResponse upstream,
             GatewayRoute route,
@@ -1120,7 +1095,7 @@ public class GatewayForwarder {
      * Rejects request framing on the exact HLS response-only exception before it can hold an
      * unread servlet body while a long response relay occupies bounded stream admission.
      */
-    private static void rejectMediaHlsRequestBodyFraming(HttpServletRequest request) {
+    static void rejectMediaHlsRequestBodyFraming(HttpServletRequest request) {
         if (request.getContentLengthLong() > 0
                 || (request.getHeader(HttpHeaders.TRANSFER_ENCODING) != null
                         && !request.getHeader(HttpHeaders.TRANSFER_ENCODING).isBlank())) {
@@ -1270,7 +1245,7 @@ public class GatewayForwarder {
      * declared request ceiling because the over-limit read is detected before it is written to the
      * upstream socket.
      */
-    private static void copyBounded(HttpServletRequest request, OutputStream output, long limit) throws IOException {
+    static void copyBounded(HttpServletRequest request, OutputStream output, long limit) throws IOException {
         InputStream input;
         try {
             input = request.getInputStream();
@@ -1304,35 +1279,37 @@ public class GatewayForwarder {
     }
 
     private static boolean isTimeout(Throwable exception) {
-        Throwable current = exception;
-        while (current != null) {
-            if (current instanceof java.net.SocketTimeoutException
-                    || current instanceof java.net.http.HttpTimeoutException) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
+        return hasCause(exception, java.net.SocketTimeoutException.class)
+                || hasCause(exception, java.net.http.HttpTimeoutException.class);
+    }
+
+    private static boolean isCommittedCallbackIoFailure(
+            HttpServletResponse response, ResourceAccessException exception) {
+        return response.isCommitted() && hasCause(exception, IOException.class);
+    }
+
+    private static void logCommittedRelayFailure(GatewayRoute route, String relay, Exception exception) {
+        LOGGER.debug(
+                "gateway {} relay ended after response commit routeId={} correlationId={}",
+                relay,
+                route.id(),
+                RequestContext.CORRELATION_ID.isBound() ? RequestContext.CORRELATION_ID.get() : "unbound",
+                exception);
     }
 
     private static boolean hasPayloadTooLargeCause(Throwable exception) {
-        Throwable current = exception;
-        while (current != null) {
-            if (current instanceof GatewayPayloadTooLargeException) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
+        return hasCause(exception, GatewayPayloadTooLargeException.class);
     }
 
     private static boolean hasClientRequestAbortCause(Throwable exception) {
-        Throwable current = exception;
-        while (current != null) {
-            if (current instanceof GatewayClientRequestAbortedException) {
+        return hasCause(exception, GatewayClientRequestAbortedException.class);
+    }
+
+    private static boolean hasCause(Throwable exception, Class<? extends Throwable> type) {
+        for (Throwable current = exception; current != null; current = current.getCause()) {
+            if (type.isInstance(current)) {
                 return true;
             }
-            current = current.getCause();
         }
         return false;
     }

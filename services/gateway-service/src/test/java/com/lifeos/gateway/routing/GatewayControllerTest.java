@@ -318,15 +318,18 @@ class GatewayControllerTest {
                 HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION, "Idempotency-Key", HttpHeaders.IF_MATCH)));
         when(request.getHeaders(HttpHeaders.CONTENT_TYPE)).thenReturn(Collections.enumeration(List.of(contentType)));
         when(request.getHeaders(HttpHeaders.AUTHORIZATION))
-                .thenReturn(Collections.enumeration(List.of("Bearer media-access-token")));
+                .thenReturn(Collections.enumeration(List.of("Bearer document-upload-token")));
         when(request.getHeaders("Idempotency-Key"))
-                .thenReturn(Collections.enumeration(List.of("media-upload-idempotency-key")));
+                .thenReturn(Collections.enumeration(List.of("document-upload-idempotency-key")));
         when(request.getHeaders(HttpHeaders.IF_MATCH)).thenReturn(Collections.enumeration(List.of("\"0\"")));
 
         server.expect(requestTo("https://documents.test" + GatewayRoute.DOCUMENT_UPLOAD_PATH))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header(HttpHeaders.CONTENT_TYPE, contentType))
                 .andExpect(header(HttpHeaders.CONTENT_LENGTH, Integer.toString(multipartBody.length)))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer document-upload-token"))
+                .andExpect(header("Idempotency-Key", "document-upload-idempotency-key"))
+                .andExpect(header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
                         .content().bytes(multipartBody))
                 .andRespond(withStatus(HttpStatus.CREATED)
@@ -1779,6 +1782,7 @@ class GatewayControllerTest {
 
         RestClient.Builder upstreamBuilder = RestClient.builder();
         upstream = MockRestServiceServer.bindTo(upstreamBuilder).build();
+        meterRegistry = new SimpleMeterRegistry();
         GatewayForwarder forwarder = new GatewayForwarder(upstreamBuilder.build(), properties, meterRegistry);
         GatewayAuthenticationService authenticationService = mock(GatewayAuthenticationService.class);
         GatewayAuthenticatedSubject subject = new GatewayAuthenticatedSubject(

@@ -38,8 +38,12 @@ public final class AlgorithmBenchmarkMain {
      *
      * @param arguments one optional output JSON path; defaults under {@code build/reports}
      * @throws IOException if the local report cannot be written
+     * @throws IllegalArgumentException if more than one argument is provided
      */
     public static void main(String[] arguments) throws IOException {
+        if (arguments.length > 1) {
+            throw new IllegalArgumentException("expected at most one output path argument");
+        }
         Path output = arguments.length == 0
                 ? Path.of("build", "reports", "benchmarks", "algorithm-engine.json")
                 : Path.of(arguments[0]);
@@ -57,17 +61,17 @@ public final class AlgorithmBenchmarkMain {
         List<DirectedEdge<String>> edges = new ArrayList<>(GRAPH_NODES * 3);
         for (int index = 0; index < GRAPH_NODES; index++) {
             nodes.add("node-" + index);
-            if (index > 0) {
-                edges.add(new DirectedEdge<>("node-" + (index - 1), "node-" + index));
+            if (index > 1) {
+                edges.add(new DirectedEdge<>("node-" + (index - 2), "node-" + index));
             }
-            if (index > 2) {
-                edges.add(new DirectedEdge<>("node-" + (index - 3), "node-" + index));
+            if (index > 3) {
+                edges.add(new DirectedEdge<>("node-" + (index - 4), "node-" + index));
             }
         }
         BoundedTopologicalOrder algorithm = new BoundedTopologicalOrder();
         return measure("bounded_topological_order", GRAPH_NODES, GRAPH_NODES, () -> {
             List<String> ordered = algorithm.order(nodes, edges);
-            if (ordered.size() != GRAPH_NODES || !"node-0".equals(ordered.getFirst())) {
+            if (ordered.size() != GRAPH_NODES || !ordered.equals(nodes)) {
                 throw new IllegalStateException("topological benchmark correctness check failed");
             }
         });
@@ -98,7 +102,7 @@ public final class AlgorithmBenchmarkMain {
         BoundedPriorityRanker algorithm = new BoundedPriorityRanker();
         return measure("bounded_priority_ranking", RANKING_CANDIDATES, 100, () -> {
             List<PrioritizedItem<Integer>> ranked = algorithm.rank(candidates, 100);
-            if (ranked.size() != 100 || ranked.getFirst().priorityScore() != 16) {
+            if (ranked.size() != 100 || ranked.getFirst().value() != 16) {
                 throw new IllegalStateException("ranking benchmark correctness check failed");
             }
         });
@@ -119,8 +123,17 @@ public final class AlgorithmBenchmarkMain {
                 name,
                 inputSize,
                 expectedResultSize,
-                samples[samples.length / 2],
+                median(samples),
                 samples[(int) Math.ceil(samples.length * 0.95D) - 1]);
+    }
+
+    static long median(long[] sortedSamples) {
+        int upperMiddle = sortedSamples.length / 2;
+        if (sortedSamples.length % 2 == 0) {
+            int lowerMiddle = upperMiddle - 1;
+            return sortedSamples[lowerMiddle] + (sortedSamples[upperMiddle] - sortedSamples[lowerMiddle]) / 2;
+        }
+        return sortedSamples[upperMiddle];
     }
 
     private record BenchmarkCase(
@@ -142,18 +155,35 @@ public final class AlgorithmBenchmarkMain {
                     + "\"warmupIterations\":" + warmupIterations + "," + "\"measuredIterations\":"
                     + measuredIterations + "," + "\"clock\":\"System.nanoTime\"," + "\"limitations\":\""
                     + "dependency-free smoke benchmark; not a JMH baseline\"}," + "\"environment\":{"
-                    + "\"javaRuntimeVersion\":\"" + json(System.getProperty("java.runtime.version")) + "\","
-                    + "\"osName\":\"" + json(System.getProperty("os.name")) + "\"," + "\"osArch\":\""
-                    + json(System.getProperty("os.arch")) + "\"," + "\"availableProcessors\":"
+                    + "\"javaRuntimeVersion\":\"" + json(System.getProperty("java.runtime.version", "unknown"))
+                    + "\"," + "\"osName\":\"" + json(System.getProperty("os.name", "unknown")) + "\","
+                    + "\"osArch\":\"" + json(System.getProperty("os.arch", "unknown")) + "\","
+                    + "\"availableProcessors\":"
                     + Runtime.getRuntime().availableProcessors() + "}," + "\"cases\":[" + caseJson + "]}";
         }
     }
 
     private static String json(String value) {
-        return value.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
+        StringBuilder escaped = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            switch (character) {
+                case '\\' -> escaped.append("\\\\");
+                case '"' -> escaped.append("\\\"");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                case '\b' -> escaped.append("\\b");
+                case '\f' -> escaped.append("\\f");
+                default -> {
+                    if (character < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) character));
+                    } else {
+                        escaped.append(character);
+                    }
+                }
+            }
+        }
+        return escaped.toString();
     }
 }

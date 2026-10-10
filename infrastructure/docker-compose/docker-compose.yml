@@ -5,8 +5,12 @@ services:
       # Local development still requires caller-supplied credentials; never bake a reusable
       # database password into source control. Copy .env.example to .env before starting.
       POSTGRES_USER: ${LIFEOS_POSTGRES_USER:?Set LIFEOS_POSTGRES_USER in infrastructure/docker-compose/.env}
-      POSTGRES_PASSWORD: ${LIFEOS_POSTGRES_PASSWORD:?Set LIFEOS_POSTGRES_PASSWORD in infrastructure/docker-compose/.env}
+      # The official image reads this file once at initialization; the password never appears in
+      # the Compose model, process environment, or source-controlled configuration.
+      POSTGRES_PASSWORD_FILE: /run/secrets/lifeos-postgres-bootstrap
       POSTGRES_DB: ${LIFEOS_POSTGRES_DB:-lifeos}
+    secrets:
+      - lifeos-postgres-bootstrap
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -253,3 +257,7 @@ volumes:
 networks:
   observability:
     name: lifeos-observability
+
+secrets:
+  lifeos-postgres-bootstrap:
+    file: ${LIFEOS_POSTGRES_CREDENTIAL_FILE:?Set LIFEOS_POSTGRES_CREDENTIAL_FILE to a local credential-file path in infrastructure/docker-compose/.env}

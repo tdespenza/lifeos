@@ -30,6 +30,29 @@ class BoundedIntervalConflictDetectorTest {
                         new IntervalConflict<>(second, fourth),
                         new IntervalConflict<>(fourth, third)),
                 conflicts);
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> conflicts.add(new IntervalConflict<>(first, second)));
+    }
+
+    @Test
+    void preservesFirstSeenOrderForEqualNormalizedIntervals() {
+        TimeInterval<String> first = interval("first", 0, 10);
+        TimeInterval<String> second = interval("second", 0, 10);
+        TimeInterval<String> later = interval("later", 1, 9);
+
+        assertEquals(
+                List.of(
+                        new IntervalConflict<>(first, second),
+                        new IntervalConflict<>(first, later),
+                        new IntervalConflict<>(second, later)),
+                detector.findConflicts(List.of(first, second, later)));
+    }
+
+    @Test
+    void rejectsInvalidConstructorBounds() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedIntervalConflictDetector(1, -1));
     }
 
     @Test
@@ -46,6 +69,18 @@ class BoundedIntervalConflictDetectorTest {
                 AlgorithmInputException.class,
                 () -> new BoundedIntervalConflictDetector(1, 1)
                         .findConflicts(List.of(interval("a", 0, 1), interval("b", 2, 3))));
+    }
+
+    @Test
+    void allowsZeroConflictLimitWhenNoConflictsExistAndThrowsWhenOneIsFound() {
+        BoundedIntervalConflictDetector zeroConflictLimit = new BoundedIntervalConflictDetector(5, 0);
+
+        assertEquals(
+                List.of(),
+                zeroConflictLimit.findConflicts(List.of(interval("a", 0, 1), interval("b", 1, 2))));
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> zeroConflictLimit.findConflicts(List.of(interval("a", 0, 2), interval("b", 1, 3))));
     }
 
     private static TimeInterval<String> interval(String value, int startSeconds, int endSeconds) {

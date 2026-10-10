@@ -1,0 +1,16 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "duplicate-root-library",
+      "purl": "pkg:maven/com.example/duplicate-root-library@1.0.0"
+    },
+    {
+      "type": "library",
+      "name": "duplicate-root-library",
+      "purl": "pkg:maven/com.example/duplicate-root-library@1.0.0"
+    }
+  ]
+}

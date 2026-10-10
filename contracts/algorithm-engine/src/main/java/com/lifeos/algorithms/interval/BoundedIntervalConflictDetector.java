@@ -12,10 +12,12 @@ import java.util.TreeSet;
  * Enumerates all half-open interval conflicts with bounded input and output.
  *
  * <p>Intervals are sorted once, expired intervals are evicted through a min-heap, and currently
- * active intervals are kept in a deterministic tree. The runtime is O(N log N + K), excluding the
- * unavoidable O(K) result storage, where K is the number of returned conflicts. The result order
- * is stable by the later interval's normalized start/end/first-seen rank and then the earlier
- * interval's same rank.
+ * active intervals are kept in a deterministic tree. For N input intervals and C retained
+ * conflicts, runtime is O(N log N + C) and space is O(N + C). If the method discovers conflict
+ * {@code maxConflicts + 1}, it throws instead of returning a truncated result. A direct nested
+ * pair scan is simpler, but it requires O(N^2) time even when few intervals overlap. The result
+ * order is stable by the later interval's normalized start/end/first-seen rank and then the
+ * earlier interval's same rank.
  */
 public final class BoundedIntervalConflictDetector {
 
@@ -38,7 +40,8 @@ public final class BoundedIntervalConflictDetector {
      */
     public BoundedIntervalConflictDetector(int maxIntervals, int maxConflicts) {
         if (maxIntervals < 1 || maxConflicts < 0) {
-            throw new IllegalArgumentException("interval bounds must be positive");
+            throw new IllegalArgumentException(
+                    "maxIntervals must be at least 1 and maxConflicts must be non-negative");
         }
         this.maxIntervals = maxIntervals;
         this.maxConflicts = maxConflicts;

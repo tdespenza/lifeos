@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.lifeos.gateway.config.GatewayProperties;
+import java.net.URI;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -24,17 +25,11 @@ class GatewayRouteTableTest {
     }
 
     @Test
-    void rejectsRootAndUnversionedPublicRoutePrefixes() {
-        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals")).isTrue();
-        assertThat(GatewayRoute.isValidPathPrefix("/")).isFalse();
-        assertThat(GatewayRoute.isValidPathPrefix("/goals")).isFalse();
-        assertThat(GatewayRoute.isValidPathPrefix("/api/v0/goals")).isFalse();
-        assertThat(GatewayRoute.isValidPathPrefix("/api/v01/goals")).isFalse();
-        assertThat(GatewayRoute.isValidPathPrefix("/api/v1")).isFalse();
+    void rootPrefixMatchesNestedPaths() {
+        GatewayRouteTable table = new GatewayRouteTable(properties(
+                new GatewayProperties.Route("root", "/", "https://root.test")));
 
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(
-                        new GatewayProperties.Route("root", "/", "https://root.test"))))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(table.resolve("/nested/path")).get().extracting(GatewayRoute::id).isEqualTo("root");
     }
 
     @Test
@@ -56,10 +51,16 @@ class GatewayRouteTableTest {
     }
 
     @Test
-    void identifiesOnlyTheAssistantPrefixForItsDedicatedOutboundPolicy() {
-        GatewayRoute assistant = new GatewayRouteTable(properties(
-                        new GatewayProperties.Route(
-                                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test")))
+    void identifiesAssistantRoutesAndRejectsAuthenticationExceptions() {
+        GatewayProperties.Route assistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test");
+        GatewayProperties.Route publicAssistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test", false);
+        GatewayProperties.Route methodScopedAssistant = new GatewayProperties.Route(
+                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test");
+        methodScopedAssistant.setAuthenticationRequiredMethods(Set.of("POST"));
+
+        GatewayRoute resolvedAssistant = new GatewayRouteTable(properties(assistant))
                 .resolve(GatewayRoute.AI_ASSISTANT_PATH_PREFIX + "/conversations")
                 .orElseThrow();
         GatewayRoute other = new GatewayRouteTable(properties(
@@ -67,19 +68,9 @@ class GatewayRouteTableTest {
                 .resolve("/api/v1/goals")
                 .orElseThrow();
 
-        assertThat(assistant.isAiAssistantRoute()).isTrue();
-        assertThat(assistant.requiresAuthentication("GET")).isTrue();
+        assertThat(resolvedAssistant.isAiAssistantRoute()).isTrue();
+        assertThat(resolvedAssistant.requiresAuthentication("GET")).isTrue();
         assertThat(other.isAiAssistantRoute()).isFalse();
-    }
-
-    @Test
-    void rejectsAnyPublicOrStreamingExceptionForTheAssistantPrefix() {
-        GatewayProperties.Route publicAssistant = new GatewayProperties.Route(
-                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test", false);
-        GatewayProperties.Route methodScopedAssistant = new GatewayProperties.Route(
-                "assistant", GatewayRoute.AI_ASSISTANT_PATH_PREFIX, "https://assistant.test");
-        methodScopedAssistant.setAuthenticationRequiredMethods(Set.of("POST"));
-
         assertThat(publicAssistant.isAiAssistantRouteConfigurationValid()).isFalse();
         assertThat(methodScopedAssistant.isAiAssistantRouteConfigurationValid()).isFalse();
         assertThatThrownBy(() -> new GatewayRouteTable(properties(publicAssistant)))
@@ -111,6 +102,16 @@ class GatewayRouteTableTest {
     }
 
     @Test
+    void rejectsMediaUploadVirtualRouteIdCollisionsInEitherDeclarationOrder() {
+        assertVirtualRouteIdCollision("media-media-upload", true, false);
+    }
+
+    @Test
+    void rejectsMediaHlsVirtualRouteIdCollisionsInEitherDeclarationOrder() {
+        assertVirtualRouteIdCollision("media-media-hls", false, true);
+    }
+
+    @Test
     void rejectsRealRouteIdsThatCollideWithMediaVirtualResilienceIds() {
         GatewayProperties.Route media = new GatewayProperties.Route(
                 "media-assets", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
@@ -139,20 +140,16 @@ class GatewayRouteTableTest {
 
     @Test
     void requiresHttpsForRemoteUpstreamsAndAllowsOnlyLoopbackHttpForLocalDevelopment() {
-        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example:8443"))
-                .isTrue();
+        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example:8443")).isTrue();
         assertThat(GatewayRoute.isValidUpstream("http://localhost:8082")).isTrue();
         assertThat(GatewayRoute.isValidUpstream("http://127.0.0.1:8082")).isTrue();
         assertThat(GatewayRoute.isValidUpstream("http://[::1]:8082")).isTrue();
 
-        assertThat(GatewayRoute.isValidUpstream("http://task-goal.production.example:8082"))
-                .isFalse();
+        assertThat(GatewayRoute.isValidUpstream("http://task-goal.production.example:8082")).isFalse();
         assertThat(GatewayRoute.isValidUpstream("http://192.0.2.10:8082")).isFalse();
         assertThat(GatewayRoute.isValidUpstream("http://127.0.0.01:8082")).isFalse();
-        assertThat(GatewayRoute.isValidUpstream("https://user:pass@task-goal.production.example"))
-                .isFalse();
-        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example/base-path"))
-                .isFalse();
+        assertThat(GatewayRoute.isValidUpstream("https://user:pass@task-goal.production.example")).isFalse();
+        assertThat(GatewayRoute.isValidUpstream("https://task-goal.production.example/base-path")).isFalse();
 
         GatewayProperties.Route remoteHttp = new GatewayProperties.Route(
                 "remote-http", "/api/v1/unsafe", "http://task-goal.production.example:8082");
@@ -201,164 +198,243 @@ class GatewayRouteTableTest {
     }
 
     @Test
-    void permitsStreamingOnlyForTheExactAuthenticatedNotificationGetRoute() {
-        GatewayProperties.Route stream = new GatewayProperties.Route(
-                "notification-stream",
-                GatewayRoute.NOTIFICATION_STREAM_PATH,
-                "https://notification.test");
-        stream.setAuthenticationRequiredMethods(Set.of("GET"));
-        stream.setStreaming(true);
-
-        GatewayRoute route = new GatewayRouteTable(properties(stream))
-                .resolve(GatewayRoute.NOTIFICATION_STREAM_PATH)
-                .orElseThrow();
-
-        assertThat(route.streaming()).isTrue();
-        assertThat(route.isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "GET"))
+    void acceptsOnlyReviewedStreamingRoutePolicies() {
+        assertThat(new GatewayRoute(
+                        "notifications",
+                        GatewayRoute.NOTIFICATION_STREAM_PATH,
+                        URI.create("https://notifications.test"),
+                        true,
+                        Set.of(),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        false,
+                        false)
+                .isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "GET"))
                 .isTrue();
-        assertThat(route.isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH + "/child", "GET"))
-                .isFalse();
-        assertThat(route.isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "POST"))
-                .isFalse();
-    }
+        assertThat(new GatewayRoute(
+                        "notifications",
+                        GatewayRoute.NOTIFICATION_STREAM_PATH,
+                        URI.create("https://notifications.test"),
+                        true,
+                        Set.of("GET"),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        false,
+                        false)
+                .isExactStreamingRequest(GatewayRoute.NOTIFICATION_STREAM_PATH, "GET"))
+                .isTrue();
 
-    @Test
-    void rejectsStreamingConfigurationForAnyOtherPathOrPublicPolicy() {
-        GatewayProperties.Route arbitraryPath = new GatewayProperties.Route(
-                "unsafe-stream", "/api/v1/goals", "https://task-goal.test");
-        arbitraryPath.setAuthenticationRequiredMethods(Set.of("GET"));
-        arbitraryPath.setStreaming(true);
-
-        assertThat(arbitraryPath.isStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(arbitraryPath)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("streaming routes");
-
-        GatewayProperties.Route publicStream = new GatewayProperties.Route(
-                "notification-stream",
+        assertInvalidStreamingRoute("/api/v1/notifications", true, Set.of("GET"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(GatewayRoute.NOTIFICATION_STREAM_PATH, false, Set.of("GET"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(
+                GatewayRoute.NOTIFICATION_STREAM_PATH, true, Set.of("POST"), Set.of(), Set.of());
+        assertInvalidStreamingRoute(
                 GatewayRoute.NOTIFICATION_STREAM_PATH,
-                "https://notification.test");
-        publicStream.setAuthenticationRequiredMethods(Set.of("GET"));
-        publicStream.setAuthenticationPublicPaths(Set.of(GatewayRoute.NOTIFICATION_STREAM_PATH));
-        publicStream.setAuthenticationPublicMethods(Set.of("GET"));
-        publicStream.setStreaming(true);
-
-        assertThat(publicStream.isStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(publicStream)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("streaming routes");
+                true,
+                Set.of("GET"),
+                Set.of(GatewayRoute.NOTIFICATION_STREAM_PATH),
+                Set.of());
+        assertInvalidStreamingRoute(
+                GatewayRoute.NOTIFICATION_STREAM_PATH, true, Set.of("GET"), Set.of(), Set.of("GET"));
     }
 
     @Test
-    void permitsRequestStreamingOnlyForTheExactAuthenticatedDocumentCreateOperation() {
-        GatewayProperties.Route documents = new GatewayProperties.Route(
-                "document-vault", GatewayRoute.DOCUMENT_UPLOAD_PATH, "https://documents.test");
-        documents.setDocumentUploadStreaming(true);
+    void rejectsInvalidUploadAndHlsStreamingPolicies() {
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "documents",
+                        GatewayRoute.DOCUMENT_UPLOAD_PATH,
+                        URI.create("https://documents.test"),
+                        true,
+                        Set.of("POST"),
+                        Set.of(),
+                        Set.of(),
+                        false,
+                        true,
+                        false,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "media",
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                        URI.create("https://media.test"),
+                        true,
+                        Set.of(),
+                        Set.of(),
+                        Set.of(),
+                        true,
+                        false,
+                        true,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "media",
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                        URI.create("https://media.test"),
+                        true,
+                        Set.of(),
+                        Set.of(GatewayRoute.MEDIA_ASSETS_PATH_PREFIX),
+                        Set.of(),
+                        false,
+                        false,
+                        false,
+                        true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
-        GatewayRoute route = new GatewayRouteTable(properties(documents))
-                .resolve(GatewayRoute.DOCUMENT_UPLOAD_PATH)
-                .orElseThrow();
+    @Test
+    void classifiesOnlyExactDocumentUploadsForStreaming() {
+        GatewayRoute route = documentUploadRoute();
 
-        assertThat(route.documentUploadStreaming()).isTrue();
         assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "POST"))
                 .isTrue();
+        assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH + "/child", "POST"))
+                .isFalse();
         assertThat(route.isExactDocumentUploadRequest(GatewayRoute.DOCUMENT_UPLOAD_PATH, "PUT"))
                 .isFalse();
-        assertThat(route.isExactDocumentUploadRequest(
-                        GatewayRoute.DOCUMENT_UPLOAD_PATH + "/123", "POST"))
+    }
+
+    @Test
+    void classifiesOnlyCanonicalMediaSourceUploadsForStreaming() {
+        GatewayRoute route = mediaUploadRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
+
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "PUT")).isTrue();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source", "POST")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(asset + "/source/child", "PUT")).isFalse();
+        assertThat(route.isExactMediaUploadRequest(
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/not-a-canonical-uuid/source", "PUT"))
                 .isFalse();
     }
 
     @Test
-    void rejectsDocumentRequestStreamingForAnyOtherPathOrAuthenticationException() {
-        GatewayProperties.Route arbitraryPath = new GatewayProperties.Route(
-                "unsafe-upload", "/api/v1/goals", "https://task-goal.test");
-        arbitraryPath.setDocumentUploadStreaming(true);
+    void classifiesOnlyReviewedMediaHlsResponsesForStreaming() {
+        GatewayRoute route = mediaHlsRoute();
+        String asset = GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/123e4567-e89b-12d3-a456-426614174000";
 
-        assertThat(arbitraryPath.isDocumentUploadStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(arbitraryPath)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("document upload streaming");
-
-        GatewayProperties.Route publicDocuments = new GatewayProperties.Route(
-                "document-vault", GatewayRoute.DOCUMENT_UPLOAD_PATH, "https://documents.test");
-        publicDocuments.setDocumentUploadStreaming(true);
-        publicDocuments.setAuthenticationPublicPaths(Set.of(GatewayRoute.DOCUMENT_UPLOAD_PATH));
-        publicDocuments.setAuthenticationPublicMethods(Set.of("POST"));
-
-        assertThat(publicDocuments.isDocumentUploadStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(publicDocuments)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("document upload streaming");
-    }
-
-    @Test
-    void permitsOnlyExactAuthenticatedMediaUploadAndHlsOperations() {
-        GatewayProperties.Route media = new GatewayProperties.Route(
-                "media-assets", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
-        media.setMediaUploadStreaming(true);
-        media.setMediaHlsStreaming(true);
-
-        GatewayRoute route = new GatewayRouteTable(properties(media))
-                .resolve(GatewayRoute.MEDIA_ASSETS_PATH_PREFIX)
-                .orElseThrow();
-        String assetId = "11111111-1111-4111-8111-111111111111";
-
-        assertThat(route.isExactMediaUploadRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/source", "PUT"))
-                .isTrue();
-        assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/master.m3u8", "GET"))
-                .isTrue();
-        assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/segments/segment-001.m4s",
-                        "GET"))
-                .isTrue();
-        assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/segments/segment-001.ts",
-                        "GET"))
-                .isTrue();
-
-        assertThat(route.isExactMediaUploadRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/source", "POST"))
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.m4s", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/part-001.ts", "GET")).isTrue();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/nested/part.m4s", "GET"))
                 .isFalse();
-        assertThat(route.isExactMediaUploadRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/not-a-uuid/source", "PUT"))
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/segments/../part.m4s", "GET"))
                 .isFalse();
+        assertThat(route.isExactMediaHlsRequest(asset + "/hls/master.m3u8", "POST")).isFalse();
         assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/segments/../../secret.ts",
+                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX
+                                + "/not-a-canonical-uuid/hls/master.m3u8",
                         "GET"))
-                .isFalse();
-        assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/segments/segment.mp4",
-                        "GET"))
-                .isFalse();
-        assertThat(route.isExactMediaHlsRequest(
-                        GatewayRoute.MEDIA_ASSETS_PATH_PREFIX + "/" + assetId + "/hls/master.m3u8", "HEAD"))
                 .isFalse();
     }
 
     @Test
-    void rejectsMediaStreamingForAnyOtherRouteOrAuthenticationException() {
-        GatewayProperties.Route arbitraryPath = new GatewayProperties.Route(
-                "unsafe-media", "/api/v1/goals", "https://task-goal.test");
-        arbitraryPath.setMediaUploadStreaming(true);
+    void validatesVersionedPrefixesAndLoopbackUpstreams() {
+        assertThat(GatewayRoute.isValidPathPrefix("/")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v12/goals/active")).isTrue();
+        assertThat(GatewayRoute.isValidPathPrefix(null)).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix(" ")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("api/v1/goals")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v0/goals")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals/")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals//active")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals?draft")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/goals#section")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/*")).isFalse();
+        assertThat(GatewayRoute.isValidPathPrefix("/api/v1/{goal}")).isFalse();
 
-        assertThat(arbitraryPath.isMediaUploadStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(arbitraryPath)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("media upload streaming");
+        assertThat(GatewayRoute.isValidUpstream("https://gateway.test")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://localhost:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://127.0.0.1:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://[::1]:8080")).isTrue();
+        assertThat(GatewayRoute.isValidUpstream("http://gateway.test")).isFalse();
+    }
 
-        GatewayProperties.Route publicMedia = new GatewayProperties.Route(
-                "media-assets", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
-        publicMedia.setMediaHlsStreaming(true);
-        publicMedia.setAuthenticationPublicPaths(Set.of(GatewayRoute.MEDIA_ASSETS_PATH_PREFIX));
-        publicMedia.setAuthenticationPublicMethods(Set.of("GET"));
+    private static void assertInvalidStreamingRoute(
+            String pathPrefix,
+            boolean authenticationRequired,
+            Set<String> authenticationRequiredMethods,
+            Set<String> authenticationPublicPaths,
+            Set<String> authenticationPublicMethods) {
+        assertThatThrownBy(() -> new GatewayRoute(
+                        "notifications",
+                        pathPrefix,
+                        URI.create("https://notifications.test"),
+                        authenticationRequired,
+                        authenticationRequiredMethods,
+                        authenticationPublicPaths,
+                        authenticationPublicMethods,
+                        true,
+                        false,
+                        false,
+                        false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
-        assertThat(publicMedia.isMediaHlsStreamingConfigurationValid()).isFalse();
-        assertThatThrownBy(() -> new GatewayRouteTable(properties(publicMedia)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("media HLS streaming");
+    private static GatewayRoute documentUploadRoute() {
+        return new GatewayRoute(
+                "documents",
+                GatewayRoute.DOCUMENT_UPLOAD_PATH,
+                URI.create("https://documents.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                true,
+                false,
+                false);
+    }
+
+    private static GatewayRoute mediaUploadRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                true,
+                false);
+    }
+
+    private static GatewayRoute mediaHlsRoute() {
+        return new GatewayRoute(
+                "media",
+                GatewayRoute.MEDIA_ASSETS_PATH_PREFIX,
+                URI.create("https://media.test"),
+                true,
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                false,
+                false,
+                false,
+                true);
+    }
+
+    private static void assertVirtualRouteIdCollision(
+            String collidingId, boolean mediaUploadStreaming, boolean mediaHlsStreaming) {
+        GatewayProperties.Route streaming = new GatewayProperties.Route(
+                "media", GatewayRoute.MEDIA_ASSETS_PATH_PREFIX, "https://media.test");
+        streaming.setMediaUploadStreaming(mediaUploadStreaming);
+        streaming.setMediaHlsStreaming(mediaHlsStreaming);
+        GatewayProperties.Route colliding = new GatewayProperties.Route(
+                collidingId, "/api/v1/other", "https://other.test");
+
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(streaming, colliding)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("route id");
+        assertThatThrownBy(() -> new GatewayRouteTable(properties(colliding, streaming)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("route id");
     }
 
     private static GatewayProperties properties(GatewayProperties.Route... routes) {

@@ -1,0 +1,19 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "application",
+      "name": "pedigree-owner",
+      "pedigree": {
+        "descendants": [
+          {
+            "type": "library",
+            "name": "descendant-with-malformed-purl",
+            "purl": "pkg:maven/com.example/descendant@1.0.0?missingQualifierValue"
+          }
+        ]
+      }
+    }
+  ]
+}

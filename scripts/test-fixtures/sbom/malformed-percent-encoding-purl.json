@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "malformed-percent-encoding",
+      "purl": "pkg:maven/com.example/malformed-percent-encoding@1%%"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {
+    "tools": [
+      {
+        "vendor": "Acme",
+        "name": "legacy-generator",
+        "version": "1.0.0"
+      },
+      "not-a-tool-object"
+    ]
+  }
+}

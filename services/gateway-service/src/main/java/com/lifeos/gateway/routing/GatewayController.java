@@ -75,11 +75,11 @@ public class GatewayController {
         if (route.isEmpty()) {
             throw new UnknownGatewayRouteException();
         }
+        GatewayRoute resolvedRoute = route.get();
+        validateStreamingRequest(resolvedRoute, requestPath, request.getMethod());
         if (!SUPPORTED_METHODS.contains(request.getMethod())) {
             throw new UnsupportedGatewayMethodException();
         }
-        GatewayRoute resolvedRoute = route.get();
-        validateStreamingRequest(resolvedRoute, requestPath, request.getMethod());
         String correlationId = correlationId(request);
         GatewayAuthenticatedSubject subject = null;
         if (resolvedRoute.requiresAuthentication(requestPath, request.getMethod())) {

@@ -18,7 +18,7 @@ dependencies {
     api("io.grpc:grpc-stub:$grpcVersion")
     compileOnly("javax.annotation:javax.annotation-api:1.3.2")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.jupiter:junit-jupiter")
 }
 
 protobuf {

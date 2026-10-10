@@ -16,35 +16,48 @@ import java.util.Set;
  * Iterative Kahn topological ordering with explicit graph-size limits and stable first-seen
  * tie-breaking.
  *
- * <p>For {@code V} distinct nodes and {@code E} unique edges, the algorithm runs in O(V + E) time
- * and uses O(V + E) memory. Repeated identical edges are normalized before indegrees are updated;
- * this avoids duplicate input changing the result or consuming unbounded work. Cyclic input throws
- * before returning any partial order.
+ * <p>For {@code N} submitted node records, {@code R} submitted edge records, {@code V} distinct
+ * nodes, and {@code E} unique edges, the algorithm runs in O(N + R + V + E) time and uses
+ * O(V + E) memory. The {@code maxSubmittedNodes} and {@code maxSubmittedEdges} bounds cap
+ * duplicate-record work. Repeated identical edges are normalized before indegrees are updated, so
+ * duplicate input does not change the result. Cyclic input throws before returning any partial
+ * order.
+ *
+ * <p>A recursive DFS-based topological sort is an alternative with the same asymptotic
+ * complexity, but its call stack grows with the graph's longest dependency chain, and cycle
+ * detection needs a separate "currently on the stack" set. This iterative, queue-based ordering
+ * avoids that call-stack growth and gives a stable first-seen tie-break for free from its
+ * insertion-ordered ready queue.
  */
 public final class BoundedTopologicalOrder {
 
     public static final int DEFAULT_MAX_NODES = 10_000;
+    public static final int DEFAULT_MAX_SUBMITTED_NODES = 50_000;
     public static final int DEFAULT_MAX_SUBMITTED_EDGES = 50_000;
 
     private final int maxNodes;
+    private final int maxSubmittedNodes;
     private final int maxSubmittedEdges;
 
     /** Creates the standard planning-graph bounded orderer. */
     public BoundedTopologicalOrder() {
-        this(DEFAULT_MAX_NODES, DEFAULT_MAX_SUBMITTED_EDGES);
+        this(DEFAULT_MAX_NODES, DEFAULT_MAX_SUBMITTED_NODES, DEFAULT_MAX_SUBMITTED_EDGES);
     }
 
     /**
      * Creates an orderer with service-owned bounds.
      *
      * @param maxNodes maximum distinct explicit or edge-referenced nodes
+     * @param maxSubmittedNodes maximum declared-node records inspected, including duplicates
      * @param maxSubmittedEdges maximum edge records inspected, including duplicates
      */
-    public BoundedTopologicalOrder(int maxNodes, int maxSubmittedEdges) {
-        if (maxNodes < 1 || maxSubmittedEdges < 0) {
-            throw new IllegalArgumentException("algorithm bounds must be positive");
+    public BoundedTopologicalOrder(int maxNodes, int maxSubmittedNodes, int maxSubmittedEdges) {
+        if (maxNodes < 1 || maxSubmittedNodes < 0 || maxSubmittedEdges < 0) {
+            throw new IllegalArgumentException(
+                    "maxNodes must be at least 1, and maxSubmittedNodes/maxSubmittedEdges must be non-negative");
         }
         this.maxNodes = maxNodes;
+        this.maxSubmittedNodes = maxSubmittedNodes;
         this.maxSubmittedEdges = maxSubmittedEdges;
     }
 
@@ -67,15 +80,21 @@ public final class BoundedTopologicalOrder {
 
         Map<T, Set<T>> adjacency = new LinkedHashMap<>();
         Map<T, Integer> indegree = new LinkedHashMap<>();
+        int submittedNodeCount = 0;
         for (T node : declaredNodes) {
+            if (submittedNodeCount >= maxSubmittedNodes) {
+                throw new AlgorithmInputException("graph exceeds the configured node record limit");
+            }
+            submittedNodeCount++;
             addNode(adjacency, indegree, node);
         }
 
         int submittedEdgeCount = 0;
         for (DirectedEdge<T> edge : edges) {
-            if (++submittedEdgeCount > maxSubmittedEdges) {
+            if (submittedEdgeCount >= maxSubmittedEdges) {
                 throw new AlgorithmInputException("graph exceeds the configured edge limit");
             }
+            submittedEdgeCount++;
             if (edge == null) {
                 throw new AlgorithmInputException("graph edges must not contain null");
             }

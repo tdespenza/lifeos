@@ -15,6 +15,12 @@ LifeOS is decomposed into eleven Spring Boot microservices (identity, profile, t
 
 Kafka is the default event backbone for all listed domain events. Pulsar remains an acceptable substitute noted in requirements, but Kafka is what services, CI, and local dev-compose target.
 
+Versioned event payloads are maintained in the shared `contracts:event-contracts` module. Each
+CloudEvents type and Kafka topic carries an explicit schema version; breaking payload changes
+introduce a new version rather than reinterpreting an existing record. Event envelopes carry only
+bounded routing/correlation metadata, while sensitive delivery targets and document contents stay
+behind the owning service boundary.
+
 ## Why
 
 Kafka wins on ecosystem maturity for the specific patterns this project commits to: the transactional outbox pattern leans on Debezium CDC, which is Kafka-native and has the deepest reference material; schema evolution is well-served by Confluent/Apicurio Schema Registry; and operational tooling (kcat, Kafka UI, Cruise Control) is more battle-tested than Pulsar's equivalents. Kafka is also the broker interviewers and reviewers are most likely to probe deeply, so demonstrating fluency there has higher portfolio payoff than Pulsar's less commonly interviewed operational model (BookKeeper + a metadata store). Pulsar's multi-tenancy and geo-replication are compelling but solve a problem LifeOS doesn't have yet — a single-tenant personal platform, not a multi-tenant SaaS.

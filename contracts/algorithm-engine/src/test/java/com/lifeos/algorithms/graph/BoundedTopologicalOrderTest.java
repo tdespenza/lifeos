@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 
 class BoundedTopologicalOrderTest {
 
-    private final BoundedTopologicalOrder orderer = new BoundedTopologicalOrder(10, 10);
+    private final BoundedTopologicalOrder orderer = new BoundedTopologicalOrder(10, 10, 10);
 
     @Test
     void ordersAnAcyclicGraphWithFirstSeenStableTies() {
@@ -20,6 +20,7 @@ class BoundedTopologicalOrderTest {
                 List.of(new DirectedEdge<>("write", "review"), new DirectedEdge<>("review", "ship")));
 
         assertEquals(List.of("write", "document", "review", "ship"), result);
+        assertThrows(UnsupportedOperationException.class, () -> result.add("unexpected"));
     }
 
     @Test
@@ -46,18 +47,46 @@ class BoundedTopologicalOrderTest {
     @Test
     void rejectsNullAndOversizedInputBeforeSorting() {
         assertThrows(AlgorithmInputException.class, () -> orderer.order(null, List.of()));
+        assertThrows(AlgorithmInputException.class, () -> orderer.order(List.of(), null));
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> orderer.order(Arrays.asList("a", null), List.of()));
         assertThrows(
                 AlgorithmInputException.class,
                 () -> orderer.order(
                         List.of("a", "b", "c"), Arrays.asList(new DirectedEdge<>("a", "b"), null)));
         assertThrows(
                 AlgorithmInputException.class,
-                () -> new BoundedTopologicalOrder(2, 2).order(List.of("a", "b", "c"), List.of()));
+                () -> new BoundedTopologicalOrder(2, 2, 2).order(List.of("a", "b", "c"), List.of()));
         assertThrows(
                 AlgorithmInputException.class,
-                () -> new BoundedTopologicalOrder(4, 1)
+                () -> new BoundedTopologicalOrder(4, 10, 1)
                         .order(
                                 List.of("a", "b"),
                                 List.of(new DirectedEdge<>("a", "b"), new DirectedEdge<>("b", "c"))));
+    }
+
+    @Test
+    void rejectsInvalidConfiguredBounds() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(0, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(1, -1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new BoundedTopologicalOrder(1, 1, -1));
+    }
+
+    @Test
+    void rejectsDeclaredNodeRecordsExceedingTheSubmittedNodeLimitEvenWhenAllDuplicates() {
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> new BoundedTopologicalOrder(10, 3, 10)
+                        .order(List.of("same", "same", "same", "same"), List.of()));
+    }
+
+    @Test
+    void rejectsDuplicateEdgeRecordsExceedingTheSubmittedEdgeLimit() {
+        DirectedEdge<String> edge = new DirectedEdge<>("a", "b");
+
+        assertThrows(
+                AlgorithmInputException.class,
+                () -> new BoundedTopologicalOrder(10, 10, 1).order(List.of("a", "b"), List.of(edge, edge)));
     }
 }

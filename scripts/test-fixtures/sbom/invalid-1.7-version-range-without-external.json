@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "components": [
+    {
+      "type": "application",
+      "name": "implicit-internal-component",
+      "versionRange": "vers:generic/>=1.0.0|<2.0.0"
+    }
+  ]
+}

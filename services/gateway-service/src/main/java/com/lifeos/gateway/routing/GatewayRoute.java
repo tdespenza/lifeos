@@ -350,14 +350,14 @@ public record GatewayRoute(
         return value != null
                 && !value.isBlank()
                 && value.startsWith("/")
-                && VERSIONED_PUBLIC_PATH_PREFIX.matcher(value).matches()
+                && ("/".equals(value) || VERSIONED_PUBLIC_PATH_PREFIX.matcher(value).matches())
                 && !value.contains("//")
                 && !value.contains("?")
                 && !value.contains("#")
                 && !value.contains("*")
                 && !value.contains("{")
                 && !value.contains("}")
-                && !value.endsWith("/");
+                && ("/".equals(value) || !value.endsWith("/"));
     }
 
     /**
@@ -476,7 +476,8 @@ public record GatewayRoute(
             Set<String> authenticationPublicMethods) {
         return NOTIFICATION_STREAM_PATH.equals(pathPrefix)
                 && authenticationRequired
-                && authenticationRequiredMethods.equals(Set.of("GET"))
+                && (authenticationRequiredMethods.isEmpty()
+                        || authenticationRequiredMethods.equals(Set.of("GET")))
                 && authenticationPublicPaths.isEmpty()
                 && authenticationPublicMethods.isEmpty();
     }

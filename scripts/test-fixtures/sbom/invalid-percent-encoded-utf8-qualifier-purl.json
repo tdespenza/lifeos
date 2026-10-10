@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "invalid-percent-encoded-utf8-qualifier",
+      "purl": "pkg:maven/com.example/invalid-percent-encoded-utf8-qualifier@1.0.0?type=%FF"
+    }
+  ]
+}

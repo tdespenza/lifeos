@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "raw-non-ascii",
+      "purl": "pkg:npm/naïve"
+    }
+  ]
+}

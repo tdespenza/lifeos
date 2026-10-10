@@ -11,7 +11,7 @@ import java.util.UUID;
  *
  * <p>The added field deliberately requires a new topic and CloudEvents type rather than changing
  * {@link NotificationRequestedV1}. Notification-service validates and persists the V1-compatible
- * delivery fields plus this optional source time-zone fact without reinterpreting V1 records.
+ * delivery fields plus this required source time-zone fact without reinterpreting V1 records.
  *
  * @param notificationId producer-stable logical notification identifier
  * @param recipientAccountId LifeOS account that owns resolved delivery endpoints
@@ -23,7 +23,7 @@ import java.util.UUID;
  * @param actionUri optional safe action target
  * @param requestedChannels independently deliverable channels
  * @param expiresAt optional delivery cutoff
- * @param eventTimeZone IANA time zone that governed due-time calculation
+ * @param eventTimeZone required IANA time zone that governed due-time calculation
  */
 public record NotificationRequestedV2(
         UUID notificationId,
@@ -37,6 +37,8 @@ public record NotificationRequestedV2(
         Set<NotificationChannel> requestedChannels,
         Instant expiresAt,
         String eventTimeZone) {
+
+    private static final Set<String> AVAILABLE_ZONE_IDS = Set.copyOf(ZoneId.getAvailableZoneIds());
 
     /** Creates an immutable, validated V2 request. */
     public NotificationRequestedV2 {
@@ -84,6 +86,9 @@ public record NotificationRequestedV2(
             throw new IllegalArgumentException("eventTimeZone must be a bounded IANA zone identifier");
         }
         try {
+            if (!AVAILABLE_ZONE_IDS.contains(value)) {
+                throw new IllegalArgumentException("eventTimeZone must be a valid IANA zone identifier");
+            }
             return ZoneId.of(value).getId();
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("eventTimeZone must be a valid IANA zone identifier", exception);

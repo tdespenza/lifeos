@@ -30,6 +30,30 @@ class BoundedPriorityRankerTest {
     }
 
     @Test
+    void returnsOnlyTheRequestedRankedPrefix() {
+        List<PrioritizedItem<String>> result = ranker.rank(
+                List.of(
+                        new PrioritizedItem<>("highest", 2, null),
+                        new PrioritizedItem<>("lower", 1, null)),
+                1);
+
+        assertEquals(List.of("highest"), result.stream().map(PrioritizedItem::value).toList());
+    }
+
+    @Test
+    void returnsAnEmptyPrefixForAnEmptyCandidateCollection() {
+        assertEquals(List.of(), ranker.rank(List.of(), 1));
+    }
+
+    @Test
+    void returnsAllCandidatesWhenLimitExceedsCandidateCount() {
+        List<PrioritizedItem<String>> result =
+                ranker.rank(List.of(new PrioritizedItem<>("only", 1, null)), 2);
+
+        assertEquals(List.of("only"), result.stream().map(PrioritizedItem::value).toList());
+    }
+
+    @Test
     void rejectsInvalidLimitsAndMalformedOrOversizedCollections() {
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(null, 1));
         assertThrows(AlgorithmInputException.class, () -> ranker.rank(List.of(), 0));
@@ -41,5 +65,20 @@ class BoundedPriorityRankerTest {
                 AlgorithmInputException.class,
                 () -> new BoundedPriorityRanker(1)
                         .rank(List.of(new PrioritizedItem<>("a", 1, null), new PrioritizedItem<>("b", 1, null)), 1));
+    }
+
+    @Test
+    void rejectsNonPositiveCandidateLimit() {
+        assertThrows(IllegalArgumentException.class, () -> new BoundedPriorityRanker(0));
+    }
+
+    @Test
+    void returnsAnImmutableResult() {
+        List<PrioritizedItem<String>> result =
+                ranker.rank(List.of(new PrioritizedItem<>("only", 1, null)), 1);
+
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> result.add(new PrioritizedItem<>("extra", 1, null)));
     }
 }

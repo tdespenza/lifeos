@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Non-private, canonical metadata bound into a document digest.
@@ -19,6 +20,7 @@ public record CanonicalDocumentMetadata(String mediaType, String proofPurpose) {
 
     private static final int MAX_MEDIA_TYPE_LENGTH = 127;
     private static final int MAX_PURPOSE_LENGTH = 64;
+    private static final Pattern SAFE_TOKEN = Pattern.compile("[A-Za-z0-9][A-Za-z0-9.+/_-]*");
 
     public CanonicalDocumentMetadata {
         requireToken(mediaType, "mediaType", MAX_MEDIA_TYPE_LENGTH);
@@ -52,7 +54,7 @@ public record CanonicalDocumentMetadata(String mediaType, String proofPurpose) {
 
     private static void requireToken(String value, String field, int maximumLength) {
         Objects.requireNonNull(value, field + " must not be null");
-        if (value.isBlank() || value.length() > maximumLength || !value.matches("[A-Za-z0-9][A-Za-z0-9.+/_-]*")) {
+        if (value.isBlank() || value.length() > maximumLength || !SAFE_TOKEN.matcher(value).matches()) {
             throw new IllegalArgumentException(field + " must be a bounded safe token");
         }
     }

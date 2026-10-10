@@ -15,13 +15,22 @@ service CalendarAvailabilityService {
 
 message FindBusyIntervalsRequest {
   lifeos.common.v1.RequestMetadata metadata = 1;
+  // Selector only; the service must authorize it against authenticated transport identity.
   string owner_account_id = 2;
+  // Required valid protobuf timestamp and inclusive lower bound.
   google.protobuf.Timestamp starts_at = 3;
+  // Required valid protobuf timestamp and exclusive upper bound. It must be after starts_at;
+  // the service rejects missing, invalid, reversed, equal, or overlong windows before querying.
   google.protobuf.Timestamp ends_at = 4;
+  // Zero selects the server default; values above 100 are rejected.
+  uint32 page_size = 5;
+  // Opaque continuation token returned by the previous page.
+  string page_token = 6;
 }
 
 message FindBusyIntervalsResponse {
   repeated BusyInterval intervals = 1;
+  string next_page_token = 2;
 }
 
 message BusyInterval {

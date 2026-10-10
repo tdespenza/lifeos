@@ -15,7 +15,7 @@ public record DocumentProofRequestedV1(
         if (requestId == null || documentId == null || ownerAccountId == null) {
             throw new IllegalArgumentException("proof identifiers must not be null");
         }
-        CloudEventV1.requireText(tenantId, "tenantId", 255);
+        EventText.requireText(tenantId, "tenantId", 255);
         if (documentVersion < 0) {
             throw new IllegalArgumentException("documentVersion must not be negative");
         }

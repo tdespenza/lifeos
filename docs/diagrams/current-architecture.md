@@ -34,9 +34,10 @@ graph TD
 Redis is drawn dashed because it stores bounded, short-lived authentication/workload-rate-limit
 state rather than the durable identity store; accounts, credentials, sessions, memberships, and
 audit records remain in PostgreSQL. The internal Task/Goal-to-Identity REST adapter is a bounded,
-workload-authenticated transition while ADR-007's gRPC/mTLS platform contract is not yet built.
+workload-authenticated transition while ADR-007's versioned contract module exists but its
+production gRPC/mTLS platform path is not yet built.
 See [`why-redis.md`](../interview/why-redis.md).
 
 ## Target architecture (not yet built)
 
-`REQUIREMENTS.md`'s "Core Microservices" section names 13 services total; Gateway, Identity, and Task/Goal are the 3 built so far, leaving 10 not yet started: Profile, Calendar, Finance, Document Vault, Media Streaming, AI Orchestrator, Algorithm Engine, Blockchain Trust Ledger, Notification, and Analytics. (A `search-service/` also appears in REQUIREMENTS.md's high-level directory-tree diagram, but it isn't one of the 13 named in the Core Microservices section itself, so it's not counted here.) The event bus (Kafka/Pulsar), GraphQL/gRPC layers, and the Angular/JavaFX/Flutter clients are all planned but not implemented either. This diagram will be extended as each phase of `REQUIREMENTS.md`'s "Suggested MVP Roadmap" lands, rather than drawn speculatively ahead of the code.
+`REQUIREMENTS.md`'s "Core Microservices" section names 13 services total; Gateway, Identity, and Task/Goal are the 3 built so far, leaving 10 not yet started: Profile, Calendar, Finance, Document Vault, Media Streaming, AI Orchestrator, Algorithm Engine, Blockchain Trust Ledger, Notification, and Analytics. (A `search-service/` also appears in REQUIREMENTS.md's high-level directory-tree diagram, but it isn't one of the 13 named in the Core Microservices section itself, so it's not counted here.) The event bus (Kafka/Pulsar), GraphQL, production gRPC endpoints/mTLS, and the Angular/JavaFX/Flutter clients are not implemented yet; the versioned gRPC contract module exists as a build artifact. This diagram will be extended as each phase of `REQUIREMENTS.md`'s "Suggested MVP Roadmap" lands, rather than drawn speculatively ahead of the code.

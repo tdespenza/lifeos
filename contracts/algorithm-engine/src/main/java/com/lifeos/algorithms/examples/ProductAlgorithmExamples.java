@@ -23,7 +23,7 @@ public final class ProductAlgorithmExamples {
     private ProductAlgorithmExamples() {}
 
     /**
-     * Orders a Goal before its prerequisite and dependent Tasks.
+     * Orders prerequisite Tasks before their Goal, and the Goal before its dependent Tasks.
      *
      * <p>This demonstrates the persisted Task/Goal dependency execution-order use case. Kahn's
      * algorithm emits a node only after every prerequisite has been emitted, so every returned

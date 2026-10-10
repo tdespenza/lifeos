@@ -13,8 +13,8 @@ public record AiAuditHashRequestedV1(
         String auditHashSha256) {
 
     public AiAuditHashRequestedV1 {
-        if (auditEventId == null) {
-            throw new IllegalArgumentException("audit event id must not be null");
+        if (auditEventId == null || ownerAccountId == null || conversationId == null) {
+            throw new IllegalArgumentException("audit identifiers must not be null");
         }
         if (auditHashSha256 == null || !auditHashSha256.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("auditHashSha256 must be a SHA-256 digest");

@@ -44,10 +44,10 @@ This document provides the epic and story breakdown for LifeOS Engineering Platf
 
 #### API Gateway
 
-- FR1: Route external requests to the appropriate backend service (REST proxying)
-- FR2: Enforce authentication on gated routes at the gateway boundary
-- FR3: Apply rate limiting per user/client at the gateway
-- FR4: Attach a request correlation ID to every inbound request
+- FR1: Route external requests to the appropriate backend service (REST proxying) [DONE]
+- FR2: Enforce authentication on gated routes at the gateway boundary [DONE]
+- FR3: Apply rate limiting per user/client at the gateway [DONE]
+- FR4: Attach a request correlation ID to every inbound request [DONE]
 - FR5: Serve as the GraphQL entry point for aggregated client queries
 
 #### Identity Service
@@ -282,10 +282,10 @@ The baseline UX contract is in [`docs/ux-designs/DESIGN.md`](ux-designs/DESIGN.m
 
 ### FR Coverage Map
 
-- FR1: Epic 2 - API Gateway routing
-- FR2: Epic 2 - API Gateway auth enforcement
-- FR3: Epic 2 - API Gateway rate limiting
-- FR4: Epic 2 - API Gateway correlation IDs
+- FR1: Epic 2 - API Gateway routing [DONE]
+- FR2: Epic 2 - API Gateway auth enforcement [DONE]
+- FR3: Epic 2 - API Gateway rate limiting [DONE]
+- FR4: Epic 2 - API Gateway correlation IDs [DONE]
 - FR5: Epic 13 - GraphQL dashboard aggregation entry point
 - FR6: Epic 1 - Account registration [DONE]
 - FR7: Epic 1 - Login [DONE — first-party email/password]

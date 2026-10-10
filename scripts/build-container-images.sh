@@ -1,16 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! command -v dirname >/dev/null 2>&1; then
+    echo "dirname is required to resolve the repository root" >&2
+    exit 69
+fi
+
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
 readonly IMAGE_PREFIX="${LIFEOS_IMAGE_PREFIX:-lifeos}"
 readonly IMAGE_TAG="${LIFEOS_IMAGE_TAG:-local}"
 readonly PUSH_IMAGES="${LIFEOS_PUSH_IMAGES:-false}"
+# Docker can hang while connecting to its daemon, building an image, or pushing to a registry.
+# Keep each operation within a deliberately bounded operator-configurable deadline so a failed
+# dependency cannot consume the enclosing CI-job timeout.
+readonly DOCKER_OPERATION_TIMEOUT_SECONDS="${LIFEOS_DOCKER_TIMEOUT_SECONDS:-300}"
+readonly DOCKER_TIMEOUT_EXIT_STATUS=124
+readonly DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS=137
+readonly IMAGE_REFERENCE_VALIDATION_SCRIPT="${REPOSITORY_ROOT}/scripts/image-reference-validation.sh"
+if [[ ! -f "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" || ! -r "${IMAGE_REFERENCE_VALIDATION_SCRIPT}" ]]; then
+    echo "Image reference validation library is required" >&2
+    exit 69
+fi
+# shellcheck disable=SC1090,SC1091
+source "${IMAGE_REFERENCE_VALIDATION_SCRIPT}"
 SERVICES=()
 
-while IFS= read -r service; do
-    SERVICES+=("${service}")
-done < <(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -name '*.Dockerfile' \
-    -exec basename {} .Dockerfile \; | sort)
+if [[ ! "${DOCKER_OPERATION_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,2}$ ]] \
+    || (( 10#${DOCKER_OPERATION_TIMEOUT_SECONDS} > 900 )); then
+    echo "LIFEOS_DOCKER_TIMEOUT_SECONDS must be between 1 and 900 seconds" >&2
+    exit 64
+fi
+
+for service_discovery_command in find basename sort; do
+    if ! command -v "${service_discovery_command}" >/dev/null 2>&1; then
+        echo "${service_discovery_command} is required to discover service Dockerfiles" >&2
+        exit 69
+    fi
+done
+
+if ! discovered_services="$(find "${REPOSITORY_ROOT}/infrastructure/docker" -maxdepth 1 -type f -name '*.Dockerfile' \
+    -exec basename {} .Dockerfile \; | sort)"; then
+    echo "Failed to discover service Dockerfiles" >&2
+    exit 69
+fi
+
+# Command substitution removes trailing newlines. Do not feed an empty successful discovery into
+# the loop because a here-string would otherwise create one empty service instead of preserving
+# the existing no-Dockerfiles failure below.
+if [[ -n "${discovered_services}" ]]; then
+    while IFS= read -r service; do
+        SERVICES+=("${service}")
+    done <<< "${discovered_services}"
+fi
 readonly SERVICES
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -18,15 +60,28 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 69
 fi
 
-if [[ ! "${IMAGE_PREFIX}" =~ ^[a-z0-9][a-z0-9./:-]*$ ]]; then
-    echo "LIFEOS_IMAGE_PREFIX must be a lower-case container repository prefix" >&2
-    exit 64
+if command -v timeout >/dev/null 2>&1; then
+    DOCKER_TIMEOUT_COMMAND="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    # macOS ships no timeout utility; Homebrew's coreutils exposes the GNU-compatible command
+    # as gtimeout. Prefer timeout on CI/Linux while retaining a clear local development path.
+    DOCKER_TIMEOUT_COMMAND="gtimeout"
+else
+    echo "timeout (or gtimeout on macOS) is required to bound Docker operations during container image builds" >&2
+    exit 69
 fi
+readonly DOCKER_TIMEOUT_COMMAND
 
-if [[ ! "${IMAGE_TAG}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
-    echo "LIFEOS_IMAGE_TAG must be a valid container tag" >&2
-    exit 64
-fi
+run_docker_operation() {
+    "${DOCKER_TIMEOUT_COMMAND}" --signal=TERM --kill-after=10s "${DOCKER_OPERATION_TIMEOUT_SECONDS}s" docker "$@"
+}
+
+is_docker_timeout_status() {
+    local docker_status="$1"
+
+    [[ "${docker_status}" -eq "${DOCKER_TIMEOUT_EXIT_STATUS}" \
+        || "${docker_status}" -eq "${DOCKER_TIMEOUT_SIGNAL_EXIT_STATUS}" ]]
+}
 
 case "${PUSH_IMAGES}" in
     true|false) ;;
@@ -40,6 +95,12 @@ if [[ "${#SERVICES[@]}" -eq 0 ]]; then
     echo "No service Dockerfiles found in infrastructure/docker" >&2
     exit 66
 fi
+
+for service in "${SERVICES[@]}"; do
+    if ! validate_image_reference "${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"; then
+        exit 64
+    fi
+done
 
 for service in "${SERVICES[@]}"; do
     jar_directory="${REPOSITORY_ROOT}/services/${service}/build/libs"
@@ -67,15 +128,33 @@ for service in "${SERVICES[@]}"; do
 
     image="${IMAGE_PREFIX}/${service}:${IMAGE_TAG}"
     jar_file="${jars[0]#"${REPOSITORY_ROOT}"/}"
-    docker build \
+    if run_docker_operation build \
         --build-arg "JAR_FILE=${jar_file}" \
         --file "${REPOSITORY_ROOT}/infrastructure/docker/${service}.Dockerfile" \
         --tag "${image}" \
-        "${REPOSITORY_ROOT}"
+        "${REPOSITORY_ROOT}"; then
+        :
+    else
+        docker_status=$?
+        if is_docker_timeout_status "${docker_status}"; then
+            echo "Container image build for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+            exit 69
+        fi
+        exit "${docker_status}"
+    fi
     printf '%s\n' "Built ${image}"
 
     if [[ "${PUSH_IMAGES}" == "true" ]]; then
-        docker push "${image}"
+        if run_docker_operation push "${image}"; then
+            :
+        else
+            docker_status=$?
+            if is_docker_timeout_status "${docker_status}"; then
+                echo "Container image push for ${image} timed out after ${DOCKER_OPERATION_TIMEOUT_SECONDS}s" >&2
+                exit 69
+            fi
+            exit "${docker_status}"
+        fi
         printf '%s\n' "Pushed ${image}"
     fi
 done

@@ -16,6 +16,8 @@ plugins {
     id("info.solidsoft.pitest") version "1.19.0" apply false
 }
 
+val junitBomVersion = "5.13.2"
+
 allprojects {
     group = "com.lifeos"
     version = "0.1.0-SNAPSHOT"
@@ -114,7 +116,8 @@ allprojects {
         // Gradle 9 no longer supplies this runtime launcher implicitly for a plain Java project.
         // Keep JUnit Platform execution working for contract/library modules as well as Boot apps.
         dependencies {
-            testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.12.2")
+            testImplementation(platform("org.junit:junit-bom:$junitBomVersion"))
+            testRuntimeOnly("org.junit.platform:junit-platform-launcher")
         }
 
         java {
@@ -286,9 +289,28 @@ tasks.register<Exec>("endToEndTest") {
     commandLine("bash", rootProject.file("scripts/end-to-end-smoke-test.sh").absolutePath)
 }
 
+tasks.register<Exec>("nodeRuntimeCheck") {
+    description = "Verifies Node.js 20.18.0 or newer is available for readiness checks."
+    group = "verification"
+    environment("LIFEOS_NODE_VERSION_OVERRIDE", providers.gradleProperty("nodeRuntimeVersion").orNull ?: "")
+    commandLine("node", rootProject.file("scripts/node-runtime-check.js").absolutePath)
+}
+
+tasks.register<Exec>("performanceReadinessScenarioTest") {
+    description = "Executes the k6 readiness scenario with a deterministic mocked k6 runtime."
+    group = "verification"
+    dependsOn("nodeRuntimeCheck")
+    commandLine(
+        "node",
+        "--experimental-vm-modules",
+        rootProject.file("scripts/test-performance-readiness-smoke.js").absolutePath
+    )
+}
+
 tasks.register<Exec>("performanceTest") {
     description = "Runs the bounded k6 readiness performance smoke test against an enabled environment."
     group = "verification"
+    dependsOn("performanceReadinessScenarioTest")
     commandLine("bash", rootProject.file("scripts/performance-smoke-test.sh").absolutePath)
 }
 
@@ -303,5 +325,5 @@ tasks.named("check") {
     // without making it a mutation-test command; PIT remains the explicit `mutationTest` task.
     dependsOn("formatCheck", "staticAnalysis")
     dependsOn(javaSubprojectTaskPaths("check"))
-    dependsOn("architectureTest")
+    dependsOn("architectureTest", "performanceReadinessScenarioTest")
 }

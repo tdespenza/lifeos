@@ -1,0 +1,13 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "components": [
+    {
+      "type": "application",
+      "name": "conflicting-version-forms",
+      "isExternal": true,
+      "version": "1.0.0",
+      "versionRange": "vers:generic/>=1.0.0|<2.0.0"
+    }
+  ]
+}

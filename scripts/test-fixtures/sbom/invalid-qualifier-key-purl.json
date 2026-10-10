@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "type": "library",
+      "name": "invalid-qualifier-key",
+      "purl": "pkg:maven/com.example/invalid-qualifier-key@1.0.0?1bad=value"
+    }
+  ]
+}

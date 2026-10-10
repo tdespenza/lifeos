@@ -100,9 +100,12 @@ gateway:
     # assistant's structured provider timeout reaches callers instead of a generic gateway 504.
     connect-timeout: ${LIFEOS_GATEWAY_AI_ASSISTANT_CONNECT_TIMEOUT:2s}
     read-timeout: ${LIFEOS_GATEWAY_AI_ASSISTANT_READ_TIMEOUT:12s}
-  # Applied to Tomcat request-line/header reads, keep-alive sockets, and request-body uploads.
-  # The explicit body-upload timeout prevents a stalled client from retaining a buffer permit.
+  # Applied to Tomcat request-line/header reads and idle keep-alive sockets.
   inbound-request-timeout: ${LIFEOS_GATEWAY_INBOUND_REQUEST_TIMEOUT:10s}
+  # Applied only while an accepted request body is making progress. This finite 60-second
+  # inter-read allowance supports the reviewed upload contracts while preventing stalled clients
+  # from retaining gateway admission indefinitely.
+  inbound-upload-timeout: ${LIFEOS_GATEWAY_INBOUND_UPLOAD_TIMEOUT:60s}
   analytics-proof-secret: ${LIFEOS_GATEWAY_ANALYTICS_PROOF_SECRET:}
   rate-limit:
     max-requests: ${LIFEOS_GATEWAY_RATE_LIMIT_MAX_REQUESTS:600}

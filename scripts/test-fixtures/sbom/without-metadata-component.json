@@ -1,0 +1,12 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "metadata": {},
+  "components": [
+    {
+      "type": "library",
+      "name": "spring-boot-starter-web",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-web@3.5.0"
+    }
+  ]
+}

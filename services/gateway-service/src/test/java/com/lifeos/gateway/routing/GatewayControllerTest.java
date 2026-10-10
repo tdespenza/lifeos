@@ -68,6 +68,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -317,15 +318,18 @@ class GatewayControllerTest {
                 HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION, "Idempotency-Key", HttpHeaders.IF_MATCH)));
         when(request.getHeaders(HttpHeaders.CONTENT_TYPE)).thenReturn(Collections.enumeration(List.of(contentType)));
         when(request.getHeaders(HttpHeaders.AUTHORIZATION))
-                .thenReturn(Collections.enumeration(List.of("Bearer media-access-token")));
+                .thenReturn(Collections.enumeration(List.of("Bearer document-upload-token")));
         when(request.getHeaders("Idempotency-Key"))
-                .thenReturn(Collections.enumeration(List.of("media-upload-idempotency-key")));
+                .thenReturn(Collections.enumeration(List.of("document-upload-idempotency-key")));
         when(request.getHeaders(HttpHeaders.IF_MATCH)).thenReturn(Collections.enumeration(List.of("\"0\"")));
 
         server.expect(requestTo("https://documents.test" + GatewayRoute.DOCUMENT_UPLOAD_PATH))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header(HttpHeaders.CONTENT_TYPE, contentType))
                 .andExpect(header(HttpHeaders.CONTENT_LENGTH, Integer.toString(multipartBody.length)))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer document-upload-token"))
+                .andExpect(header("Idempotency-Key", "document-upload-idempotency-key"))
+                .andExpect(header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
                         .content().bytes(multipartBody))
                 .andRespond(withStatus(HttpStatus.CREATED)
@@ -866,9 +870,7 @@ class GatewayControllerTest {
 
     @Test
     void mapsUpstreamTimeoutsAndOtherTransportFailures() throws Exception {
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
-                .andRespond(withException(new SocketTimeoutException("timed out")));
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withException(new SocketTimeoutException("timed out")));
 
         mockMvc.perform(get("/api/v1/goals"))
@@ -877,9 +879,7 @@ class GatewayControllerTest {
         upstream.verify();
 
         upstream.reset();
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
-                .andRespond(withException(new IOException("connection closed")));
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withException(new IOException("connection closed")));
 
         mockMvc.perform(get("/api/v1/goals"))
@@ -894,9 +894,7 @@ class GatewayControllerTest {
 
     @Test
     void mapsUpstreamServerErrorsWithoutRewritingTheirResponse() throws Exception {
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
-                .andRespond(withServerError());
-        upstream.expect(requestTo(UPSTREAM + "/api/v1/goals"))
+        upstream.expect(ExpectedCount.twice(), requestTo(UPSTREAM + "/api/v1/goals"))
                 .andRespond(withServerError());
 
         mockMvc.perform(get("/api/v1/goals"))
@@ -1005,6 +1003,35 @@ class GatewayControllerTest {
                 .andExpect(header().string(HttpHeaders.ALLOW,
                         "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"))
                 .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+    }
+
+    @Test
+    void rejectsNotificationStreamDescendantsBeforeAuthenticationOrForwarding() throws Exception {
+        useNotificationStreamingRoute();
+
+        mockMvc.perform(get(GatewayRoute.NOTIFICATION_STREAM_PATH + "/child"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ROUTE_NOT_FOUND"));
+
+        identity.verify();
+        upstream.verify();
+    }
+
+    @Test
+    void restrictsNotificationStreamMethodsAndReportsItsExactAllowHeader() throws Exception {
+        useNotificationStreamingRoute();
+
+        mockMvc.perform(post(GatewayRoute.NOTIFICATION_STREAM_PATH))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, "GET"))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+        mockMvc.perform(request("CONNECT", URI.create(GatewayRoute.NOTIFICATION_STREAM_PATH)))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, "GET"))
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+
+        identity.verify();
+        upstream.verify();
     }
 
     @Test
@@ -1755,6 +1782,7 @@ class GatewayControllerTest {
 
         RestClient.Builder upstreamBuilder = RestClient.builder();
         upstream = MockRestServiceServer.bindTo(upstreamBuilder).build();
+        meterRegistry = new SimpleMeterRegistry();
         GatewayForwarder forwarder = new GatewayForwarder(upstreamBuilder.build(), properties, meterRegistry);
         GatewayAuthenticationService authenticationService = mock(GatewayAuthenticationService.class);
         GatewayAuthenticatedSubject subject = new GatewayAuthenticatedSubject(
@@ -1916,6 +1944,18 @@ class GatewayControllerTest {
     private void useProtectedRoute(Set<String> authenticationRequiredMethods) {
         GatewayProperties.Route route = new GatewayProperties.Route("goals", "/api/v1/goals", UPSTREAM, true);
         route.setAuthenticationRequiredMethods(authenticationRequiredMethods);
+        useRoute(route);
+    }
+
+    private void useNotificationStreamingRoute() {
+        GatewayProperties.Route route = new GatewayProperties.Route(
+                "notifications", GatewayRoute.NOTIFICATION_STREAM_PATH, "https://notification.test");
+        route.setStreaming(true);
+        route.setAuthenticationRequiredMethods(Set.of("GET"));
+        useRoute(route);
+    }
+
+    private void useRoute(GatewayProperties.Route route) {
         properties.setRoutes(List.of(
                 route));
         GatewayAuthenticationProperties authenticationProperties = configuredAuthenticationProperties();

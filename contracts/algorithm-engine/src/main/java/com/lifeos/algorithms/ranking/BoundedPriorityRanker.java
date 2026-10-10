@@ -10,8 +10,11 @@ import java.util.List;
  * Stable bounded ranking for planning candidates.
  *
  * <p>Higher {@code priorityScore} wins; then an earlier non-null due time; then first-seen input
- * order. It runs in O(N log N) time and O(N) additional space for at most {@code maxCandidates}
- * items. A null due time is intentionally ranked after any actual deadline.
+ * order. For N candidates, where N does not exceed {@code maxCandidates}, it runs in O(N log N)
+ * time and O(N) additional space. If the candidate collection exceeds the configured bound, or
+ * {@code limit} is invalid, it throws instead of returning a truncated result. A bounded heap can
+ * select a small prefix in O(N log L) time, but sorting the full bounded input keeps ordering
+ * simple and deterministic. A null due time is intentionally ranked after any actual deadline.
  */
 public final class BoundedPriorityRanker {
 
